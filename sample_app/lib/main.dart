@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-void main() {
+void main() async {
+  await dotenv.load(fileName: "assets/.env");
   runApp(const MyApp());
 }
 
@@ -40,9 +44,80 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _textController = TextEditingController();
   final List<Message> _messages = [];
   final ScrollController _scrollController = ScrollController();
+  bool _isLoading = false;
 
-  void _sendMessage(String text) {
+  // API configuration
+  final String _apiKey;
+  static const String _apiUrl = 'https://api.deepseek.com/chat/completions';
+
+  _ChatScreenState() : _apiKey = dotenv.env['DEEPSEEK_API_KEY'] ?? '';
+
+  // Функция для выполнения запроса к DeepSeek API
+  Future<void> _fetchData(String query) async {
+    if (_apiKey.isEmpty) {
+      _addBotMessage('Ошибка: API ключ не найден. Пожалуйста, проверьте настройки.');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final response = await http.post(
+        Uri.parse(_apiUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_apiKey',
+        },
+        body: jsonEncode({
+          'model': 'deepseek-chat',
+          'messages': [
+            {'role': 'system', 'content': 'You are a helpful assistant.'},
+            {'role': 'user', 'content': query},
+          ],
+          'stream': false,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        if (data['choices'] != null && data['choices'].isNotEmpty) {
+          final assistantMessage = data['choices'][0]['message']['content'];
+          if (assistantMessage != null) {
+            _addBotMessage(assistantMessage);
+          } else {
+            _addBotMessage('Не удалось получить ответ от ассистента');
+          }
+        } else {
+          _addBotMessage('Не удалось обработать ответ сервера');
+        }
+      } else {
+        _addBotMessage('Ошибка сервера: ${response.statusCode}\n${response.body}');
+      }
+    } catch (e) {
+      _addBotMessage('Ошибка соединения: $e');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+      _scrollToBottom();
+    }
+  }
+
+  void _addBotMessage(String text) {
     if (text.trim().isEmpty) return;
+    
+    setState(() {
+      _messages.add(Message(text: text, isUser: false));
+    });
+    
+    // Прокручиваем к новому сообщению
+    _scrollToBottom();
+  }
+
+  void _sendMessage(String text) async {
+    if (text.trim().isEmpty || _isLoading) return;
 
     // Добавляем сообщение пользователя
     setState(() {
@@ -50,22 +125,10 @@ class _ChatScreenState extends State<ChatScreen> {
       _textController.clear();
     });
 
-    // Прокручиваем список вниз
     _scrollToBottom();
 
-    // Здесь можно добавить логику для обработки ответа бота
-    // Пока просто добавляем автоматический ответ
-    Future.delayed(const Duration(seconds: 1), () {
-      setState(() {
-        _messages.add(
-          Message(
-            text: 'Вы написали: $text',
-            isUser: false,
-          ),
-        );
-      });
-      _scrollToBottom();
-    });
+    // Выполняем HTTP-запрос
+    await _fetchData(text);
   }
 
   void _scrollToBottom() {
@@ -95,6 +158,11 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(
         children: [
           // Область сообщений
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.all(16.0),
+              child: Center(child: CircularProgressIndicator()),
+            ),
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
@@ -151,8 +219,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 Expanded(
                   child: TextField(
                     controller: _textController,
+                    enabled: !_isLoading,
                     decoration: InputDecoration(
-                      hintText: 'Введите сообщение...',
+                      hintText: _isLoading ? 'Ожидаем ответа...' : 'Введите сообщение...',
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(24.0),
                         borderSide: BorderSide.none,
@@ -163,16 +232,26 @@ class _ChatScreenState extends State<ChatScreen> {
                         vertical: 8.0,
                       ),
                     ),
-                    onSubmitted: _sendMessage,
+                    onSubmitted: _isLoading ? null : _sendMessage,
                     textInputAction: TextInputAction.send,
                   ),
                 ),
                 // Кнопка отправки
-                IconButton(
-                  icon: const Icon(Icons.send),
-                  onPressed: () => _sendMessage(_textController.text),
-                  color: Theme.of(context).colorScheme.primary,
-                ),
+                if (_isLoading)
+                  const Padding(
+                    padding: EdgeInsets.all(8.0),
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else
+                  IconButton(
+                    icon: const Icon(Icons.send),
+                    onPressed: () => _sendMessage(_textController.text),
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
               ],
             ),
           ),
