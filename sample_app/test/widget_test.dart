@@ -5,19 +5,19 @@ import 'package:sample_app/main.dart';
 
 void main() {
   testWidgets('App should display chat screen', (WidgetTester tester) async {
-    // Load test environment variables
+    // Загружаем тестовые переменные окружения
     await dotenv.load(fileName: "assets/.env");
     
-    // Build our app and trigger a frame.
+    // Создаем виджет приложения и обновляем экран
     await tester.pumpWidget(const MyApp());
 
-    // Verify that the chat screen is displayed
+    // Проверяем, что экран чата отображается
     expect(find.byType(ChatScreen), findsOneWidget);
     
-    // Verify that the app bar title is displayed
+    // Проверяем, что заголовок приложения отображается
     expect(find.byType(AppBar), findsOneWidget);
     
-    // Verify that the text field is present
+    // Проверяем наличие поля ввода текста
     expect(find.byType(TextField), findsOneWidget);
   });
 }
