@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:sample_app/models/app_settings.dart';
+import 'package:sample_app/screens/settings_screen.dart';
+import 'package:sample_app/services/settings_service.dart';
 
 void main() async {
   await dotenv.load(fileName: "assets/.env");
@@ -20,6 +23,7 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       home: const ChatScreen(),
+      debugShowCheckedModeBanner: false,
     );
   }
 }
@@ -61,8 +65,53 @@ class _ChatScreenState extends State<ChatScreen> {
   // API configuration
   final String _apiKey;
   static const String _apiUrl = 'https://api.deepseek.com/chat/completions';
+  final SettingsService _settingsService = SettingsService();
+  late AppSettings _appSettings;
+  bool _isLoadingSettings = true;
 
   _ChatScreenState() : _apiKey = dotenv.env['DEEPSEEK_API_KEY'] ?? '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    setState(() {
+      _isLoadingSettings = true;
+    });
+
+    _appSettings = await _settingsService.getSettings();
+    
+    if (mounted) {
+      setState(() {
+        _isLoadingSettings = false;
+      });
+    }
+  }
+
+  Future<void> _openSettings() async {
+    final result = await Navigator.push<AppSettings>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SettingsScreen(
+          initialSettings: _appSettings,
+          onSettingsChanged: (settings) {
+            setState(() {
+              _appSettings = settings;
+            });
+          },
+        ),
+      ),
+    );
+
+    if (result != null) {
+      setState(() {
+        _appSettings = result;
+      });
+    }
+  }
 
   // Функция для выполнения запроса к DeepSeek API
   Future<void> _fetchData(String query) async {
@@ -83,12 +132,21 @@ class _ChatScreenState extends State<ChatScreen> {
           'Authorization': 'Bearer $_apiKey',
         },
         body: jsonEncode({
-          'model': 'deepseek-chat',
+          'model': _appSettings.selectedNetwork == NeuralNetwork.deepseek
+              ? 'deepseek-chat'
+              : 'yandexgpt',
           'messages': [
             {'role': 'system', 'content': 'You are a helpful assistant.'},
             {'role': 'user', 'content': query},
           ],
           'stream': false,
+          'response_format': _appSettings.responseFormat == ResponseFormat.json
+              ? {
+                  'type': 'json_object',
+                  if (_appSettings.customJsonSchema != null)
+                    'schema': jsonDecode(_appSettings.customJsonSchema!),
+                }
+              : null,
         }),
       );
 
@@ -162,9 +220,24 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoadingSettings) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Чат'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: _openSettings,
+            tooltip: 'Настройки',
+          ),
+        ],
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Column(
