@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/settings_service.dart';
@@ -35,7 +37,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  bool _isValidJson(String? jsonString) {
+    if (jsonString == null || jsonString.isEmpty) return true;
+    try {
+      jsonDecode(jsonString);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   Future<void> _saveSettings() async {
+    // Validate JSON if JSON format is selected
+    if (_currentSettings.responseFormat == ResponseFormat.json && 
+        !_isValidJson(_currentSettings.customJsonSchema)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ошибка: Неверный формат JSON схемы'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
     final success = await _settingsService.saveSettings(_currentSettings);
     if (mounted && success) {
       widget.onSettingsChanged(_currentSettings);
