@@ -135,10 +135,18 @@ class _ChatScreenState extends State<ChatScreen> {
           'model': _appSettings.selectedNetwork == NeuralNetwork.deepseek
               ? 'deepseek-chat'
               : 'yandexgpt',
-          'messages': [
-            {'role': 'system', 'content': 'You are a helpful assistant.'},
-            {'role': 'user', 'content': query},
-          ],
+          'messages': _appSettings.responseFormat == ResponseFormat.json
+              ? [
+                  {
+                    'role': 'system',
+                    'content': 'You are a helpful assistant that returns data in JSON format. Return data in the following format: ${_appSettings.customJsonSchema ?? '{"key": "value"}'}'
+                  },
+                  {'role': 'user', 'content': query},
+                ]
+              : [
+                  {'role': 'system', 'content': 'You are a helpful assistant.'},
+                  {'role': 'user', 'content': query},
+                ],
           'stream': false,
           'response_format': _appSettings.responseFormat == ResponseFormat.json
               ? {
