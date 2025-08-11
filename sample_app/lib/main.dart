@@ -5,6 +5,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/screens/settings_screen.dart';
 import 'package:sample_app/services/settings_service.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 void main() async {
   await dotenv.load(fileName: "assets/.env");
@@ -194,6 +195,84 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
   }
 
+  bool _isJson(String text) {
+    try {
+      jsonDecode(text);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Widget _buildJsonView(String jsonString) {
+    try {
+      final jsonData = jsonDecode(jsonString);
+      final prettyJson = const JsonEncoder.withIndent('  ').convert(jsonData);
+      
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Card(
+            margin: const EdgeInsets.only(bottom: 8.0),
+            color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'JSON Preview',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          color: Theme.of(context).colorScheme.primary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.content_copy, size: 18),
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: jsonString));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('JSON скопирован в буфер обмена')),
+                          );
+                        },
+                        tooltip: 'Копировать JSON',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? Colors.grey[900]
+                          : Colors.grey[100],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey[300]!),
+                    ),
+                    child: SelectableText(
+                      prettyJson,
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text('Ответ:', style: TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      );
+    } catch (e) {
+      return const SizedBox.shrink();
+    }
+  }
+
   void _sendMessage(String text) async {
     if (text.trim().isEmpty || _isLoading) return;
 
@@ -279,13 +358,35 @@ class _ChatScreenState extends State<ChatScreen> {
                           : Theme.of(context).colorScheme.surfaceVariant,
                       borderRadius: BorderRadius.circular(20.0),
                     ),
-                    child: Text(
-                      message.text,
-                      style: TextStyle(
-                        color: message.isUser
-                            ? Theme.of(context).colorScheme.onPrimaryContainer
-                            : Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (!message.isUser && 
+                            _appSettings.responseFormat == ResponseFormat.json &&
+                            _isJson(message.text))
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildJsonView(message.text),
+                              const SizedBox(height: 8),
+                              Text(
+                                message.text,
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          )
+                        else
+                          Text(
+                            message.text,
+                            style: TextStyle(
+                              color: message.isUser
+                                  ? Theme.of(context).colorScheme.onPrimaryContainer
+                                  : Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 );
