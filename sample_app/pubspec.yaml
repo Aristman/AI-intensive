@@ -36,6 +36,8 @@ dependencies:
   cupertino_icons: ^1.0.8
   http: ^1.5.0  # Библиотека для работы с HTTP-запросами
   flutter_dotenv: ^5.1.0  # Для работы с переменными окружения
+  shared_preferences: ^2.2.2  # Для хранения настроек
+  json_annotation: ^4.8.1  # Для работы с JSON
 
 dev_dependencies:
   flutter_test:
@@ -51,6 +53,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+  mocktail: ^1.0.4
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
