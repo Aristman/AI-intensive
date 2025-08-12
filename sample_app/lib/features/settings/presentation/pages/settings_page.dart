@@ -24,21 +24,27 @@ class SettingsPage extends StatelessWidget {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // API Key
+                // API Configuration info
                 _buildSectionHeader('API Configuration'),
-                _buildTextField(
-                  label: 'API Key',
-                  value: settings.apiKey,
-                  onChanged: (value) => settings.updateApiKey(value),
-                  obscureText: true,
+                const Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'API Configuration is managed via environment variables',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'To change API settings, update the .env file in your project root and restart the app.',
+                          style: TextStyle(fontSize: 14, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                const SizedBox(height: 8),
-                _buildTextField(
-                  label: 'Base URL',
-                  value: settings.baseUrl,
-                  onChanged: (value) => settings.updateBaseUrl(value),
-                ),
-                
                 const Divider(height: 32),
                 
                 // Model Settings

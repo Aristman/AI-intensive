@@ -7,8 +7,6 @@ import '../../../../core/enums/response_format.dart';
 enum NeuralNetwork { deepseek, yandexgpt }
 
 class SettingsProvider with ChangeNotifier {
-  static const String _apiKeyKey = 'api_key';
-  static const String _baseUrlKey = 'base_url';
   static const String _selectedModelKey = 'selected_model';
   static const String _systemPromptKey = 'system_prompt';
   static const String _responseFormatKey = 'response_format';
@@ -16,8 +14,6 @@ class SettingsProvider with ChangeNotifier {
 
   late final SharedPreferences _prefs;
   
-  String _apiKey = '';
-  String _baseUrl = 'https://api.deepseek.com';
   String _selectedModel = 'deepseek-chat';
   String _systemPrompt = 'You are a helpful assistant.';
   ResponseFormat _responseFormat = ResponseFormat.text;
@@ -28,8 +24,6 @@ class SettingsProvider with ChangeNotifier {
   }
 
   // Getters
-  String get apiKey => _apiKey;
-  String get baseUrl => _baseUrl;
   String get selectedModel => _selectedModel;
   String get systemPrompt => _systemPrompt;
   ResponseFormat get responseFormat => _responseFormat;
@@ -37,8 +31,6 @@ class SettingsProvider with ChangeNotifier {
 
   // Load settings from SharedPreferences
   Future<void> _loadSettings() async {
-    _apiKey = _prefs.getString(_apiKeyKey) ?? '';
-    _baseUrl = _prefs.getString(_baseUrlKey) ?? 'https://api.deepseek.com';
     _selectedModel = _prefs.getString(_selectedModelKey) ?? 'deepseek-chat';
     _systemPrompt = _prefs.getString(_systemPromptKey) ?? 'You are a helpful assistant.';
     _responseFormat = ResponseFormat.values.firstWhere(
@@ -51,8 +43,6 @@ class SettingsProvider with ChangeNotifier {
 
   // Save settings to SharedPreferences
   Future<void> _saveSettings() async {
-    await _prefs.setString(_apiKeyKey, _apiKey);
-    await _prefs.setString(_baseUrlKey, _baseUrl);
     await _prefs.setString(_selectedModelKey, _selectedModel);
     await _prefs.setString(_systemPromptKey, _systemPrompt);
     await _prefs.setString(_responseFormatKey, _responseFormat.toString().split('.').last);
@@ -64,18 +54,6 @@ class SettingsProvider with ChangeNotifier {
   }
 
   // Update methods
-  Future<void> updateApiKey(String value) async {
-    _apiKey = value;
-    await _saveSettings();
-    notifyListeners();
-  }
-
-  Future<void> updateBaseUrl(String value) async {
-    _baseUrl = value;
-    await _saveSettings();
-    notifyListeners();
-  }
-
   Future<void> updateSelectedModel(String value) async {
     _selectedModel = value;
     await _saveSettings();

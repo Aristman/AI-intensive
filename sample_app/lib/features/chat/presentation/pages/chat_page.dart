@@ -65,8 +65,6 @@ class _ChatPageState extends State<ChatPage> {
       // Call the chat service
       final response = await _chatService.sendMessage(
         message: text,
-        apiKey: settings.apiKey,
-        baseUrl: settings.baseUrl,
         model: settings.selectedModel,
         systemPrompt: settings.systemPrompt,
         responseFormat: settings.responseFormat,

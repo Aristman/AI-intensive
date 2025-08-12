@@ -3,24 +3,28 @@ import 'package:http/http.dart' as http;
 
 import '../../../../core/error/exceptions.dart';
 import '../../../../core/enums/response_format.dart';
+import '../../../../core/config/app_config.dart';
 
 class ChatService {
-  const ChatService();
+
+
+  final AppConfig _appConfig = AppConfig();
+
+  ChatService();
 
   Future<String> sendMessage({
     required String message,
-    required String apiKey,
-    required String baseUrl,
     required String model,
     required String systemPrompt,
     required ResponseFormat responseFormat,
     String? jsonSchema,
   }) async {
+    final apiKey = _appConfig.deepSeekApiKey;
     if (apiKey.isEmpty) {
-      throw const ApiException('API key is required');
+      throw const ApiException('API key is not configured in .env file');
     }
 
-    final uri = Uri.parse('$baseUrl/v1/chat/completions');
+    final uri = Uri.parse('${_appConfig.deepSeekBaseUrl}/v1/chat/completions');
     
     try {
       final response = await http.post(
