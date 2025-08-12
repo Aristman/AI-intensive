@@ -8,11 +8,15 @@ class AppSettings {
   final NeuralNetwork selectedNetwork;
   final ResponseFormat responseFormat;
   final String? customJsonSchema;
+  final String systemPrompt;
+  final int historyDepth; // количество последних сообщений, передаваемых в контекст
 
   const AppSettings({
     this.selectedNetwork = NeuralNetwork.deepseek,
     this.responseFormat = ResponseFormat.text,
     this.customJsonSchema,
+    this.systemPrompt = 'You are a helpful assistant.',
+    this.historyDepth = 20,
   });
 
   // Create a copy with some changed fields
@@ -20,11 +24,15 @@ class AppSettings {
     NeuralNetwork? selectedNetwork,
     ResponseFormat? responseFormat,
     String? customJsonSchema,
+    String? systemPrompt,
+    int? historyDepth,
   }) {
     return AppSettings(
       selectedNetwork: selectedNetwork ?? this.selectedNetwork,
       responseFormat: responseFormat ?? this.responseFormat,
       customJsonSchema: customJsonSchema ?? this.customJsonSchema,
+      systemPrompt: systemPrompt ?? this.systemPrompt,
+      historyDepth: historyDepth ?? this.historyDepth,
     );
   }
 
@@ -34,6 +42,8 @@ class AppSettings {
       'selectedNetwork': selectedNetwork.toString().split('.').last,
       'responseFormat': responseFormat.toString().split('.').last,
       'customJsonSchema': customJsonSchema,
+      'systemPrompt': systemPrompt,
+      'historyDepth': historyDepth,
     };
   }
 
@@ -49,6 +59,8 @@ class AppSettings {
         orElse: () => ResponseFormat.text,
       ),
       customJsonSchema: json['customJsonSchema'],
+      systemPrompt: (json['systemPrompt'] as String?) ?? 'You are a helpful assistant.',
+      historyDepth: (json['historyDepth'] as int?) ?? 20,
     );
   }
 

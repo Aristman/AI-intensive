@@ -126,6 +126,48 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
+      // Последовательность, по которой модель должна завершить ответ
+      const String stopSequence = '<END>';
+      // Инструкция по уточняющим вопросам и критерию полной информации
+      const String uncertaintyPolicy =
+          'Политика уточнений: Прежде чем выдавать итоговый ответ, оцени неопределённость результата по шкале от 0 до 1. '
+          'Если неопределённость > 0.1 — задай пользователю 1–5 конкретных уточняющих вопросов (по важности), '
+          'не выдавай финальный результат и не добавляй маркер окончания. '
+          'Когда неопределённость ≤ 0.1 — сформируй итоговый результат, после чего добавь маркер окончания ' + stopSequence + '.';
+      // Формируем контекст беседы: системное сообщение + последние сообщения из истории
+      // Ограничим историю согласно настройке пользователя (Глубина истории)
+      final int historyLimit = _appSettings.historyDepth.clamp(0, 100).toInt();
+      final int startIndex = _messages.length > historyLimit
+          ? _messages.length - historyLimit
+          : 0;
+      final recentMessages = _messages.sublist(startIndex);
+
+      final String systemContent = _appSettings.responseFormat == ResponseFormat.json
+          ? (
+              'You are a helpful assistant that returns data in JSON format. '
+              'Before producing the final JSON, evaluate your uncertainty in the completeness and correctness of the required data on a scale from 0 to 1. '
+              'If uncertainty > 0.1, ask the user 1–5 clarifying questions (most important first) and do NOT output the final JSON yet, and do NOT append the stop token. '
+              'Once uncertainty ≤ 0.1, return ONLY valid minified JSON strictly matching the following schema: '
+              '${_appSettings.customJsonSchema ?? '{"key": "value"}'} '
+              'Do not add explanations or any text outside JSON. Finish your output with the exact token: ' + stopSequence + '.'
+            )
+          : (
+              _appSettings.systemPrompt + '\n\n' + uncertaintyPolicy
+            );
+
+      final List<Map<String, String>> chatMessages = [
+        {
+          'role': 'system',
+          'content': systemContent,
+        },
+        // История чата
+        for (final m in recentMessages)
+          {
+            'role': m.isUser ? 'user' : 'assistant',
+            'content': m.text,
+          },
+      ];
+
       final response = await http.post(
         Uri.parse(_apiUrl),
         headers: {
@@ -136,26 +178,16 @@ class _ChatScreenState extends State<ChatScreen> {
           'model': _appSettings.selectedNetwork == NeuralNetwork.deepseek
               ? 'deepseek-chat'
               : 'yandexgpt',
-          'messages': _appSettings.responseFormat == ResponseFormat.json
-              ? [
-                  {
-                    'role': 'system',
-                    'content': 'You are a helpful assistant that returns data in JSON format. Return data in the following format: ${_appSettings.customJsonSchema ?? '{"key": "value"}'}'
-                  },
-                  {'role': 'user', 'content': query},
-                ]
-              : [
-                  {'role': 'system', 'content': 'You are a helpful assistant.'},
-                  {'role': 'user', 'content': query},
-                ],
+          'messages': chatMessages,
+          // Мы не обрабатываем потоковые ответы, поэтому отключаем stream
           'stream': false,
-          'response_format': _appSettings.responseFormat == ResponseFormat.json
-              ? {
-                  'type': 'json_object',
-                  if (_appSettings.customJsonSchema != null)
-                    'schema': jsonDecode(_appSettings.customJsonSchema!),
-                }
-              : null,
+          // Ограничение на количество токенов и последовательность остановки
+          'max_tokens': 1500,
+          'stop': [stopSequence],
+          // Не навязываем принудительный JSON-формат на уровне API,
+          // чтобы модель могла задавать уточняющие вопросы текстом.
+          // Финальный JSON будет проверяться и отображаться на клиенте.
+          'response_format': null,
         }),
       );
 

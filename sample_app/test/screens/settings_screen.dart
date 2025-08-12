@@ -47,6 +47,8 @@ void main() {
       expect(find.byType(DropdownButtonFormField<ResponseFormat>), findsOneWidget);
       expect(find.text('DeepSeek'), findsOneWidget);
       expect(find.text('Текст'), findsOneWidget);
+      expect(find.text('System prompt'), findsOneWidget);
+      expect(find.byKey(const Key('system_prompt_field')), findsOneWidget);
       expect(find.byType(IconButton), findsNWidgets(2)); // Кнопки назад и сохранить
     });
 
@@ -107,7 +109,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Assert - должно появиться поле для ввода JSON схемы
-      expect(find.byType(TextField), findsOneWidget);
+      expect(find.byKey(const Key('json_schema_field')), findsOneWidget);
       expect(find.text('JSON схема (опционально)'), findsOneWidget);
     });
 
@@ -130,7 +132,7 @@ void main() {
       );
 
       // Act - вводим JSON схему
-      await tester.enterText(find.byType(TextField), testSchema);
+      await tester.enterText(find.byKey(const Key('json_schema_field')), testSchema);
       await tester.pump();
       
       // Сохраняем настройки
@@ -142,6 +144,38 @@ void main() {
       expect(savedSettings?.customJsonSchema, testSchema);
       expect(savedSettings?.responseFormat, ResponseFormat.json);
       
+      // Проверяем, что экран закрывается после сохранения
+      verify(() => mockObserver.didPop(any(), any()));
+    });
+
+    testWidgets('should save system prompt', (WidgetTester tester) async {
+      // Arrange
+      final mockObserver = MockNavigatorObserver();
+      AppSettings? savedSettings;
+      const newPrompt = 'You are a super helpful assistant.';
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsScreen(
+            initialSettings: initialSettings,
+            onSettingsChanged: (settings) => savedSettings = settings,
+          ),
+          navigatorObservers: [mockObserver],
+        ),
+      );
+
+      // Act - изменяем system prompt
+      await tester.enterText(find.byKey(const Key('system_prompt_field')), newPrompt);
+      await tester.pump();
+
+      // Сохраняем настройки
+      await tester.tap(find.byIcon(Icons.save));
+      await tester.pumpAndSettle();
+
+      // Assert
+      expect(savedSettings, isNotNull);
+      expect(savedSettings!.systemPrompt, newPrompt);
+
       // Проверяем, что экран закрывается после сохранения
       verify(() => mockObserver.didPop(any(), any()));
     });
