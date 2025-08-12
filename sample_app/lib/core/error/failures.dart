@@ -21,3 +21,15 @@ class CacheFailure extends Failure {
 class ValidationFailure extends Failure {
   const ValidationFailure(String message) : super(message);
 }
+
+class NetworkFailure extends Failure {
+  const NetworkFailure([String message = 'No internet connection']) : super(message);
+}
+
+class ParsingFailure extends Failure {
+  const ParsingFailure(String message) : super(message);
+}
+
+class AgentFailure extends Failure {
+  const AgentFailure(String message) : super(message);
+}

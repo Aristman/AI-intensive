@@ -11,10 +11,6 @@ import '../config/app_config.dart';
 import '../network/api_service.dart';
 import '../storage/local_storage_service.dart';
 import '../../features/chat/presentation/bloc/chat_bloc.dart';
-import '../../features/chat/domain/usecases/send_message_use_case.dart';
-import '../../features/chat/domain/usecases/get_chat_history_use_case.dart';
-import '../../features/chat/domain/usecases/save_message_use_case.dart';
-import '../../features/chat/domain/usecases/clear_chat_history_use_case.dart';
 
 final GetIt sl = GetIt.instance;
 
@@ -145,21 +141,6 @@ Future<void> _initChatFeature() async {
     );
     rethrow;
   }
-}
-
-/// Helper function to register lazy singletons with dependencies and automatic disposal
-void _registerLazySingletonWithDependencies<T extends Object>(
-  T Function() factoryFunc, {
-  List<Type> dependsOn = const [],
-}) {
-  sl.registerLazySingleton<T>(
-    factoryFunc,
-    dispose: (instance) {
-      if (instance is Disposable) {
-        instance.dispose();
-      }
-    },
-  );
 }
 
 /// For services that need cleanup

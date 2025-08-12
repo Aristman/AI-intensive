@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart ';
+import 'package:provider/provider.dart';
 import '../../domain/models/message.dart';
 import '../../domain/services/chat_service.dart';
 import '../../../settings/presentation/pages/settings_page.dart';
 import '../../../settings/presentation/providers/settings_provider.dart';
+import '../../../requirements_agent/presentation/pages/requirements_agent_screen.dart';
 
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key});
@@ -25,10 +26,9 @@ class _ChatPageState extends State<ChatPage> {
     _chatService = ChatService();
     // Add a welcome message
     _messages.add(
-      const Message(
+      Message(
         text: 'Hello! How can I help you today?',
         isUser: false,
-        timestamp: null,
       ),
     );
   }
@@ -128,6 +128,18 @@ class _ChatPageState extends State<ChatPage> {
               );
             },
           ),
+          IconButton(
+            icon: const Icon(Icons.assignment),
+            tooltip: 'Сбор требований',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const RequirementsAgentScreen(),
+                ),
+              );
+            },
+          ),
         ],
       ),
       body: Column(
@@ -152,7 +164,7 @@ class _ChatPageState extends State<ChatPage> {
                     ),
                     decoration: BoxDecoration(
                       color: message.isUser
-                          ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
+                          ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1)
                           : Theme.of(context).colorScheme.surface,
                       borderRadius: BorderRadius.circular(16.0),
                     ),
@@ -165,16 +177,14 @@ class _ChatPageState extends State<ChatPage> {
                           message.text,
                           style: Theme.of(context).textTheme.bodyMedium,
                         ),
-                        if (message.timestamp != null) ...[
-                          const SizedBox(height: 4.0),
-                          Text(
-                            '${message.timestamp!.hour}:${message.timestamp!.minute.toString().padLeft(2, '0')}',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: Colors.grey[600],
-                                  fontSize: 10.0,
-                                ),
-                          ),
-                        ],
+                        const SizedBox(height: 4.0),
+                        Text(
+                          '${message.timestamp.hour}:${message.timestamp.minute.toString().padLeft(2, '0')}',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Colors.grey[600],
+                                fontSize: 10.0,
+                              ),
+                        ),
                       ],
                     ),
                   ),
@@ -206,7 +216,7 @@ class _ChatPageState extends State<ChatPage> {
                         borderSide: BorderSide.none,
                       ),
                       filled: true,
-                      fillColor: Theme.of(context).colorScheme.surfaceVariant,
+                      fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16.0,
                         vertical: 8.0,

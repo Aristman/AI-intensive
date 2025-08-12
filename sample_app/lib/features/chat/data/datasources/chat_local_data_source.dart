@@ -1,9 +1,6 @@
 import 'dart:convert';
 
-import 'package:dartz/dartz.dart';
-
 import '../../../../core/error/exceptions.dart';
-import '../../../../core/error/failures.dart';
 import '../../../../core/storage/local_storage_service.dart';
 import '../../domain/entities/message_entity.dart';
 

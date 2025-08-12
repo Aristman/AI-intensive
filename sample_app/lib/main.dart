@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:get_it/get_it.dart';
 import 'package:logger/logger.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/config/app_config.dart';
-import 'core/error/exceptions.dart';
 import 'core/di/injection_container.dart';
 import 'features/chat/presentation/pages/chat_page.dart';
 import 'features/settings/presentation/providers/settings_provider.dart';

@@ -70,6 +70,16 @@ class _ChatScreenState extends State<ChatScreen> {
         title: Text('Chat - ${widget.model}'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Настройки',
+            onPressed: () => Navigator.pushNamed(context, '/settings'),
+          ),
+          IconButton(
+            icon: const Icon(Icons.assignment),
+            tooltip: 'Requirements Agent',
+            onPressed: () => Navigator.pushNamed(context, '/requirements-agent'),
+          ),
+          IconButton(
             icon: const Icon(Icons.delete_outline),
             onPressed: () {
               _chatBloc.add(const ClearChatHistory());
@@ -115,13 +125,11 @@ class _ChatScreenState extends State<ChatScreen> {
                 }
 
                 List<MessageEntity> messages = [];
-                bool isLoading = false;
 
                 if (state is ChatMessagesLoaded) {
                   messages = state.messages;
                 } else if (state is ChatMessageSending) {
                   messages = state.messages;
-                  isLoading = true;
                 } else if (state is ChatMessageSent) {
                   messages = state.messages;
                 }

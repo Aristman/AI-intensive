@@ -10,13 +10,13 @@ class SettingsScreen extends StatefulWidget {
   final Function(AppSettings) onSettingsChanged;
 
   const SettingsScreen({
-    Key? key,
+    super.key,
     required this.initialSettings,
     required this.onSettingsChanged,
-  }) : super(key: key);
+  });
 
   @override
-  _SettingsScreenState createState() => _SettingsScreenState();
+  State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
@@ -141,6 +141,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ],
                 ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Requirements Agent Button
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.assignment),
+                title: const Text('Сбор требований'),
+                subtitle: const Text('Запустить помощник по сбору требований'),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () {
+                  Navigator.pushNamed(context, '/requirements-agent');
+                },
               ),
             ),
             const SizedBox(height: 16),

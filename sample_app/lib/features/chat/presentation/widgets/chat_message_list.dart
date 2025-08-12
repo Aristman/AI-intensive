@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:sample_app/features/chat/domain/models/message.dart';
 
 class ChatMessageList extends StatelessWidget {
   final List<Message> messages;
@@ -8,13 +9,13 @@ class ChatMessageList extends StatelessWidget {
   final String? jsonString;
 
   const ChatMessageList({
-    Key? key,
+    super.key,
     required this.messages,
     required this.scrollController,
     this.isLoading = false,
     this.isJson = false,
     this.jsonString,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +39,7 @@ class ChatMessageList extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
             decoration: BoxDecoration(
               color: message.isUser
-                  ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
+                  ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1)
                   : Theme.of(context).colorScheme.surface,
               borderRadius: BorderRadius.circular(12.0),
             ),
@@ -51,11 +52,4 @@ class ChatMessageList extends StatelessWidget {
       },
     );
   }
-}
-
-class Message {
-  final String text;
-  final bool isUser;
-
-  Message({required this.text, required this.isUser});
 }

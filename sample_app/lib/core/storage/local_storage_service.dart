@@ -1,6 +1,5 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import '../error/exceptions.dart';
-import '../error/failures.dart';
 
 abstract class LocalStorageService {
   Future<bool> saveString(String key, String value);

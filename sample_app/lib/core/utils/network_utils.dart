@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../error/exceptions.dart';
-import '../error/failures.dart';
 
 class NetworkUtils {
   static const Map<String, String> defaultHeaders = {

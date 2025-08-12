@@ -1,6 +1,5 @@
 import 'dart:async';
-import 'package:bloc/bloc.dart';
-import 'package:equatable/equatable.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/usecase/no_params.dart';
 import '../../domain/entities/message_entity.dart';
 import '../../domain/usecases/clear_chat_history_use_case.dart';
