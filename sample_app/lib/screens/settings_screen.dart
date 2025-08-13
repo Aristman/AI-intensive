@@ -134,6 +134,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
             const SizedBox(height: 16),
+            // Reasoning mode
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: CheckboxListTile(
+                  key: const Key('reasoning_mode_checkbox'),
+                  title: const Text('Режим рассуждения'),
+                  subtitle: const Text('До 10 уточняющих вопросов, маркер окончания будет скрыт для пользователя'),
+                  value: _currentSettings.reasoningMode,
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() {
+                      _currentSettings = _currentSettings.copyWith(reasoningMode: v);
+                    });
+                  },
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
             // History Depth
             Card(
               child: Padding(

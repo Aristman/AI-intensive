@@ -1,4 +1,3 @@
-import 'package:json_annotation/json_annotation.dart';
 
 enum NeuralNetwork { deepseek, yandexgpt }
 
@@ -10,6 +9,7 @@ class AppSettings {
   final String? customJsonSchema;
   final String systemPrompt;
   final int historyDepth; // количество последних сообщений, передаваемых в контекст
+  final bool reasoningMode; // режим рассуждения
 
   const AppSettings({
     this.selectedNetwork = NeuralNetwork.deepseek,
@@ -17,6 +17,7 @@ class AppSettings {
     this.customJsonSchema,
     this.systemPrompt = 'You are a helpful assistant.',
     this.historyDepth = 20,
+    this.reasoningMode = false,
   });
 
   // Create a copy with some changed fields
@@ -26,6 +27,7 @@ class AppSettings {
     String? customJsonSchema,
     String? systemPrompt,
     int? historyDepth,
+    bool? reasoningMode,
   }) {
     return AppSettings(
       selectedNetwork: selectedNetwork ?? this.selectedNetwork,
@@ -33,6 +35,7 @@ class AppSettings {
       customJsonSchema: customJsonSchema ?? this.customJsonSchema,
       systemPrompt: systemPrompt ?? this.systemPrompt,
       historyDepth: historyDepth ?? this.historyDepth,
+      reasoningMode: reasoningMode ?? this.reasoningMode,
     );
   }
 
@@ -44,6 +47,7 @@ class AppSettings {
       'customJsonSchema': customJsonSchema,
       'systemPrompt': systemPrompt,
       'historyDepth': historyDepth,
+      'reasoningMode': reasoningMode,
     };
   }
 
@@ -61,6 +65,7 @@ class AppSettings {
       customJsonSchema: json['customJsonSchema'],
       systemPrompt: (json['systemPrompt'] as String?) ?? 'You are a helpful assistant.',
       historyDepth: (json['historyDepth'] as int?) ?? 20,
+      reasoningMode: (json['reasoningMode'] as bool?) ?? false,
     );
   }
 

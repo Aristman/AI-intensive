@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sample_app/main.dart';
+import 'package:sample_app/models/message.dart';
 
 void main() {
   group('Message', () {
