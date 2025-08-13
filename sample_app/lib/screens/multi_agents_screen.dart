@@ -206,70 +206,100 @@ class _MultiAgentsScreenState extends State<MultiAgentsScreen> {
   }
 
   Future<void> _sendToA(String text) async {
-    if (text.trim().isEmpty || _sending) return;
-    setState(() => _sending = true);
+    if (text.trim().isEmpty || _sending || _isDisposed) return;
+    
+    _safeSetState(() => _sending = true);
     _appendA(_Msg(text, true));
     _textController.clear();
+    
     try {
       final res = await _agentA!.ask(text);
+      if (_isDisposed) return;
+      
       _appendA(_Msg(res.text, false, isFinal: res.isFinal));
       if (res.isFinal) {
         await _sendFinalToB(res.text);
       }
     } catch (e) {
-      _appendA(_Msg('Ошибка A: $e', false));
+      if (!_isDisposed) {
+        _appendA(_Msg('Ошибка A: $e', false));
+      }
     } finally {
-      setState(() => _sending = false);
+      if (!_isDisposed) {
+        _safeSetState(() => _sending = false);
+      }
     }
   }
 
   Future<void> _sendFinalToB(String textFromA) async {
-    try {
-      // Добавляем плейсхолдер ожидания
-      setState(() {
-        _waitingBIndex = _msgsB.length;
-        _msgsB.add(_Msg('Ожидаем ответа В...', false));
-      });
+    if (_isDisposed) return;
+    
+    int? localWaitingIndex;
+    _safeSetState(() {
+      localWaitingIndex = _msgsB.length;
+      _waitingBIndex = localWaitingIndex;
+      _msgsB.add(_Msg('Ожидаем ответа В...', false));
+    });
 
+    try {
       final promptForB = 'Выполни задачу: $textFromA';
       final answerB = await _agentB!.ask(promptForB);
-
-      // Заменяем плейсхолдер реальным ответом
-      setState(() {
-        if (_waitingBIndex != null &&
-            _waitingBIndex! >= 0 &&
-            _waitingBIndex! < _msgsB.length) {
-          _msgsB[_waitingBIndex!] = _Msg(answerB, false);
+      
+      if (_isDisposed) return;
+      
+      _safeSetState(() {
+        if (localWaitingIndex != null &&
+            localWaitingIndex! >= 0 &&
+            localWaitingIndex! < _msgsB.length) {
+          _msgsB[localWaitingIndex!] = _Msg(answerB, false);
         } else {
           _msgsB.add(_Msg(answerB, false));
         }
         _waitingBIndex = null;
       });
-      _focusInputAndScroll();
+      
+      if (!_isDisposed) {
+        _focusInputAndScroll();
+      }
     } catch (e) {
-      // Заменяем плейсхолдер ошибкой
-      setState(() {
-        final errMsg = _Msg('Ошибка B: $e', false);
-        if (_waitingBIndex != null &&
-            _waitingBIndex! >= 0 &&
-            _waitingBIndex! < _msgsB.length) {
-          _msgsB[_waitingBIndex!] = errMsg;
-        } else {
-          _msgsB.add(errMsg);
+      if (!_isDisposed) {
+        _safeSetState(() {
+          final errMsg = _Msg('Ошибка B: $e', false);
+          if (localWaitingIndex != null &&
+              localWaitingIndex! >= 0 &&
+              localWaitingIndex! < _msgsB.length) {
+            _msgsB[localWaitingIndex!] = errMsg;
+          } else {
+            _msgsB.add(errMsg);
+          }
+          _waitingBIndex = null;
+        });
+        
+        if (!_isDisposed) {
+          _focusInputAndScroll();
         }
-        _waitingBIndex = null;
-      });
-      _focusInputAndScroll();
+      }
     }
   }
 
+  bool _isDisposed = false;
+
   @override
   void dispose() {
+    _isDisposed = true;
     _textController.dispose();
+    _inputFocus.unfocus();
     _inputFocus.dispose();
     _scrollA.dispose();
     _scrollB.dispose();
     super.dispose();
+  }
+
+  // Безопасное обновление состояния с проверкой на dispose
+  void _safeSetState(VoidCallback fn) {
+    if (!_isDisposed && mounted) {
+      setState(fn);
+    }
   }
 
   @override
@@ -329,7 +359,15 @@ class _MultiAgentsScreenState extends State<MultiAgentsScreen> {
                   filled: true,
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
                 ),
-                onSubmitted: _sending ? null : _sendToA,
+                onSubmitted: _sending ? null : (text) {
+                  // Очищаем фокус при отправке, чтобы скрыть клавиатуру
+                  _inputFocus.unfocus();
+                  _sendToA(text);
+                },
+                onTap: () {
+                  // Позволяем снова показать клавиатуру при тапе по полю ввода
+                  _inputFocus.requestFocus();
+                },
                 textInputAction: TextInputAction.send,
               ),
             ),
