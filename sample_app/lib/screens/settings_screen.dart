@@ -23,17 +23,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late AppSettings _currentSettings;
   final _settingsService = SettingsService();
   final _jsonSchemaController = TextEditingController();
+  final _systemPromptController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _currentSettings = widget.initialSettings;
     _jsonSchemaController.text = _currentSettings.customJsonSchema ?? '';
+    _systemPromptController.text = _currentSettings.systemPrompt;
   }
 
   @override
   void dispose() {
     _jsonSchemaController.dispose();
+    _systemPromptController.dispose();
     super.dispose();
   }
 
@@ -97,6 +100,85 @@ class _SettingsScreenState extends State<SettingsScreen> {
         padding: const EdgeInsets.all(16.0),
         child: ListView(
           children: [
+            // System Prompt
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'System prompt',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      key: const Key('system_prompt_field'),
+                      controller: _systemPromptController,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        hintText: 'Введите system prompt...',
+                      ),
+                      onChanged: (value) {
+                        _currentSettings = _currentSettings.copyWith(
+                          systemPrompt: value,
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // History Depth
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Глубина истории',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Количество последних сообщений в контексте'),
+                        Text('${/* display */ _currentSettings.historyDepth}')
+                      ],
+                    ),
+                    Slider(
+                      key: const Key('history_depth_slider'),
+                      value: _currentSettings.historyDepth.toDouble().clamp(0, 100),
+                      min: 0,
+                      max: 100,
+                      divisions: 20,
+                      label: _currentSettings.historyDepth.toString(),
+                      onChanged: (v) {
+                        setState(() {
+                          _currentSettings = _currentSettings.copyWith(historyDepth: v.round());
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Подсказка: больше — точнее контекст, но выше расход токенов. Рекомендуется 10–40.',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
             // Neural Network Selection
             Card(
               child: Padding(
@@ -197,6 +279,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       const SizedBox(height: 8),
                       TextField(
+                        key: const Key('json_schema_field'),
                         controller: _jsonSchemaController,
                         maxLines: 5,
                         decoration: const InputDecoration(
