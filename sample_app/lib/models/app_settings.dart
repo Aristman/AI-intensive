@@ -3,6 +3,8 @@ enum NeuralNetwork { deepseek, yandexgpt }
 
 enum ResponseFormat { text, json }
 
+enum MCPProvider { github }
+
 class AppSettings {
   final NeuralNetwork selectedNetwork;
   final ResponseFormat responseFormat;
@@ -10,6 +12,8 @@ class AppSettings {
   final String systemPrompt;
   final int historyDepth; // количество последних сообщений, передаваемых в контекст
   final bool reasoningMode; // режим рассуждения
+  final Set<MCPProvider> enabledMCPProviders;
+  final String? githubMcpToken;
 
   const AppSettings({
     this.selectedNetwork = NeuralNetwork.deepseek,
@@ -18,6 +22,8 @@ class AppSettings {
     this.systemPrompt = 'You are a helpful assistant.',
     this.historyDepth = 20,
     this.reasoningMode = false,
+    this.enabledMCPProviders = const {},
+    this.githubMcpToken,
   });
 
   // Create a copy with some changed fields
@@ -28,6 +34,8 @@ class AppSettings {
     String? systemPrompt,
     int? historyDepth,
     bool? reasoningMode,
+    Set<MCPProvider>? enabledMCPProviders,
+    String? githubMcpToken,
   }) {
     return AppSettings(
       selectedNetwork: selectedNetwork ?? this.selectedNetwork,
@@ -36,6 +44,8 @@ class AppSettings {
       systemPrompt: systemPrompt ?? this.systemPrompt,
       historyDepth: historyDepth ?? this.historyDepth,
       reasoningMode: reasoningMode ?? this.reasoningMode,
+      enabledMCPProviders: enabledMCPProviders ?? this.enabledMCPProviders,
+      githubMcpToken: githubMcpToken ?? this.githubMcpToken,
     );
   }
 
@@ -87,6 +97,8 @@ class AppSettings {
         return 'JSON';
     }
   }
+
+  bool get isGithubMcpEnabled => enabledMCPProviders.contains(MCPProvider.github);
 }
 
 // Run this command to generate the .g.dart file:

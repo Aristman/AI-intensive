@@ -1,12 +1,17 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:sample_app/models/app_settings.dart';
 
 class SettingsService {
   static const String _settingsKey = 'app_settings';
   
   // Default settings
-  static const AppSettings _defaultSettings = AppSettings();
+  static AppSettings _getDefaultSettings() {
+    return AppSettings(
+      githubMcpToken: dotenv.env['GITHUB_MCP_TOKEN'] ?? '',
+    );
+  }
   
   // Get settings from SharedPreferences
   Future<AppSettings> getSettings() async {
@@ -14,7 +19,7 @@ class SettingsService {
     final settingsJson = prefs.getString(_settingsKey);
     
     if (settingsJson == null) {
-      return _defaultSettings;
+      return _getDefaultSettings();
     }
     
     try {
@@ -22,7 +27,7 @@ class SettingsService {
       return AppSettings.fromJson(jsonMap);
     } catch (e) {
       print('Error loading settings: $e');
-      return _defaultSettings;
+      return _getDefaultSettings();
     }
   }
   

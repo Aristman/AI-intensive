@@ -317,6 +317,69 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
             ),
+            const SizedBox(height: 16),
+            // MCP Provider Selection
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Выбор MCP',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      title: const Text('Github MCP'),
+                      value: _currentSettings.isGithubMcpEnabled,
+                      onChanged: (bool? value) {
+                        setState(() {
+                          final updatedProviders = Set<MCPProvider>.from(_currentSettings.enabledMCPProviders);
+                          if (value == true) {
+                            updatedProviders.add(MCPProvider.github);
+                          } else {
+                            updatedProviders.remove(MCPProvider.github);
+                          }
+                          _currentSettings = _currentSettings.copyWith(
+                            enabledMCPProviders: updatedProviders,
+                          );
+                        });
+                      },
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+                    if (_currentSettings.isGithubMcpEnabled) ...[
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Github MCP Token',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        key: const Key('github_mcp_token_field'),
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          hintText: 'Введите токен для Github MCP...',
+                          labelText: 'Токен',
+                        ),
+                        onChanged: (value) {
+                          _currentSettings = _currentSettings.copyWith(
+                            githubMcpToken: value,
+                          );
+                        },
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       ),
