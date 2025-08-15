@@ -3,6 +3,7 @@ import 'package:sample_app/domain/llm_usecase.dart';
 import 'package:sample_app/data/llm/deepseek_usecase.dart';
 import 'package:sample_app/data/llm/yandexgpt_usecase.dart';
 import 'package:sample_app/models/app_settings.dart';
+import 'package:sample_app/services/mcp_integration_service.dart';
 
 class ReasoningResult {
   final String text;
@@ -54,12 +55,14 @@ class ReasoningAgent {
   final List<_Msg> _history = [];
   AppSettings _settings;
   final String? extraSystemPrompt; // дополнительный системный промпт
+  final McpIntegrationService _mcpIntegrationService;
 
   ReasoningAgent({AppSettings? baseSettings, this.extraSystemPrompt})
       : _settings = (baseSettings ?? const AppSettings()).copyWith(
           reasoningMode: true,
           // формат ответа оставляем согласно настройкам; по умолчанию пусть будет текст
-        );
+        ),
+        _mcpIntegrationService = McpIntegrationService();
 
   void updateSettings(AppSettings settings) {
     _settings = settings.copyWith(reasoningMode: true);
@@ -106,9 +109,12 @@ class ReasoningAgent {
     return '${_settings.systemPrompt}\n\n$uncertaintyPolicy$extras';
   }
 
-  Future<ReasoningResult> ask(String userText) async {
+  Future<Map<String, dynamic>> ask(String userText) async {
     if (userText.trim().isEmpty) {
-      return const ReasoningResult(text: '', isFinal: false);
+      return {
+        'result': const ReasoningResult(text: '', isFinal: false),
+        'mcp_used': false,
+      };
     }
 
     // обновляем историю в пределах лимита
@@ -118,7 +124,13 @@ class ReasoningAgent {
       _history.removeRange(0, _history.length - limit);
     }
 
-    final system = _buildSystemContent();
+    // Обогащаем контекст через MCP сервис
+    final enrichedContext = await _mcpIntegrationService.enrichContext(userText, _settings);
+    
+    // Формируем системный промпт с учетом MCP данных
+    final baseSystem = _buildSystemContent();
+    final system = _mcpIntegrationService.buildEnrichedSystemPrompt(baseSystem, enrichedContext);
+
     final messages = <Map<String, String>>[
       {'role': 'system', 'content': system},
       for (final m in _history) {'role': m.role, 'content': m.content},
@@ -146,16 +158,22 @@ class ReasoningAgent {
         _history.removeRange(0, _history.length - limit);
       }
 
-      return ReasoningResult(
-        text: answer,
-        isFinal: hasStop,
-      );
+      return {
+        'result': ReasoningResult(
+          text: answer,
+          isFinal: hasStop,
+        ),
+        'mcp_used': enrichedContext['mcp_used'] ?? false,
+      };
     } catch (e) {
       // В случае ошибки не меняем историю и возвращаем сообщение ошибки как текст
-      return ReasoningResult(
-        text: 'Ошибка: $e',
-        isFinal: true,
-      );
+      return {
+        'result': ReasoningResult(
+          text: 'Ошибка: $e',
+          isFinal: true,
+        ),
+        'mcp_used': false,
+      };
     }
   }
 }

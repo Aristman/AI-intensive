@@ -4,6 +4,7 @@ import 'package:sample_app/data/llm/deepseek_usecase.dart';
 import 'package:sample_app/data/llm/yandexgpt_usecase.dart';
 import 'package:sample_app/domain/llm_usecase.dart';
 import 'package:sample_app/models/app_settings.dart';
+import 'package:sample_app/services/mcp_integration_service.dart';
 
 class AgentMessage {
   final String role; // 'user' | 'assistant' | 'system'
@@ -15,9 +16,12 @@ class Agent {
   final _controller = StreamController<String>.broadcast();
   final List<AgentMessage> _history = [];
   AppSettings _settings;
+  final McpIntegrationService _mcpIntegrationService;
   static const String stopSequence = '<END>';
 
-  Agent({required AppSettings initialSettings}) : _settings = initialSettings;
+  Agent({required AppSettings initialSettings})
+      : _settings = initialSettings,
+        _mcpIntegrationService = McpIntegrationService();
 
   Stream<String> get responses => _controller.stream;
 
@@ -81,7 +85,12 @@ class Agent {
       _history.removeRange(0, _history.length - limit);
     }
 
-    final system = _buildSystemContent();
+    // Обогащаем контекст через MCP сервис
+    final enrichedContext = await _mcpIntegrationService.enrichContext(userText, _settings);
+    
+    // Формируем системный промпт с учетом MCP данных
+    final baseSystem = _buildSystemContent();
+    final system = _mcpIntegrationService.buildEnrichedSystemPrompt(baseSystem, enrichedContext);
 
     final messages = <Map<String, String>>[
       {'role': 'system', 'content': system},

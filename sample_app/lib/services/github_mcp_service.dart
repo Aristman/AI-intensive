@@ -1,7 +1,7 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:sample_app/models/app_settings.dart';
 
 /// Сервис для взаимодействия с Github MCP
 class GithubMcpService {
@@ -109,6 +109,21 @@ class GithubMcpService {
 
       return response.statusCode == 200;
     } catch (e) {
+      return false;
+    }
+  }
+
+  /// Валидация токена из .env файла
+  Future<bool> validateTokenFromEnv() async {
+    try {
+      final token = dotenv.env['GITHUB_MCP_TOKEN'];
+      if (token == null || token.isEmpty) {
+        return false;
+      }
+      
+      return await validateToken(token);
+    } catch (e) {
+      debugPrint('Ошибка валидации токена из .env: $e');
       return false;
     }
   }

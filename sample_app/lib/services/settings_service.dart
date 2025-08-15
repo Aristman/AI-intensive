@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:sample_app/models/app_settings.dart';
@@ -26,7 +27,7 @@ class SettingsService {
       final jsonMap = jsonDecode(settingsJson) as Map<String, dynamic>;
       return AppSettings.fromJson(jsonMap);
     } catch (e) {
-      print('Error loading settings: $e');
+      log('Error loading settings: $e');
       return _getDefaultSettings();
     }
   }
@@ -38,7 +39,7 @@ class SettingsService {
       final settingsJson = jsonEncode(settings.toJson());
       return await prefs.setString(_settingsKey, settingsJson);
     } catch (e) {
-      print('Error saving settings: $e');
+      log('Error saving settings: $e');
       return false;
     }
   }
