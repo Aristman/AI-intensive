@@ -96,6 +96,52 @@ class GithubMcpService {
     }
   }
 
+  /// Создание issue в репозитории
+  Future<Map<String, dynamic>> createIssue(
+    String owner,
+    String repo,
+    String title,
+    String body,
+    String token,
+  ) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_githubApiBaseUrl/repos/$owner/$repo/issues'),
+        headers: {
+          'Authorization': 'token $token',
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'title': title,
+          if (body.isNotEmpty) 'body': body,
+        }),
+      );
+
+      if (response.statusCode == 201) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      } else {
+        throw Exception('Failed to create issue: ${response.statusCode} ${response.body}');
+      }
+    } catch (e) {
+      throw Exception('Error creating issue: $e');
+    }
+  }
+
+  /// Создание issue с использованием токена из .env
+  Future<Map<String, dynamic>> createIssueFromEnv(
+    String owner,
+    String repo,
+    String title,
+    String body,
+  ) async {
+    final token = dotenv.env['GITHUB_MCP_TOKEN'];
+    if (token == null || token.isEmpty) {
+      throw Exception('GITHUB_MCP_TOKEN not found in .env');
+    }
+    return createIssue(owner, repo, title, body, token);
+  }
+
   /// Проверка валидности токена
   Future<bool> validateToken(String token) async {
     try {

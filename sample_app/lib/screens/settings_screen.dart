@@ -28,6 +28,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _systemPromptController = TextEditingController();
   bool _isGithubTokenValid = false;
   bool _isValidatingToken = false;
+  // Controllers for quick GitHub Issue creation
+  final _repoOwnerController = TextEditingController();
+  final _repoNameController = TextEditingController();
+  final _issueTitleController = TextEditingController();
+  final _issueBodyController = TextEditingController();
+  bool _isCreatingIssue = false;
 
   @override
   void initState() {
@@ -64,10 +70,64 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _handleCreateIssue() async {
+    if (!_isGithubTokenValid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Сначала добавьте валидный GITHUB_MCP_TOKEN в .env'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final owner = _repoOwnerController.text.trim();
+    final repo = _repoNameController.text.trim();
+    final title = _issueTitleController.text.trim();
+    final body = _issueBodyController.text.trim();
+
+    if (owner.isEmpty || repo.isEmpty || title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Укажите владельца, репозиторий и заголовок issue'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isCreatingIssue = true);
+    try {
+      final result = await _githubMcpService.createIssueFromEnv(owner, repo, title, body);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Issue создан: #${result['number']}'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Ошибка при создании issue: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isCreatingIssue = false);
+    }
+  }
+
   @override
   void dispose() {
     _jsonSchemaController.dispose();
     _systemPromptController.dispose();
+    _repoOwnerController.dispose();
+    _repoNameController.dispose();
+    _issueTitleController.dispose();
+    _issueBodyController.dispose();
     super.dispose();
   }
 
@@ -455,6 +515,87 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.grey[600],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Card(
+                        elevation: 0,
+                        color: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          side: BorderSide(color: Colors.grey[300]!),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Быстрый тест: создать GitHub Issue',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextField(
+                                      controller: _repoOwnerController,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Владелец (owner)',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: TextField(
+                                      controller: _repoNameController,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Репозиторий (repo)',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: _issueTitleController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Заголовок issue',
+                                  border: OutlineInputBorder(),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: _issueBodyController,
+                                maxLines: 3,
+                                decoration: const InputDecoration(
+                                  labelText: 'Описание (опционально)',
+                                  border: OutlineInputBorder(),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  onPressed: (!_isGithubTokenValid || _isCreatingIssue)
+                                      ? null
+                                      : _handleCreateIssue,
+                                  icon: _isCreatingIssue
+                                      ? const SizedBox(
+                                          height: 16,
+                                          width: 16,
+                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                        )
+                                      : const Icon(Icons.add_task),
+                                  label: Text(_isCreatingIssue
+                                      ? 'Создание...'
+                                      : 'Создать issue'),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ],
