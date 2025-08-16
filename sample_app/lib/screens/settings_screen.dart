@@ -246,7 +246,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<NeuralNetwork>(
-                      initialValue: _currentSettings.selectedNetwork,
+                      value: _currentSettings.selectedNetwork,
                       items: NeuralNetwork.values.map((network) {
                         return DropdownMenuItem<NeuralNetwork>(
                           value: network,
@@ -293,7 +293,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<ResponseFormat>(
-                      initialValue: _currentSettings.responseFormat,
+                      value: _currentSettings.responseFormat,
                       items: ResponseFormat.values.map((format) {
                         return DropdownMenuItem<ResponseFormat>(
                           value: format,
