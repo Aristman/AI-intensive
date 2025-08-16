@@ -30,6 +30,8 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isLoadingSettings = true;
   SimpleAgent? _simpleAgent;
   ReasoningAgent? _reasoningAgent;
+  bool _isUsingMcp = false;
+  Timer? _mcpIndicatorTimer;
 
   bool get _useReasoning => widget.reasoningOverride == true;
 
@@ -193,10 +195,14 @@ class _ChatScreenState extends State<ChatScreen> {
   void _sendMessage(String text) async {
     if (text.trim().isEmpty || _isLoading) return;
 
+    // Отменяем предыдущий таймер, если он был
+    _mcpIndicatorTimer?.cancel();
+
     setState(() {
       _messages.add(Message(text: text, isUser: true));
       _textController.clear();
       _isLoading = true;
+      _isUsingMcp = false;
     });
 
     _scrollToBottom();
@@ -206,19 +212,35 @@ class _ChatScreenState extends State<ChatScreen> {
         final res = await _reasoningAgent!.ask(text);
         setState(() {
           _isLoading = false;
-          _messages.add(Message(text: res.text, isUser: false, isFinal: res.isFinal));
+          _isUsingMcp = res['mcp_used'] ?? false;
+          final result = res['result'] as ReasoningResult;
+          _messages.add(Message(text: result.text, isUser: false, isFinal: result.isFinal));
         });
       } else {
         final answer = await _simpleAgent!.ask(text);
         setState(() {
           _isLoading = false;
-          _messages.add(Message(text: answer, isUser: false));
+          _isUsingMcp = answer['mcp_used'] ?? false;
+          _messages.add(Message(text: answer['answer'] as String, isUser: false));
         });
       }
+      
+      // Если MCP был использован, устанавливаем таймер для скрытия индикатора
+      if (_isUsingMcp) {
+        _mcpIndicatorTimer = Timer(const Duration(seconds: 5), () {
+          if (mounted) {
+            setState(() {
+              _isUsingMcp = false;
+            });
+          }
+        });
+      }
+      
       _scrollToBottom();
     } catch (e) {
       setState(() {
         _isLoading = false;
+        _isUsingMcp = false;
         _messages.add(Message(text: 'Ошибка: $e', isUser: false));
       });
       _scrollToBottom();
@@ -239,6 +261,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _textController.dispose();
     _scrollController.dispose();
+    _mcpIndicatorTimer?.cancel();
     // SimpleAgent/ReasoningAgent не требуют dispose
     super.dispose();
   }
@@ -255,7 +278,41 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title),
+        title: Row(
+          children: [
+            Text(widget.title),
+            if (_isUsingMcp) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade100,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.green.shade300),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.integration_instructions,
+                      size: 14,
+                      color: Colors.green.shade700,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'MCP',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
         actions: [
           if (_useReasoning)
             IconButton(

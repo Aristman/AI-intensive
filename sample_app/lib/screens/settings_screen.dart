@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/settings_service.dart';
+import 'package:sample_app/services/github_mcp_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   static const Key settingsScreenKey = Key('settings_screen');
@@ -10,20 +11,23 @@ class SettingsScreen extends StatefulWidget {
   final Function(AppSettings) onSettingsChanged;
 
   const SettingsScreen({
-    Key? key,
+    super.key,
     required this.initialSettings,
     required this.onSettingsChanged,
-  }) : super(key: key);
+  });
 
   @override
-  _SettingsScreenState createState() => _SettingsScreenState();
+  State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
   late AppSettings _currentSettings;
   final _settingsService = SettingsService();
+  final _githubMcpService = GithubMcpService();
   final _jsonSchemaController = TextEditingController();
   final _systemPromptController = TextEditingController();
+  bool _isGithubTokenValid = false;
+  bool _isValidatingToken = false;
 
   @override
   void initState() {
@@ -31,6 +35,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _currentSettings = widget.initialSettings;
     _jsonSchemaController.text = _currentSettings.customJsonSchema ?? '';
     _systemPromptController.text = _currentSettings.systemPrompt;
+    _checkGithubTokenValidity();
+  }
+
+  Future<void> _checkGithubTokenValidity() async {
+    // Проверяем наличие токена в .env файле
+    final isValid = await _githubMcpService.validateTokenFromEnv();
+    
+    if (mounted) {
+      setState(() {
+        _isGithubTokenValid = isValid;
+      });
+    }
+  }
+
+  Future<void> _validateGithubToken(String token) async {
+    // Этот метод больше не нужен, так как токен берется из .env
+    // Оставляем для совместимости, но перенаправляем на проверку токена из .env
+    await _checkGithubTokenValidity();
+    
+    if (mounted && !_isGithubTokenValid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('GitHub токен не найден в .env файле или недействителен'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   @override
@@ -215,7 +246,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<NeuralNetwork>(
-                      value: _currentSettings.selectedNetwork,
+                      initialValue: _currentSettings.selectedNetwork,
                       items: NeuralNetwork.values.map((network) {
                         return DropdownMenuItem<NeuralNetwork>(
                           value: network,
@@ -262,7 +293,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<ResponseFormat>(
-                      value: _currentSettings.responseFormat,
+                      initialValue: _currentSettings.responseFormat,
                       items: ResponseFormat.values.map((format) {
                         return DropdownMenuItem<ResponseFormat>(
                           value: format,
@@ -311,6 +342,120 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             customJsonSchema: value.isEmpty ? null : value,
                           );
                         },
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // MCP Provider Selection
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Выбор MCP',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      title: const Text('Github MCP'),
+                      value: _currentSettings.isGithubMcpEnabled,
+                      onChanged: (bool? value) {
+                        setState(() {
+                          final updatedProviders = Set<MCPProvider>.from(_currentSettings.enabledMCPProviders);
+                          if (value == true) {
+                            updatedProviders.add(MCPProvider.github);
+                          } else {
+                            updatedProviders.remove(MCPProvider.github);
+                          }
+                          _currentSettings = _currentSettings.copyWith(
+                            enabledMCPProviders: updatedProviders,
+                          );
+                        });
+                      },
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+                    if (_currentSettings.isGithubMcpEnabled) ...[
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey[300]!),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.info_outline,
+                                  color: Colors.blue[600],
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'Токен GitHub MCP',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Токен для GitHub MCP берется из файла .env.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Пожалуйста, добавьте GITHUB_MCP_TOKEN в .env файл для использования GitHub MCP.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Icon(
+                                  _isGithubTokenValid ? Icons.check_circle : Icons.error,
+                                  color: _isGithubTokenValid ? Colors.green : Colors.red,
+                                  size: 16,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _isGithubTokenValid ? '✅ Токен найден и действителен' : '❌ Токен не найден или недействителен',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: _isGithubTokenValid ? Colors.green : Colors.red,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'GitHub MCP будет использоваться для обогащения контекста при запросах, связанных с GitHub репозиториями.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[600],
+                        ),
                       ),
                     ],
                   ],

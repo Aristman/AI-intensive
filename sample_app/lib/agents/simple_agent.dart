@@ -2,6 +2,7 @@ import 'package:sample_app/domain/llm_usecase.dart';
 import 'package:sample_app/data/llm/deepseek_usecase.dart';
 import 'package:sample_app/data/llm/yandexgpt_usecase.dart';
 import 'package:sample_app/models/app_settings.dart';
+import 'package:sample_app/services/mcp_integration_service.dart';
 
 /// Простой агент-консультант.
 /// - Имеет базовый системный промпт для общих консультаций
@@ -14,13 +15,15 @@ class SimpleAgent {
       'Давай чёткие и понятные ответы. Если чего-то не знаешь — скажи об этом честно.';
 
   final AppSettings _settings;
+  final McpIntegrationService _mcpIntegrationService;
 
   SimpleAgent({AppSettings? baseSettings, String? systemPrompt})
       : _settings = (baseSettings ?? const AppSettings()).copyWith(
           reasoningMode: false,
           responseFormat: ResponseFormat.text,
           systemPrompt: systemPrompt ?? defaultSystemPrompt,
-        );
+        ),
+        _mcpIntegrationService = McpIntegrationService();
 
   LlmUseCase _resolveUseCase() {
     switch (_settings.selectedNetwork) {
@@ -32,16 +35,29 @@ class SimpleAgent {
   }
 
   /// Выполнить запрос к модели без сохранения истории
-  Future<String> ask(String userText) async {
-    if (userText.trim().isEmpty) return '';
+  Future<Map<String, dynamic>> ask(String userText) async {
+    if (userText.trim().isEmpty) return {'answer': '', 'mcp_used': false};
+
+    // Обогащаем контекст через MCP сервис
+    final enrichedContext = await _mcpIntegrationService.enrichContext(userText, _settings);
+    
+    // Формируем системный промпт с учетом MCP данных
+    final systemPrompt = _mcpIntegrationService.buildEnrichedSystemPrompt(
+      _settings.systemPrompt,
+      enrichedContext
+    );
 
     final messages = <Map<String, String>>[
-      {'role': 'system', 'content': _settings.systemPrompt},
+      {'role': 'system', 'content': systemPrompt},
       {'role': 'user', 'content': userText},
     ];
 
     final usecase = _resolveUseCase();
     final answer = await usecase.complete(messages: messages, settings: _settings);
-    return answer;
+    
+    return {
+      'answer': answer,
+      'mcp_used': enrichedContext['mcp_used'] ?? false,
+    };
   }
 }

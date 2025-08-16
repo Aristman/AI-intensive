@@ -216,9 +216,10 @@ class _MultiAgentsScreenState extends State<MultiAgentsScreen> {
       final res = await _agentA!.ask(text);
       if (_isDisposed) return;
       
-      _appendA(_Msg(res.text, false, isFinal: res.isFinal));
-      if (res.isFinal) {
-        await _sendFinalToB(res.text);
+      final result = res['result'] as ReasoningResult;
+      _appendA(_Msg(result.text, false, isFinal: result.isFinal));
+      if (result.isFinal) {
+        await _sendFinalToB(result.text);
       }
     } catch (e) {
       if (!_isDisposed) {
@@ -243,10 +244,11 @@ class _MultiAgentsScreenState extends State<MultiAgentsScreen> {
 
     try {
       final promptForB = 'Выполни задачу: $textFromA';
-      final answerB = await _agentB!.ask(promptForB);
+      final answerBData = await _agentB!.ask(promptForB);
       
       if (_isDisposed) return;
       
+      final answerB = answerBData['answer'] as String;
       _safeSetState(() {
         if (localWaitingIndex != null &&
             localWaitingIndex! >= 0 &&
