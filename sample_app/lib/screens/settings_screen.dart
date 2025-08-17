@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/settings_service.dart';
 import 'package:sample_app/services/github_mcp_service.dart';
+import 'package:sample_app/services/mcp_client.dart';
 
 class SettingsScreen extends StatefulWidget {
   static const Key settingsScreenKey = Key('settings_screen');
@@ -34,6 +35,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _issueTitleController = TextEditingController();
   final _issueBodyController = TextEditingController();
   bool _isCreatingIssue = false;
+  // MCP client and state
+  final McpClient _mcpClient = McpClient();
+  bool _mcpConnected = false;
+  bool _mcpInitialized = false;
+  bool _isCheckingMcp = false;
+  final _mcpUrlController = TextEditingController();
 
   @override
   void initState() {
@@ -41,6 +48,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _currentSettings = widget.initialSettings;
     _jsonSchemaController.text = _currentSettings.customJsonSchema ?? '';
     _systemPromptController.text = _currentSettings.systemPrompt;
+    _mcpUrlController.text = _currentSettings.mcpServerUrl ?? '';
     _checkGithubTokenValidity();
   }
 
@@ -71,16 +79,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _handleCreateIssue() async {
-    if (!_isGithubTokenValid) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Сначала добавьте валидный GITHUB_MCP_TOKEN в .env'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
     final owner = _repoOwnerController.text.trim();
     final repo = _repoNameController.text.trim();
     final title = _issueTitleController.text.trim();
@@ -98,15 +96,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     setState(() => _isCreatingIssue = true);
     try {
-      final result = await _githubMcpService.createIssueFromEnv(owner, repo, title, body);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Issue создан: #${result['number']}'),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      if (_currentSettings.useMcpServer) {
+        // Ensure MCP connected and initialized
+        if (!_mcpConnected) {
+          await _connectAndInitMcp();
+        }
+        final resp = await _mcpClient.toolsCall('create_issue', {
+          'owner': owner,
+          'repo': repo,
+          'title': title,
+          'body': body,
+        });
+        final issue = (resp is Map && resp['result'] is Map)
+            ? Map<String, dynamic>.from(resp['result'] as Map)
+            : <String, dynamic>{};
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Issue создан (MCP): #${issue['number'] ?? '?'}'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      } else {
+        if (!_isGithubTokenValid) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Сначала добавьте валидный GITHUB_MCP_TOKEN в .env или включите MCP сервер'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+        final result = await _githubMcpService.createIssueFromEnv(owner, repo, title, body);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Issue создан: #${result['number']}'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -120,6 +151,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _connectAndInitMcp() async {
+    final url = _currentSettings.mcpServerUrl?.trim();
+    if (url == null || url.isEmpty) {
+      throw Exception('MCP URL не указан');
+    }
+    await _mcpClient.connect(url);
+    setState(() {
+      _mcpConnected = true;
+    });
+    await _mcpClient.initialize();
+    setState(() {
+      _mcpInitialized = true;
+    });
+  }
+
+  Future<void> _checkMcp() async {
+    setState(() => _isCheckingMcp = true);
+    try {
+      await _connectAndInitMcp();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('MCP сервер доступен и инициализирован'), backgroundColor: Colors.green),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _mcpConnected = false;
+        _mcpInitialized = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось подключиться к MCP: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _isCheckingMcp = false);
+    }
+  }
+
   @override
   void dispose() {
     _jsonSchemaController.dispose();
@@ -128,6 +196,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _repoNameController.dispose();
     _issueTitleController.dispose();
     _issueBodyController.dispose();
+    _mcpUrlController.dispose();
+    _mcpClient.close();
     super.dispose();
   }
 
@@ -442,7 +512,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       },
                       controlAffinity: ListTileControlAffinity.leading,
                     ),
-                    if (_currentSettings.isGithubMcpEnabled) ...[
+                    if (_currentSettings.isGithubMcpEnabled || _currentSettings.useMcpServer) ...[
                       const SizedBox(height: 16),
                       Container(
                         padding: const EdgeInsets.all(12),
@@ -579,9 +649,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               SizedBox(
                                 width: double.infinity,
                                 child: ElevatedButton.icon(
-                                  onPressed: (!_isGithubTokenValid || _isCreatingIssue)
+                                  onPressed: _isCreatingIssue
                                       ? null
-                                      : _handleCreateIssue,
+                                      : (_currentSettings.useMcpServer
+                                          ? _handleCreateIssue
+                                          : (_isGithubTokenValid ? _handleCreateIssue : null)),
                                   icon: _isCreatingIssue
                                       ? const SizedBox(
                                           height: 16,
@@ -599,6 +671,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
                     ],
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // MCP Server settings
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'MCP сервер (WebSocket)',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    SwitchListTile(
+                      title: const Text('Использовать внешний MCP сервер'),
+                      value: _currentSettings.useMcpServer,
+                      onChanged: (v) {
+                        setState(() {
+                          _currentSettings = _currentSettings.copyWith(useMcpServer: v);
+                        });
+                      },
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      enabled: _currentSettings.useMcpServer,
+                      decoration: const InputDecoration(
+                        labelText: 'MCP WebSocket URL (например, ws://localhost:3001)',
+                        border: OutlineInputBorder(),
+                      ),
+                      controller: _mcpUrlController,
+                      onChanged: (v) {
+                        _currentSettings = _currentSettings.copyWith(mcpServerUrl: v);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: !_currentSettings.useMcpServer || _isCheckingMcp ? null : _checkMcp,
+                          icon: _isCheckingMcp
+                              ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.link),
+                          label: Text(_isCheckingMcp ? 'Проверка...' : 'Проверить MCP'),
+                        ),
+                        const SizedBox(width: 12),
+                        Icon(
+                          _mcpConnected && _mcpInitialized ? Icons.check_circle : Icons.error,
+                          color: _mcpConnected && _mcpInitialized ? Colors.green : Colors.red,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _mcpConnected && _mcpInitialized
+                              ? 'Подключено и инициализировано'
+                              : 'Не подключено',
+                          style: TextStyle(
+                            color: _mcpConnected && _mcpInitialized ? Colors.green : Colors.red,
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
