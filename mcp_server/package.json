@@ -1,0 +1,15 @@
+{
+  "name": "mcp-github-server",
+  "version": "1.0.0",
+  "description": "Minimal MCP server over WebSocket exposing GitHub tools",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "ws": "^8.18.0"
+  }
+}
