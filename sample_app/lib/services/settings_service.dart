@@ -9,8 +9,15 @@ class SettingsService {
   
   // Default settings
   static AppSettings _getDefaultSettings() {
+    String token = '';
+    try {
+      token = dotenv.env['GITHUB_MCP_TOKEN'] ?? '';
+    } catch (e) {
+      // Dotenv not initialized in tests or runtime: fall back to empty token
+      token = '';
+    }
     return AppSettings(
-      githubMcpToken: dotenv.env['GITHUB_MCP_TOKEN'] ?? '',
+      githubMcpToken: token,
     );
   }
   
