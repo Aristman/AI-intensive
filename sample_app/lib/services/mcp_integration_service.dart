@@ -2,6 +2,7 @@ import 'dart:developer';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/github_mcp_service.dart';
+import 'package:sample_app/services/mcp_client.dart';
 
 /// Сервис для интеграции MCP провайдеров в процесс общения с LLM
 class McpIntegrationService {
@@ -18,21 +19,105 @@ class McpIntegrationService {
       'mcp_used': false,
     };
 
+    /// Обрабатывает запрос, связанный с GitHub, через MCP сервер
+    Future<Map<String, dynamic>> _processGithubQueryViaMcp(String query, AppSettings settings) async {
+      final githubData = <String, dynamic>{};
+      final lowerQuery = query.toLowerCase();
+
+      final repoPattern = RegExp(r'github\.com/([^/]+)/([^/\s]+)');
+      final ownerRepoPattern = RegExp(r'([^\s/]+)/([^\s/]+)');
+
+      final client = McpClient();
+      try {
+        final url = settings.mcpServerUrl?.trim();
+        if (url == null || url.isEmpty) return githubData;
+        await client.connect(url);
+        await client.initialize();
+
+        // Поиск github.com/owner/repo
+        final repoMatch = repoPattern.firstMatch(query);
+        if (repoMatch != null) {
+          final owner = repoMatch.group(1);
+          final repo = repoMatch.group(2);
+          if (owner != null && repo != null) {
+            try {
+              final resp = await client.toolsCall('get_repo', {
+                'owner': owner,
+                'repo': repo,
+              }) as Map<String, dynamic>;
+              final result = resp['result'] ?? resp; // сервер возвращает {result}, но подстрахуемся
+              if (result is Map<String, dynamic>) {
+                githubData['repository'] = result;
+              }
+            } catch (e) {
+              log('Ошибка MCP get_repo: $e');
+            }
+          }
+        } else {
+          // Поиск owner/repo
+          final ownerRepoMatch = ownerRepoPattern.firstMatch(query);
+          if (ownerRepoMatch != null) {
+            final owner = ownerRepoMatch.group(1);
+            final repo = ownerRepoMatch.group(2);
+            if (owner != null && repo != null && !_isCommonWord(owner) && !_isCommonWord(repo)) {
+              try {
+                final resp = await client.toolsCall('get_repo', {
+                  'owner': owner,
+                  'repo': repo,
+                }) as Map<String, dynamic>;
+                final result = resp['result'] ?? resp;
+                if (result is Map<String, dynamic>) {
+                  githubData['repository'] = result;
+                }
+              } catch (e) {
+                log('Ошибка MCP get_repo (owner/repo): $e');
+              }
+            }
+          }
+        }
+
+        if (_containsSearchKeywords(lowerQuery)) {
+          try {
+            final searchTerms = _extractSearchTerms(query);
+            if (searchTerms.isNotEmpty) {
+              final resp = await client.toolsCall('search_repos', {
+                'query': searchTerms,
+              }) as Map<String, dynamic>;
+              final result = resp['result'] ?? resp;
+              if (result is List) {
+                githubData['search_results'] = result.take(5).toList();
+              }
+            }
+          } catch (e) {
+            log('Ошибка MCP search_repos: $e');
+          }
+        }
+      } finally {
+        await client.close();
+      }
+
+      return githubData;
+    }
+
     // Проверяем, включен ли GitHub MCP
     if (settings.isGithubMcpEnabled) {
-      // Получаем токен из .env файла
-      final token = dotenv.env['GITHUB_MCP_TOKEN'];
-      if (token?.isNotEmpty == true) {
-        try {
-          final githubData = await _processGithubQuery(userQuery, token!);
-          if (githubData.isNotEmpty) {
-            enrichedContext['mcp_data']['github'] = githubData;
-            enrichedContext['mcp_used'] = true;
+      try {
+        Map<String, dynamic> githubData = {};
+        if (settings.useMcpServer) {
+          githubData = await _processGithubQueryViaMcp(userQuery, settings);
+        } else {
+          final token = dotenv.env['GITHUB_MCP_TOKEN'];
+          if (token?.isNotEmpty == true) {
+            githubData = await _processGithubQuery(userQuery, token!);
           }
-        } catch (e) {
-          // Если произошла ошибка при работе с GitHub MCP, продолжаем без него
-          log('Ошибка при обработке GitHub MCP: $e');
         }
+        if (githubData.isNotEmpty) {
+          enrichedContext['mcp_data']['github'] = githubData;
+          enrichedContext['mcp_used'] = true;
+        }
+      } catch (e) {
+        // Если произошла ошибка при работе с GitHub MCP, продолжаем без него
+        log('Ошибка при обработке GitHub MCP: $e');
       }
     }
 

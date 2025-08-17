@@ -14,6 +14,8 @@ class AppSettings {
   final bool reasoningMode; // режим рассуждения
   final Set<MCPProvider> enabledMCPProviders;
   final String? githubMcpToken;
+  final bool useMcpServer; // использовать ли внешний MCP-сервер
+  final String? mcpServerUrl; // адрес WebSocket MCP сервера
 
   const AppSettings({
     this.selectedNetwork = NeuralNetwork.deepseek,
@@ -24,6 +26,8 @@ class AppSettings {
     this.reasoningMode = false,
     this.enabledMCPProviders = const {},
     this.githubMcpToken,
+    this.useMcpServer = false,
+    this.mcpServerUrl = 'ws://localhost:3001',
   });
 
   // Create a copy with some changed fields
@@ -36,6 +40,8 @@ class AppSettings {
     bool? reasoningMode,
     Set<MCPProvider>? enabledMCPProviders,
     String? githubMcpToken,
+    bool? useMcpServer,
+    String? mcpServerUrl,
   }) {
     return AppSettings(
       selectedNetwork: selectedNetwork ?? this.selectedNetwork,
@@ -46,6 +52,8 @@ class AppSettings {
       reasoningMode: reasoningMode ?? this.reasoningMode,
       enabledMCPProviders: enabledMCPProviders ?? this.enabledMCPProviders,
       githubMcpToken: githubMcpToken ?? this.githubMcpToken,
+      useMcpServer: useMcpServer ?? this.useMcpServer,
+      mcpServerUrl: mcpServerUrl ?? this.mcpServerUrl,
     );
   }
 
@@ -58,6 +66,10 @@ class AppSettings {
       'systemPrompt': systemPrompt,
       'historyDepth': historyDepth,
       'reasoningMode': reasoningMode,
+      'githubMcpToken': githubMcpToken,
+      'enabledMCPProviders': enabledMCPProviders.map((e) => e.toString().split('.').last).toList(),
+      'useMcpServer': useMcpServer,
+      'mcpServerUrl': mcpServerUrl,
     };
   }
 
@@ -76,6 +88,16 @@ class AppSettings {
       systemPrompt: (json['systemPrompt'] as String?) ?? 'You are a helpful assistant.',
       historyDepth: (json['historyDepth'] as int?) ?? 20,
       reasoningMode: (json['reasoningMode'] as bool?) ?? false,
+      githubMcpToken: json['githubMcpToken'] as String?,
+      enabledMCPProviders: ((json['enabledMCPProviders'] as List?) ?? const <dynamic>[]) 
+          .map((e) => e.toString())
+          .map((name) => MCPProvider.values.firstWhere(
+                (p) => p.toString() == 'MCPProvider.' + name,
+                orElse: () => MCPProvider.github,
+              ))
+          .toSet(),
+      useMcpServer: (json['useMcpServer'] as bool?) ?? false,
+      mcpServerUrl: (json['mcpServerUrl'] as String?) ?? 'ws://localhost:3001',
     );
   }
 

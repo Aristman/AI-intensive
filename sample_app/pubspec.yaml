@@ -38,6 +38,7 @@ dependencies:
   flutter_dotenv: ^5.1.0  # Для работы с переменными окружения
   shared_preferences: ^2.2.2  # Для хранения настроек
   json_annotation: ^4.8.1  # Для работы с JSON
+  web_socket_channel: ^2.4.0  # WebSocket клиент для MCP
 
 dev_dependencies:
   flutter_test:
