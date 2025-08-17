@@ -17,14 +17,16 @@ samples, guidance on mobile development, and a full API reference.
 
 ## MCP GitHub интеграция
 
+Примечание: cейчас MCP сервер расположен на верхнем уровне проекта в папке `mcp_server/` (раньше был в `sample_app/mcp_server/`).
+
 Этот проект включает поддержку работы с GitHub через внешний MCP сервер (Node.js) по WebSocket JSON-RPC. Это позволяет безопасно выносить GitHub‑токен на сервер и вызывать инструменты (`get_repo`, `search_repos`, `create_issue`) из Flutter‑приложения.
 
 ### 1) Установка и запуск MCP сервера
-- Код сервера: `sample_app/mcp_server/` (см. подробный `README.md` в этой папке)
+- Код сервера: `mcp_server/` (см. подробный `README.md` в этой папке)
 - Шаги:
   1. Установите зависимости:
      ```powershell
-     cd sample_app/mcp_server
+     cd mcp_server
      npm install
      ```
   2. Создайте `.env` из шаблона и укажите токен:
@@ -36,7 +38,7 @@ samples, guidance on mobile development, and a full API reference.
      ```powershell
      npm start
      ```
-  Ожидаемый адрес: `ws://localhost:3001`. Подробности и JSON‑RPC примеры: `sample_app/mcp_server/README.md`.
+  Ожидаемый адрес: `ws://localhost:3001`. Подробности и JSON‑RPC примеры: `mcp_server/README.md`.
 
 ### 2) Настройка в приложении (Flutter)
 - Откройте экран настроек (`lib/screens/settings_screen.dart`).
@@ -50,17 +52,17 @@ samples, guidance on mobile development, and a full API reference.
 - При активном внешнем MCP сервере локальный токен в приложении не требуется. При выключенном — нужен `GITHUB_MCP_TOKEN` (режим прямых REST‑вызовов).
 
 ### 4) Основные файлы
-- MCP сервер: `sample_app/mcp_server/server.js`, конфиг `.env.example`, документация `sample_app/mcp_server/README.md`.
+- MCP сервер: `mcp_server/server.js`, конфиг `.env.example`, документация `mcp_server/README.md`.
 - MCP клиент: `lib/services/mcp_client.dart` (подключение, initialize, tools/list, tools/call).
 - Интеграция: `lib/services/mcp_integration_service.dart` (маршрутизация через MCP или прямые REST).
 - Настройки: `lib/models/app_settings.dart` — поля `useMcpServer`, `mcpServerUrl`, `enabledMCPProviders`.
 - UI настроек: `lib/screens/settings_screen.dart` — переключатели, ввод URL, проверка соединения, быстрый тест.
 
 ### 5) Безопасность
-- Токен GitHub (`GITHUB_TOKEN`) хранится только на стороне MCP сервера (`sample_app/mcp_server/.env`).
+- Токен GitHub (`GITHUB_TOKEN`) хранится только на стороне MCP сервера (`mcp_server/.env`).
 - Приложение при работе через MCP не передаёт токен по сети.
 
-См. также: `sample_app/mcp_server/README.md` для примеров JSON‑RPC (`get_repo`, `search_repos`, `create_issue`) и Dart‑примера вызова из Flutter.
+См. также: `mcp_server/README.md` для примеров JSON‑RPC (`get_repo`, `search_repos`, `create_issue`) и Dart‑примера вызова из Flutter.
 
 # Архитектурный анализ Flutter-проекта sample_app
 
