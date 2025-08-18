@@ -1,12 +1,41 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter/services.dart' show rootBundle;
 
 /// Сервис для взаимодействия с Github MCP
 class GithubMcpService {
   static const String _githubApiBaseUrl = 'https://api.github.com';
-  
+  static const String _envAssetPath = 'assets/.env';
+
+  /// Загружает GITHUB_MCP_TOKEN из assets/.env
+  Future<String?> _loadTokenFromAssets() async {
+    try {
+      final content = await rootBundle.loadString(_envAssetPath);
+      // Парсим .env: строки вида KEY=VALUE, игнорируем комментарии и пустые строки
+      final lines = const LineSplitter().convert(content);
+      for (final raw in lines) {
+        final line = raw.trim();
+        if (line.isEmpty || line.startsWith('#')) continue;
+        final eq = line.indexOf('=');
+        if (eq <= 0) continue;
+        final key = line.substring(0, eq).trim();
+        var value = line.substring(eq + 1).trim();
+        // Удаляем кавычки вокруг значения, если есть
+        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+          value = value.substring(1, value.length - 1);
+        }
+        if (key == 'GITHUB_MCP_TOKEN') {
+          return value;
+        }
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Не удалось загрузить assets/.env: $e');
+      return null;
+    }
+  }
+
   /// Получение информации о репозитории
   Future<Map<String, dynamic>> getRepositoryInfo(String owner, String repo, String token) async {
     try {
@@ -135,9 +164,9 @@ class GithubMcpService {
     String title,
     String body,
   ) async {
-    final token = dotenv.env['GITHUB_MCP_TOKEN'];
+    final token = await _loadTokenFromAssets();
     if (token == null || token.isEmpty) {
-      throw Exception('GITHUB_MCP_TOKEN not found in .env');
+      throw Exception('GITHUB_MCP_TOKEN not found in assets/.env');
     }
     return createIssue(owner, repo, title, body, token);
   }
@@ -161,17 +190,9 @@ class GithubMcpService {
 
   /// Валидация токена из .env файла
   Future<bool> validateTokenFromEnv() async {
-    try {
-      final token = dotenv.env['GITHUB_MCP_TOKEN'];
-      if (token == null || token.isEmpty) {
-        return false;
-      }
-      
-      return await validateToken(token);
-    } catch (e) {
-      debugPrint('Ошибка валидации токена из .env: $e');
-      return false;
-    }
+    final token = await _loadTokenFromAssets();
+    if (token == null || token.isEmpty) return false;
+    return await validateToken(token);
   }
 
   /// Анализ репозитория с использованием MCP
