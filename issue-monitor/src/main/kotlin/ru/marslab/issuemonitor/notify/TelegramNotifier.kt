@@ -1,39 +1,22 @@
 package ru.marslab.issuemonitor.notify
 
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import ru.marslab.issuemonitor.config.Config
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
-import java.util.concurrent.TimeUnit
+import ru.marslab.issuemonitor.mcp.McpClient
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
-class TelegramNotifier(private val config: Config) {
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .build()
+class TelegramNotifier(private val config: Config, private val mcp: McpClient) {
 
-    fun sendMessage(text: String) {
+    suspend fun sendMessage(text: String) {
         require(config.telegramEnabled) { "Telegram notifications disabled" }
-        require(config.telegramBotToken.isNotBlank()) { "TELEGRAM_BOT_TOKEN is not set" }
-        require(config.telegramChatId.isNotBlank()) { "TELEGRAM_CHAT_ID is not set" }
-
-        val url = "https://api.telegram.org/bot${config.telegramBotToken}/sendMessage"
-        val bodyForm = "chat_id=${urlEncode(config.telegramChatId)}&text=${urlEncode(text)}&parse_mode=HTML"
-        val req = Request.Builder()
-            .url(url)
-            .post(bodyForm.toRequestBody("application/x-www-form-urlencoded".toMediaType()))
-            .build()
-
-        client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                val err = resp.body?.string()
-                throw RuntimeException("Telegram sendMessage failed: ${resp.code} ${resp.message} ${err}")
-            }
+        // If TELEGRAM_DEFAULT_CHAT_ID is set on server, chat_id may be omitted
+        val args = buildJsonObject {
+            if (config.telegramChatId.isNotBlank()) put("chat_id", config.telegramChatId)
+            put("text", text)
+            put("parse_mode", "HTML")
+            put("disable_web_page_preview", true)
         }
+        // Use MCP server tool
+        mcp.toolsCall("tg_send_message", args)
     }
-
-    private fun urlEncode(s: String): String = URLEncoder.encode(s, StandardCharsets.UTF_8)
 }

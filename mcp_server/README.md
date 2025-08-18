@@ -1,12 +1,19 @@
-# MCP GitHub Server
+# MCP Server (GitHub + Telegram)
 
-Лёгкий MCP-сервер (WebSocket + JSON-RPC 2.0), предоставляющий инструменты GitHub: `get_repo`, `search_repos`, `create_issue`. Используется Flutter-приложением как внешний провайдер данных/действий.
+Лёгкий MCP-сервер (WebSocket + JSON-RPC 2.0), предоставляющий инструменты GitHub и Telegram, доступные через JSON-RPC по WebSocket.
+
+Server Info: name = `mcp-github-telegram-server`
 
 ## Возможности
 - Инструменты MCP:
   - `get_repo(owner, repo)` — получить информацию о репозитории GitHub
   - `search_repos(query)` — поиск репозиториев GitHub
   - `create_issue(owner, repo, title, body?)` — создать GitHub Issue
+  - `list_issues(owner, repo, state?, per_page?, page?)` — список issues репозитория. Возвращает только issues (PR исключены). Аргументы по умолчанию: `state = "open"`, `per_page = 5`, `page = 1`.
+  - `tg_send_message(chat_id?, text, parse_mode?, disable_web_page_preview?)` — отправить текстовое сообщение в Telegram.
+  - `tg_send_photo(chat_id?, photo, caption?, parse_mode?)` — отправить фото в Telegram.
+  - `tg_get_updates(offset?, timeout?, allowed_updates?)` — получить обновления (long polling) в Telegram.
+  - `create_issue_and_notify(owner, repo, title, body?, chat_id?, message_template?)` — создать issue и отправить уведомление в Telegram.
 - WebSocket JSON-RPC 2.0 интерфейс: методы `initialize`, `tools/list`, `tools/call`
 - Токен GitHub хранится только на сервере (безопасно)
 
@@ -24,6 +31,8 @@ npm install
 ```env
 GITHUB_TOKEN=ghp_xxx   # персональный токен, достаточные права для создания issues
 PORT=3001              # порт WebSocket сервера (по умолчанию 3001)
+TELEGRAM_BOT_TOKEN=xxx # Telegram Bot API токен
+TELEGRAM_DEFAULT_CHAT_ID=xxx # (рекомендуется) чат по умолчанию для отправки сообщений
 ```
 Рекомендации по токену:
 - Подходит classic с scope `repo` (или `public_repo` для публичных репозиториев),
@@ -68,6 +77,21 @@ npm start
 - `create_issue`
   - Вход: `{ owner: string, repo: string, title: string, body?: string }`
   - Результат: созданный issue
+- `list_issues`
+  - Вход: `{ owner: string, repo: string, state?: string, per_page?: number, page?: number }`
+  - Результат: список issues репозитория
+- `tg_send_message`
+  - Вход: `{ chat_id?: string, text: string, parse_mode?: string, disable_web_page_preview?: boolean }`
+  - Результат: отправленное сообщение
+- `tg_send_photo`
+  - Вход: `{ chat_id?: string, photo: string, caption?: string, parse_mode?: string }`
+  - Результат: отправленное фото
+- `tg_get_updates`
+  - Вход: `{ offset?: number, timeout?: number, allowed_updates?: string[] }`
+  - Результат: список обновлений
+- `create_issue_and_notify`
+  - Вход: `{ owner: string, repo: string, title: string, body?: string, chat_id?: string, message_template?: string }`
+  - Результат: созданный issue и отправленное уведомление
 
 ### Примеры JSON-RPC
 - Инициализация:
@@ -103,20 +127,20 @@ npm start
   "result": { "name": "create_issue", "result": { /* объект issue */ } }
 }
 ```
-
-### Дополнительные примеры JSON-RPC
-
-- Вызов инструмента `get_repo`:
+- Вызов инструмента `list_issues`:
 ```json
 {
   "jsonrpc": "2.0",
   "id": 4,
   "method": "tools/call",
   "params": {
-    "name": "get_repo",
+    "name": "list_issues",
     "arguments": {
       "owner": "Aristman",
-      "repo": "AI-intensive"
+      "repo": "AI-intensive",
+      "state": "open",
+      "per_page": 5,
+      "page": 1
     }
   }
 }
@@ -126,7 +150,7 @@ npm start
 {
   "jsonrpc": "2.0",
   "id": 4,
-  "result": { "name": "get_repo", "result": { /* объект репозитория */ } }
+  "result": { "name": "list_issues", "result": [ /* массив issues без PR */ ] }
 }
 ```
 
