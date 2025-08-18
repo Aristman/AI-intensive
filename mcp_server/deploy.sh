@@ -30,6 +30,14 @@ for f in ./*.js; do
   FILES+=("${f#./}")
 done
 
+# Include start scripts if present
+[[ -f start.sh ]] && FILES+=("start.sh")
+[[ -f start.ps1 ]] && FILES+=("start.ps1")
+[[ -f stop.sh ]] && FILES+=("stop.sh")
+[[ -f stop.ps1 ]] && FILES+=("stop.ps1")
+[[ -f install-systemd.sh ]] && FILES+=("install-systemd.sh")
+[[ -f uninstall-systemd.sh ]] && FILES+=("uninstall-systemd.sh")
+
 # Create remote dir
 ssh "$SERVER_ADDR" "mkdir -p '$DEST_PATH'"
 
@@ -40,6 +48,12 @@ for f in "${FILES[@]}"; do
     scp -q "$f" "$SERVER_ADDR:$DEST_PATH/"
   fi
 done
+
+# Copy .env if present (optional)
+if [[ -f ".env" ]]; then
+  echo "Uploading .env -> $SERVER_ADDR:$DEST_PATH/.env"
+  scp -q .env "$SERVER_ADDR:$DEST_PATH/.env"
+fi
 
 echo "Done. Remote path: $SERVER_ADDR:$DEST_PATH"
 echo "Tip: ssh $SERVER_ADDR 'cd $DEST_PATH && npm install && npm start'"

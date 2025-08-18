@@ -109,3 +109,80 @@ sudo systemctl status issue-monitor
 ## Примечания
 - Приложение толерантно к временным ошибкам MCP/сети: в случае ошибок делает паузу и повторяет попытку.
 - Для корректной работы MCP‑сервера обязательно укажите `GITHUB_TOKEN`, `TELEGRAM_BOT_TOKEN` и (рекомендуется) `TELEGRAM_DEFAULT_CHAT_ID` в его `.env` (см. `mcp_server/README.md`).
+
+## Деплой на удалённый сервер
+В каталоге `issue-monitor/` есть скрипты деплоя, которые копируют приложение на сервер с помощью `ssh/scp`.
+
+- Назначение по умолчанию: `ai-intensive/issue-monitor`
+- Копируется: последний fat‑jar из `build/libs/*-all.jar`, а также (при наличии) `README.md`, `config.properties` и `.env`
+
+Linux/macOS:
+```bash
+./gradlew :issue-monitor:build -x test
+./issue-monitor/deploy.sh user@your-host                      # в ai-intensive/issue-monitor
+./issue-monitor/deploy.sh user@your-host /opt/ai-intensive/issue-monitor  # в указанный путь
+```
+
+Windows (PowerShell):
+```powershell
+.\gradlew.bat :issue-monitor:build -x test
+powershell -ExecutionPolicy Bypass -File .\issue-monitor\deploy.ps1 -Server user@your-host
+powershell -ExecutionPolicy Bypass -File .\issue-monitor\deploy.ps1 -Server user@your-host -DestPath /opt/ai-intensive/issue-monitor
+```
+
+После копирования запустить на сервере (пример):
+```bash
+ssh user@your-host 'cd ai-intensive/issue-monitor && nohup java -jar issue-monitor-*-all.jar --interval=180 > app.log 2>&1 & disown'
+```
+
+Альтернатива: запуск через скрипты с подхватом переменных из `.env` и передачей аргументов
+```bash
+# Linux/macOS
+ssh user@your-host 'cd ai-intensive/issue-monitor && ./start.sh'                         # использует ./\.env
+ssh user@your-host 'cd ai-intensive/issue-monitor && ./start.sh /path/to/.env -- --interval=180'
+# запуск в фоне (daemon):
+ssh user@your-host 'cd ai-intensive/issue-monitor && ./start.sh -d -- --interval=180'    # nohup, логи в issue-monitor.log, PID в issue-monitor.pid
+
+# Windows (PowerShell на сервере Windows)
+powershell -ExecutionPolicy Bypass -File .\issue-monitor\start.ps1                      # использует .\.env
+powershell -ExecutionPolicy Bypass -File .\issue-monitor\start.ps1 -EnvPath C:\\path\\to\\.env -- --interval=180
+# запуск в фоне (daemon):
+powershell -ExecutionPolicy Bypass -File .\issue-monitor\start.ps1 -Background -- --interval=180
+```
+
+### Остановка
+
+```bash
+# Linux/macOS
+./stop.sh
+
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File .\stop.ps1
+```
+
+### Установка как systemd-сервис (Linux)
+
+Скрипт `install-systemd.sh` создаёт сервис и сразу запускает его. Можно передать дополнительные аргументы приложению через `--args`.
+
+```bash
+ssh user@your-host 'cd ai-intensive/issue-monitor && sudo ./install-systemd.sh \
+  --name ai-intensive-issue-monitor \
+  --user $USER \
+  --env /path/to/.env \
+  --args "--interval=180"'
+
+# Управление
+sudo systemctl status ai-intensive-issue-monitor
+sudo systemctl restart ai-intensive-issue-monitor
+sudo systemctl stop ai-intensive-issue-monitor
+sudo systemctl disable ai-intensive-issue-monitor
+
+# Логи
+tail -f ai-intensive/issue-monitor/issue-monitor.log
+```
+
+### Удаление systemd‑сервиса (Linux)
+
+```bash
+ssh user@your-host 'cd ai-intensive/issue-monitor && sudo ./uninstall-systemd.sh --name ai-intensive-issue-monitor'
+```

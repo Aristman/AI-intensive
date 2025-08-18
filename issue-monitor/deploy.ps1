@@ -26,6 +26,13 @@ $jar = $jarFiles[0].FullName
 $files = @($jar)
 if (Test-Path README.md -PathType Leaf) { $files += 'README.md' }
 if (Test-Path config.properties -PathType Leaf) { $files += 'config.properties' }
+if (Test-Path .env -PathType Leaf) { $files += '.env' }
+if (Test-Path start.sh -PathType Leaf) { $files += 'start.sh' }
+if (Test-Path start.ps1 -PathType Leaf) { $files += 'start.ps1' }
+if (Test-Path stop.sh -PathType Leaf) { $files += 'stop.sh' }
+if (Test-Path stop.ps1 -PathType Leaf) { $files += 'stop.ps1' }
+if (Test-Path install-systemd.sh -PathType Leaf) { $files += 'install-systemd.sh' }
+if (Test-Path uninstall-systemd.sh -PathType Leaf) { $files += 'uninstall-systemd.sh' }
 
 Write-Host "Creating remote directory: $Server:$DestPath"
 ssh $Server "mkdir -p '$DestPath'"

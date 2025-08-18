@@ -270,6 +270,80 @@ body: При включённом MCP сервере блок “Быстрый 
 - `WebSocket closed`/таймаут — проверьте URL, порт, что сервер запущен
 - 401/403 при `create_issue` — у токена нет нужных прав на репозиторий
 
+## Деплой на удалённый сервер
+В каталоге `mcp_server/` есть скрипты деплоя, которые копируют нужные файлы на сервер с помощью `ssh/scp`.
+
+- Назначение по умолчанию: `ai-intensive/mcp_server`
+- Копируются файлы: `server.js`, `package.json`, `package-lock.json`, `README.md` и все прочие `.js` из каталога (без `node_modules`). Если рядом есть `.env`, он также будет скопирован в каталог назначения.
+
+Linux/macOS:
+```bash
+./deploy.sh user@your-host             # в ai-intensive/mcp_server
+./deploy.sh user@your-host /opt/ai-intensive/mcp_server  # в указанный путь
+```
+
+Windows (PowerShell):
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1 -Server user@your-host
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1 -Server user@your-host -DestPath /opt/ai-intensive/mcp_server
+```
+
+После копирования запустить на сервере:
+```bash
+ssh user@your-host 'cd ai-intensive/mcp_server && npm install && npm start'
+```
+
+Альтернатива: запуск через скрипты с указанием пути к .env
+```bash
+# Linux/macOS
+ssh user@your-host 'cd ai-intensive/mcp_server && ./start.sh'                     # использует ./\.env
+ssh user@your-host 'cd ai-intensive/mcp_server && ./start.sh /path/to/.env'      # явный путь
+# в фоне (daemon):
+ssh user@your-host 'cd ai-intensive/mcp_server && ./start.sh -d'                  # nohup, логи в mcp_server.log, PID в mcp_server.pid
+
+# Windows (PowerShell на сервере Windows)
+powershell -ExecutionPolicy Bypass -File .\start.ps1                               # использует .\.env
+powershell -ExecutionPolicy Bypass -File .\start.ps1 -EnvPath C:\\path\\to\\.env
+# в фоне (daemon):
+powershell -ExecutionPolicy Bypass -File .\start.ps1 -Background                  # логи в mcp_server.log, PID в mcp_server.pid
+```
+
+### Остановка
+
+```bash
+# Linux/macOS
+./stop.sh
+
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File .\stop.ps1
+```
+
+### Установка как systemd-сервис (Linux)
+
+Скрипт `install-systemd.sh` создаёт сервис и сразу запускает его.
+
+```bash
+ssh user@your-host 'cd ai-intensive/mcp_server && sudo ./install-systemd.sh \
+  --name ai-intensive-mcp \
+  --user $USER \
+  --env /path/to/.env'
+
+# Управление
+sudo systemctl status ai-intensive-mcp
+sudo systemctl restart ai-intensive-mcp
+sudo systemctl stop ai-intensive-mcp
+sudo systemctl disable ai-intensive-mcp
+
+# Логи
+tail -f ai-intensive/mcp_server/mcp_server.log
+```
+
+### Удаление systemd‑сервиса (Linux)
+
+```bash
+ssh user@your-host 'cd ai-intensive/mcp_server && sudo ./uninstall-systemd.sh --name ai-intensive-mcp'
+```
+
 ## Архитектурные заметки
 - Сервер — самостоятельный процесс Node.js, не встраивается в приложение.
 - Flutter может переключаться между прямыми REST-вызовами и MCP‑сервером.

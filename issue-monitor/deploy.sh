@@ -29,6 +29,13 @@ FILES=(
 # Optional files
 [[ -f README.md ]] && FILES+=("README.md")
 [[ -f config.properties ]] && FILES+=("config.properties")
+[[ -f .env ]] && FILES+=(".env")
+[[ -f start.sh ]] && FILES+=("start.sh")
+[[ -f start.ps1 ]] && FILES+=("start.ps1")
+[[ -f stop.sh ]] && FILES+=("stop.sh")
+[[ -f stop.ps1 ]] && FILES+=("stop.ps1")
+[[ -f install-systemd.sh ]] && FILES+=("install-systemd.sh")
+[[ -f uninstall-systemd.sh ]] && FILES+=("uninstall-systemd.sh")
 
 # Create remote dir
 ssh "$SERVER_ADDR" "mkdir -p '$DEST_PATH'"
