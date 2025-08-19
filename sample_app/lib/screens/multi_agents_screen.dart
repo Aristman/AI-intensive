@@ -6,6 +6,7 @@ import 'package:sample_app/agents/simple_agent.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/screens/settings_screen.dart';
 import 'package:sample_app/services/settings_service.dart';
+import 'package:sample_app/widgets/safe_send_text_field.dart';
 
 class _Msg {
   final String text;
@@ -348,29 +349,22 @@ class _MultiAgentsScreenState extends State<MultiAgentsScreen> {
         child: Row(
           children: [
             Expanded(
-              child: TextField(
+              child: SafeSendTextField(
                 controller: _textController,
                 focusNode: _inputFocus,
                 enabled: !_sending,
-                decoration: InputDecoration(
-                  hintText: _sending ? 'Ожидаем ответа A...' : 'Сообщение для агента A...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24.0),
-                    borderSide: BorderSide.none,
-                  ),
-                  filled: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                hintText: _sending ? 'Ожидаем ответа A...' : 'Сообщение для агента A...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(24.0),
+                  borderSide: BorderSide.none,
                 ),
-                onSubmitted: _sending ? null : (text) {
-                  // Очищаем фокус при отправке, чтобы скрыть клавиатуру
-                  _inputFocus.unfocus();
-                  _sendToA(text);
-                },
+                filled: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                onSend: (text) => _sendToA(text),
                 onTap: () {
                   // Позволяем снова показать клавиатуру при тапе по полю ввода
                   _inputFocus.requestFocus();
                 },
-                textInputAction: TextInputAction.send,
               ),
             ),
             const SizedBox(width: 8),

@@ -9,6 +9,7 @@ import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/models/message.dart';
 import 'package:sample_app/screens/settings_screen.dart';
 import 'package:sample_app/services/settings_service.dart';
+import 'package:sample_app/widgets/safe_send_text_field.dart';
 
 class ChatScreen extends StatefulWidget {
   final String title;
@@ -419,23 +420,20 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: TextField(
+                  child: SafeSendTextField(
                     controller: _textController,
                     enabled: !_isLoading,
-                    decoration: InputDecoration(
-                      hintText: _isLoading ? 'Ожидаем ответа...' : 'Введите сообщение...',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24.0),
-                        borderSide: BorderSide.none,
-                      ),
-                      filled: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16.0,
-                        vertical: 8.0,
-                      ),
+                    hintText: _isLoading ? 'Ожидаем ответа...' : 'Введите сообщение...',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24.0),
+                      borderSide: BorderSide.none,
                     ),
-                    onSubmitted: _isLoading ? null : _sendMessage,
-                    textInputAction: TextInputAction.send,
+                    filled: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16.0,
+                      vertical: 8.0,
+                    ),
+                    onSend: _sendMessage,
                   ),
                 ),
                 if (_isLoading)

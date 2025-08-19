@@ -8,6 +8,7 @@ import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/models/message.dart';
 import 'package:sample_app/services/settings_service.dart';
 import 'package:sample_app/screens/settings_screen.dart';
+import 'package:sample_app/widgets/safe_send_text_field.dart';
 
 class CodeOpsScreen extends StatefulWidget {
   const CodeOpsScreen({super.key});
@@ -431,13 +432,12 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: TextField(
+                  child: SafeSendTextField(
                     controller: _textController,
-                    decoration: const InputDecoration(
-                      hintText: 'Введите сообщение...',
-                      border: OutlineInputBorder(),
-                    ),
-                    onSubmitted: (v) => _sendMessage(v),
+                    hintText: 'Введите сообщение...',
+                    border: const OutlineInputBorder(),
+                    filled: false,
+                    onSend: (v) => _sendMessage(v),
                   ),
                 ),
                 const SizedBox(width: 8),
