@@ -1,4 +1,7 @@
+import 'dart:convert';
+import 'dart:developer' as dev;
 import 'package:sample_app/agents/agent.dart' show Agent; // for stopSequence
+import 'package:sample_app/agents/code_exec_args.dart';
 import 'package:sample_app/domain/llm_usecase.dart';
 import 'package:sample_app/data/llm/deepseek_usecase.dart';
 import 'package:sample_app/data/llm/yandexgpt_usecase.dart';
@@ -17,6 +20,8 @@ class CodeOpsAgent {
   final List<_Msg> _history = [];
   String? _memory; // сжатая память (summary предыдущего контекста)
 
+  bool _logEnabled = true; // простое включение/выключение логов агента
+
   AppSettings _settings;
   final McpIntegrationService _mcpIntegrationService;
 
@@ -29,6 +34,93 @@ class CodeOpsAgent {
 
   void updateSettings(AppSettings s) {
     _settings = s.copyWith(reasoningMode: true);
+  }
+
+  void setLoggingEnabled(bool enabled) {
+    _logEnabled = enabled;
+  }
+
+  void _log(String title, Object data) {
+    if (!_logEnabled) return;
+    try {
+      String text;
+      if (data is String) {
+        text = data;
+      } else {
+        text = const JsonEncoder.withIndent('  ').convert(data);
+      }
+      if (text.length > 800) {
+        text = text.substring(0, 800) + '...<truncated>';
+      }
+      dev.log(text, name: 'CodeOpsAgent/$title');
+    } catch (_) {
+      // ignore logging errors
+    }
+  }
+
+  /// Выполнить Java-код внутри Docker через MCP-инструмент `docker_exec_java`.
+  /// Возвращает структурированный результат с полями compile/run.
+  Future<Map<String, dynamic>> execJavaInDocker({
+    required String code,
+    String? filename,
+    String? entrypoint,
+    String? classpath,
+    List<String>? compileArgs,
+    List<String>? runArgs,
+    String? image,
+    String? containerName,
+    String? extraArgs,
+    String workdir = '/work',
+    int timeoutMs = 15000,
+    int? cpus,
+    String? memory,
+    String cleanup = 'always', // 'always' | 'on_success' | 'never'
+  }) async {
+    final url = _settings.mcpServerUrl?.trim();
+    if (!_settings.useMcpServer || url == null || url.isEmpty) {
+      throw StateError('MCP сервер не настроен. Включите useMcpServer и задайте mcpServerUrl в настройках.');
+    }
+
+    final client = McpClient();
+    try {
+      _log('MCP Connect', {'url': url});
+      await client.connect(url);
+      try {
+        await client.initialize(timeout: const Duration(seconds: 3));
+        _log('MCP Initialized', {'ok': true});
+      } catch (e) {
+        _log('MCP Initialize Error', {'error': e.toString()});
+        throw StateError('MCP сервер недоступен или не отвечает. Проверьте, что сервер запущен и URL "$url" корректен. Детали: $e');
+      }
+
+      final args = buildDockerExecJavaArgs(
+        code: code,
+        filename: filename,
+        entrypoint: entrypoint,
+        classpath: classpath,
+        compileArgs: compileArgs,
+        runArgs: runArgs,
+        image: image,
+        containerName: containerName,
+        extraArgs: extraArgs,
+        workdir: workdir,
+        timeoutMs: timeoutMs,
+        cpus: cpus,
+        memory: memory,
+        cleanup: cleanup,
+      );
+
+      _log('MCP Request', {'tool': 'docker_exec_java', 'args': args});
+      final resp = await client.toolsCall('docker_exec_java', args, timeout: Duration(milliseconds: timeoutMs + 2000));
+      _log('MCP Response', resp);
+      if (resp is Map<String, dynamic>) {
+        return (resp['result'] ?? resp) as Map<String, dynamic>;
+      }
+      return {'result': resp};
+    } finally {
+      _log('MCP Close', {'url': url});
+      await client.close();
+    }
   }
 
   void clearHistory() {
@@ -126,26 +218,33 @@ class CodeOpsAgent {
 
     final client = McpClient();
     try {
+      _log('MCP Connect', {'url': url});
       await client.connect(url);
       // Быстрый health‑check MCP: короткий таймаут на initialize
       try {
         await client.initialize(timeout: const Duration(seconds: 3));
+        _log('MCP Initialized', {'ok': true});
       } catch (e) {
+        _log('MCP Initialize Error', {'error': e.toString()});
         throw StateError('MCP сервер недоступен или не отвечает. Проверьте, что сервер запущен и URL "$url" корректен. Детали: $e');
       }
 
-      final resp = await client.toolsCall('docker_start_java', {
+      final args = {
         if (containerName != null) 'container_name': containerName,
         if (image != null) 'image': image,
         if (port != null) 'port': port,
         if (extraArgs != null) 'extra_args': extraArgs,
-      }, timeout: const Duration(seconds: 30));
+      };
+      _log('MCP Request', {'tool': 'docker_start_java', 'args': args});
+      final resp = await client.toolsCall('docker_start_java', args, timeout: const Duration(seconds: 30));
+      _log('MCP Response', resp);
       // Сервер возвращает { name, result }
       if (resp is Map<String, dynamic>) {
         return (resp['result'] ?? resp) as Map<String, dynamic>;
       }
       return {'result': resp};
     } finally {
+      _log('MCP Close', {'url': url});
       await client.close();
     }
   }
@@ -175,6 +274,9 @@ class CodeOpsAgent {
 
     // Обогащаем контекст MCP (GitHub и т.п.)
     final enrichedContext = await _mcpIntegrationService.enrichContext(userText, _settings);
+    _log('MCP Enrich', {
+      'mcp_used': enrichedContext['mcp_used'],
+    });
     final system = _mcpIntegrationService.buildEnrichedSystemPrompt(
       _buildSystemContent(
         overrideResponseFormat: overrideResponseFormat,
@@ -190,6 +292,12 @@ class CodeOpsAgent {
 
     try {
       final usecase = _resolveUseCase();
+      _log('LLM Request', {
+        'provider': _settings.selectedNetworkName,
+        'format': _settings.responseFormatName,
+        'messagesCount': messages.length,
+        'lastUserPreview': userText.length > 200 ? userText.substring(0, 200) + '...' : userText,
+      });
       var answer = await usecase.complete(messages: messages, settings: _settings);
 
       // Определяем финальность по маркеру
@@ -197,6 +305,12 @@ class CodeOpsAgent {
       if (isFinal) {
         answer = answer.replaceAll(stopSequence, '').trim();
       }
+
+      _log('LLM Response', {
+        'chars': answer.length,
+        'isFinal': isFinal,
+        'preview': answer.length > 200 ? answer.substring(0, 200) + '...' : answer,
+      });
 
       _history.add(_Msg('assistant', answer));
       if (_history.length > limit) {

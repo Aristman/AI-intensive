@@ -35,6 +35,7 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
   String? _pendingCode;
   String? _pendingLanguage;
   String? _pendingFilename;
+  String? _pendingEntrypoint;
 
   @override
   void initState() {
@@ -135,12 +136,86 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
     if (_pendingCode == null) return;
     setState(() => _isLoading = true);
     try {
-      final result = await _agent.startLocalJavaDocker();
-      _appendMessage(Message(text: 'Docker/Java запущен: ${jsonEncode(result)}', isUser: false));
+      // Очистить Markdown-кодблоки, если есть
+      String _stripCodeFences(String text) {
+        final t = text.trim();
+        if (!t.contains('```')) return t;
+        final start = t.indexOf('```');
+        if (start == -1) return t;
+        final end = t.indexOf('```', start + 3);
+        if (end == -1) return t;
+        var inner = t.substring(start + 3, end);
+        // Удалить метку языка в первой строке, если есть
+        final firstNl = inner.indexOf('\n');
+        if (firstNl > -1) {
+          final firstLine = inner.substring(0, firstNl).trim();
+          if (firstLine.isNotEmpty && firstLine.length < 20) {
+            // предполагаем, что это метка языка (java, kotlin и т.п.)
+            inner = inner.substring(firstNl + 1);
+          }
+        }
+        return inner.trim();
+      }
+
+      final cleanedCode = _stripCodeFences(_pendingCode!);
+      final filename = _pendingFilename?.trim().isNotEmpty == true ? _pendingFilename!.trim() : 'Main.java';
+
+      // Выполняем код через MCP docker_exec_java
+      _isUsingMcp = true;
+      final result = await _agent.execJavaInDocker(
+        code: cleanedCode,
+        filename: filename,
+        entrypoint: _pendingEntrypoint,
+        timeoutMs: 15000,
+      );
+
+      // Короткая сводка
+      final compile = result['compile'] as Map<String, dynamic>?;
+      final run = result['run'] as Map<String, dynamic>?;
+      final success = result['success'] == true;
+      final compileExit = compile?['exitCode'];
+      final runExit = run?['exitCode'];
+
+      final buf = StringBuffer();
+      buf.writeln('Результат выполнения Docker/Java (success=$success):');
+      if (compile != null) {
+        buf.writeln('- Compile exitCode: $compileExit');
+        final cErr = (compile['stderr'] as String? ?? '').trim();
+        if (cErr.isNotEmpty) {
+          buf.writeln('- Compile stderr (фрагмент):');
+          buf.writeln(cErr.length > 300 ? cErr.substring(0, 300) + '...'
+                                        : cErr);
+        }
+      }
+      if (run != null) {
+        buf.writeln('- Run exitCode: $runExit');
+        final rOut = (run['stdout'] as String? ?? '').trim();
+        if (rOut.isNotEmpty) {
+          buf.writeln('- Run stdout (фрагмент):');
+          buf.writeln(rOut.length > 300 ? rOut.substring(0, 300) + '...'
+                                       : rOut);
+        }
+        final rErr = (run['stderr'] as String? ?? '').trim();
+        if (rErr.isNotEmpty) {
+          buf.writeln('- Run stderr (фрагмент):');
+          buf.writeln(rErr.length > 300 ? rErr.substring(0, 300) + '...'
+                                       : rErr);
+        }
+      }
+      _appendMessage(Message(text: buf.toString(), isUser: false));
+      // Убрано: не показываем сырой JSON-ответ, чтобы не засорять интерфейс
     } catch (e) {
-      _appendMessage(Message(text: 'Ошибка запуска Docker: $e', isUser: false));
+      _appendMessage(Message(text: 'Ошибка выполнения кода в Docker: $e', isUser: false));
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        // Погасить MCP-индикатор через 5 сек
+        _mcpIndicatorTimer = Timer(const Duration(seconds: 5), () {
+          if (mounted) setState(() => _isUsingMcp = false);
+        });
+      }
     }
   }
 
@@ -164,6 +239,7 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
         _pendingCode = null;
         _pendingLanguage = null;
         _pendingFilename = null;
+        _pendingEntrypoint = null;
         setState(() => _isLoading = false);
         return;
       }
@@ -172,6 +248,7 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
         _pendingCode = null;
         _pendingLanguage = null;
         _pendingFilename = null;
+        _pendingEntrypoint = null;
         setState(() => _isLoading = false);
         return;
       }
@@ -195,13 +272,15 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
           final language = codeJson['language']?.toString();
           final filename = codeJson['filename']?.toString();
           final code = codeJson['code']?.toString() ?? '';
+          final entrypoint = codeJson['entrypoint']?.toString();
 
           _pendingCode = code;
           _pendingLanguage = language;
           _pendingFilename = filename;
+          _pendingEntrypoint = entrypoint;
 
           // Show summary + code
-          _appendMessage(Message(text: '$title\n\nФайл: ${filename ?? '-'}\nЯзык: ${language ?? '-'}', isUser: false));
+          _appendMessage(Message(text: '$title\n\nФайл: ${filename ?? '-'}\nЯзык: ${language ?? '-'}\nEntrypoint: ${entrypoint ?? '-'}', isUser: false));
           _appendMessage(Message(text: '```\n$code\n```', isUser: false));
 
           _appendMessage(Message(text: 'Запустить этот код локально? (Да/Нет)', isUser: false));
