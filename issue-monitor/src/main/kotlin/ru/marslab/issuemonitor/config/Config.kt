@@ -10,6 +10,7 @@ data class Config(
     val repo: String = env("GITHUB_REPO") ?: "AI-intensive",
     val pollIntervalSeconds: Long = (env("POLL_INTERVAL_SECONDS")?.toLongOrNull() ?: 3600L),
     val sendAlways: Boolean = env("SEND_ALWAYS")?.toBooleanStrictOrNull() ?: false,
+    val issuesListLimit: Int = env("ISSUES_LIST_LIMIT")?.toIntOrNull() ?: 5,
 
     // Telegram
     val telegramEnabled: Boolean = env("TELEGRAM_ENABLED")?.toBooleanStrictOrNull() ?: true,
@@ -53,6 +54,7 @@ data class Config(
                 repo = p("GITHUB_REPO") ?: "AI-intensive",
                 pollIntervalSeconds = (p("POLL_INTERVAL_SECONDS")?.toLongOrNull() ?: 3600L),
                 sendAlways = p("SEND_ALWAYS")?.toBooleanStrictOrNull() ?: false,
+                issuesListLimit = p("ISSUES_LIST_LIMIT")?.toIntOrNull() ?: 5,
                 telegramEnabled = p("TELEGRAM_ENABLED")?.toBooleanStrictOrNull() ?: true,
                 telegramBotToken = p("TELEGRAM_BOT_TOKEN") ?: "",
                 telegramChatId = p("TELEGRAM_CHAT_ID") ?: "",
