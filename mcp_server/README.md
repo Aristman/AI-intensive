@@ -14,6 +14,7 @@ Server Info: name = `mcp-github-telegram-server`
   - `tg_send_photo(chat_id?, photo, caption?, parse_mode?)` — отправить фото в Telegram.
   - `tg_get_updates(offset?, timeout?, allowed_updates?)` — получить обновления (long polling) в Telegram.
   - `create_issue_and_notify(owner, repo, title, body?, chat_id?, message_template?)` — создать issue и отправить уведомление в Telegram.
+  - `docker_start_java(container_name?, image?, port?, extra_args?)` — запустить или создать+запустить локальный контейнер с JDK (по умолчанию образ `eclipse-temurin:17-jdk`, порт пробрасывается на 8080).
 - WebSocket JSON-RPC 2.0 интерфейс: методы `initialize`, `tools/list`, `tools/call`
 - Токен GitHub хранится только на сервере (безопасно)
 
@@ -92,6 +93,12 @@ npm start
 - `create_issue_and_notify`
   - Вход: `{ owner: string, repo: string, title: string, body?: string, chat_id?: string, message_template?: string }`
   - Результат: созданный issue и отправленное уведомление
+
+- `docker_start_java`
+  - Вход: `{ container_name?: string, image?: string, port?: number, extra_args?: string }`
+  - Значения по умолчанию: `container_name = "java-dev"`, `image = "eclipse-temurin:17-jdk"`, `port = 8080`, `extra_args = ""`
+  - Поведение: если контейнер существует — запускает (если не запущен); если нет — `docker pull` и `docker run -d --restart unless-stopped -p <port>:8080 <image> tail -f /dev/null`
+  - Результат: `{ container: string, image: string, state: 'running', existed?: boolean, id?: string }`
 
 ### Примеры JSON-RPC
 - Инициализация:
@@ -175,6 +182,50 @@ npm start
   "id": 5,
   "result": { "name": "search_repos", "result": { "items": [ /* ... */ ] } }
 }
+```
+
+- Вызов инструмента `docker_start_java`:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "tools/call",
+  "params": {
+    "name": "docker_start_java",
+    "arguments": {
+      "container_name": "java-dev",
+      "image": "eclipse-temurin:17-jdk",
+      "port": 8080
+    }
+  }
+}
+```
+Ожидаемый ответ:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "result": {
+    "name": "docker_start_java",
+    "result": {
+      "container": "java-dev",
+      "image": "eclipse-temurin:17-jdk",
+      "state": "running",
+      "existed": false,
+      "id": "<container_id>"
+    }
+  }
+}
+```
+
+Альтернатива — ручной запуск через Docker CLI (эквивалентно тому, что делает инструмент):
+```bash
+docker pull eclipse-temurin:17-jdk
+docker run -d --name java-dev --restart unless-stopped -p 8080:8080 eclipse-temurin:17-jdk tail -f /dev/null
+docker ps --filter name=^/java-dev$
+# перезапуск/остановка при необходимости
+docker stop java-dev
+docker start java-dev
 ```
 
 ## Использование во Flutter

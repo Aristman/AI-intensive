@@ -1,11 +1,15 @@
 import 'dotenv/config';
 import { WebSocketServer } from 'ws';
 import axios from 'axios';
+import { exec as _exec } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_DEFAULT_CHAT_ID = process.env.TELEGRAM_DEFAULT_CHAT_ID;
+
+const execAsync = promisify(_exec);
 
 if (!GITHUB_TOKEN) {
   console.warn('[MCP] Warning: GITHUB_TOKEN is not set. create_issue and private repos will fail.');
@@ -109,6 +113,36 @@ async function handleToolCall(name, args) {
       await tgRequest('sendMessage', { chat_id: cid, text });
       return { issue, notified: true };
     }
+    case 'docker_start_java': {
+      const {
+        container_name = 'java-dev',
+        image = 'eclipse-temurin:17-jdk',
+        port = 8080,
+        extra_args = '',
+      } = args || {};
+
+      // 1) Check if container exists
+      const existsCmd = `docker ps -a --filter name=^/${container_name}$ --format {{.ID}}`;
+      const { stdout: existsOut } = await execAsync(existsCmd).catch((e) => ({ stdout: '', stderr: String(e) }));
+      const exists = Boolean((existsOut || '').trim());
+
+      if (exists) {
+        // 2) Try to start if not running
+        const statusCmd = `docker ps --filter name=^/${container_name}$ --format {{.Status}}`;
+        const { stdout: statusOut } = await execAsync(statusCmd).catch(() => ({ stdout: '' }));
+        const isUp = Boolean((statusOut || '').trim());
+        if (!isUp) {
+          await execAsync(`docker start ${container_name}`);
+        }
+        return { container: container_name, image, state: 'running', existed: true };
+      }
+
+      // 3) Pull image and run new container
+      await execAsync(`docker pull ${image}`);
+      const runCmd = `docker run -d --name ${container_name} --restart unless-stopped -p ${port}:8080 ${extra_args} ${image} tail -f /dev/null`;
+      const { stdout: runOut } = await execAsync(runCmd);
+      return { container: container_name, image, state: 'running', id: (runOut || '').trim(), existed: false };
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -144,6 +178,7 @@ wss.on('connection', (ws) => {
             { name: 'tg_send_photo', description: 'Send Telegram photo by URL or file_id', inputSchema: { chat_id: 'string?', photo: 'string', caption: 'string?', parse_mode: 'string?' } },
             { name: 'tg_get_updates', description: 'Get Telegram updates (long polling)', inputSchema: { offset: 'number?', timeout: 'number?', allowed_updates: 'string[]?' } },
             { name: 'create_issue_and_notify', description: 'Create GitHub issue and notify Telegram chat', inputSchema: { owner: 'string', repo: 'string', title: 'string', body: 'string?', chat_id: 'string?', message_template: 'string?' } },
+            { name: 'docker_start_java', description: 'Start (or create and start) a local Docker container with Java JDK', inputSchema: { container_name: 'string?', image: 'string?', port: 'number?', extra_args: 'string?' } },
           ],
         }));
       }
