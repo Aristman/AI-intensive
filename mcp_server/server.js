@@ -1,11 +1,32 @@
 import 'dotenv/config';
 import { WebSocketServer } from 'ws';
 import axios from 'axios';
+import { exec as _exec } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_DEFAULT_CHAT_ID = process.env.TELEGRAM_DEFAULT_CHAT_ID;
+
+const execAsync = promisify(_exec);
+
+async function createTempDir(prefix = 'mcp-java-') {
+  const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
+  return dir;
+}
+
+async function writeFilesToDir(baseDir, files) {
+  // files: Array<{ path: string, content: string }>
+  for (const f of files) {
+    const abs = path.join(baseDir, f.path);
+    await mkdir(path.dirname(abs), { recursive: true });
+    await writeFile(abs, f.content, 'utf8');
+  }
+}
 
 if (!GITHUB_TOKEN) {
   console.warn('[MCP] Warning: GITHUB_TOKEN is not set. create_issue and private repos will fail.');
@@ -109,6 +130,160 @@ async function handleToolCall(name, args) {
       await tgRequest('sendMessage', { chat_id: cid, text });
       return { issue, notified: true };
     }
+    case 'docker_start_java': {
+      const {
+        container_name = 'java-dev',
+        image = 'eclipse-temurin:17-jdk',
+        port = 8080,
+        extra_args = '',
+      } = args || {};
+
+      // 1) Check if container exists
+      const existsCmd = `docker ps -a --filter name=^/${container_name}$ --format {{.ID}}`;
+      const { stdout: existsOut } = await execAsync(existsCmd).catch((e) => ({ stdout: '', stderr: String(e) }));
+      const exists = Boolean((existsOut || '').trim());
+
+      if (exists) {
+        // 2) Try to start if not running
+        const statusCmd = `docker ps --filter name=^/${container_name}$ --format {{.Status}}`;
+        const { stdout: statusOut } = await execAsync(statusCmd).catch(() => ({ stdout: '' }));
+        const isUp = Boolean((statusOut || '').trim());
+        if (!isUp) {
+          await execAsync(`docker start ${container_name}`);
+        }
+        return { container: container_name, image, state: 'running', existed: true };
+      }
+
+      // 3) Pull image and run new container
+      await execAsync(`docker pull ${image}`);
+      const runCmd = `docker run -d --name ${container_name} --restart unless-stopped -p ${port}:8080 ${extra_args} ${image} tail -f /dev/null`;
+      const { stdout: runOut } = await execAsync(runCmd);
+      return { container: container_name, image, state: 'running', id: (runOut || '').trim(), existed: false };
+    }
+    case 'docker_exec_java': {
+      const startAll = Date.now();
+      const {
+        // Source inputs
+        filename,
+        code,
+        files,
+        // Execution config
+        entrypoint,
+        classpath,
+        compile_args = [],
+        run_args = [],
+        // Docker config
+        image = 'eclipse-temurin:17-jdk',
+        container_name,
+        extra_args = '',
+        workdir = '/work',
+        // Controls
+        timeout_ms = 15000,
+        limits = {}, // { cpus?: number, memory?: string }
+        cleanup = 'always', // 'always' | 'on_success' | 'never'
+      } = args || {};
+
+      // Validate inputs
+      let fileList = [];
+      if (Array.isArray(files) && files.length > 0) {
+        fileList = files.map((f) => ({ path: String(f.path), content: String(f.content ?? '') }));
+      } else {
+        if (!filename || typeof code !== 'string') {
+          throw new Error("Either 'files' or both 'filename' and 'code' are required");
+        }
+        fileList = [{ path: String(filename), content: String(code) }];
+      }
+
+      // Derive entrypoint if missing
+      const mainClass = entrypoint || path.basename(fileList[0].path).replace(/\.java$/i, '');
+
+      // Prepare temp dir and write files
+      const hostDir = await createTempDir();
+      await writeFilesToDir(hostDir, fileList);
+
+      const relJavaFiles = fileList
+        .map((f) => f.path)
+        .filter((p) => p.toLowerCase().endsWith('.java'));
+      if (relJavaFiles.length === 0) {
+        // No explicit java files: compile everything under dir
+        relJavaFiles.push(fileList[0].path);
+      }
+
+      const { cpus = 1, memory = '512m' } = limits || {};
+      const dockerBase = `docker run --rm ${container_name ? `--name ${container_name}` : ''} --cpus=${cpus} --memory=${memory} -v "${hostDir}":${workdir} -w ${workdir} ${extra_args} ${image}`;
+
+      const compileCp = classpath ? `-cp '${classpath}'` : '';
+      const compileArgsStr = Array.isArray(compile_args) ? compile_args.map((a) => `'${String(a)}'`).join(' ') : '';
+      const filesStr = relJavaFiles.map((p) => `'${p}'`).join(' ');
+      const compileCmd = `${dockerBase} sh -lc "javac -d . ${compileCp} ${compileArgsStr} ${filesStr}"`;
+
+      let compile = { stdout: '', stderr: '', exitCode: 0, durationMs: 0 };
+      try {
+        const t0 = Date.now();
+        const { stdout, stderr } = await execAsync(compileCmd, { timeout: timeout_ms, maxBuffer: 10 * 1024 * 1024 });
+        compile = { stdout, stderr, exitCode: 0, durationMs: Date.now() - t0 };
+      } catch (e) {
+        compile = {
+          stdout: e.stdout ?? '',
+          stderr: e.stderr ?? String(e.message ?? e),
+          exitCode: Number.isInteger(e.code) ? e.code : 1,
+          durationMs: Date.now() - startAll,
+        };
+        // Decide cleanup
+        const shouldCleanup = cleanup === 'always' || (cleanup === 'on_success' ? false : false);
+        if (shouldCleanup) {
+          await rm(hostDir, { recursive: true, force: true }).catch(() => {});
+        }
+        return {
+          image,
+          limits: { cpus, memory },
+          timeoutMs: timeout_ms,
+          workdirHost: hostDir,
+          workdirContainer: workdir,
+          files: fileList.map((f) => f.path),
+          compile,
+          success: false,
+        };
+      }
+
+      const runCp = classpath ? `-cp '.:${classpath}'` : `-cp '.'`;
+      const runArgsStr = Array.isArray(run_args) ? run_args.map((a) => `'${String(a)}'`).join(' ') : '';
+      const runCmd = `${dockerBase} sh -lc "java ${runCp} '${mainClass}' ${runArgsStr}"`;
+
+      let run = { stdout: '', stderr: '', exitCode: 0, durationMs: 0 };
+      try {
+        const t1 = Date.now();
+        const { stdout, stderr } = await execAsync(runCmd, { timeout: timeout_ms, maxBuffer: 10 * 1024 * 1024 });
+        run = { stdout, stderr, exitCode: 0, durationMs: Date.now() - t1 };
+      } catch (e) {
+        run = {
+          stdout: e.stdout ?? '',
+          stderr: e.stderr ?? String(e.message ?? e),
+          exitCode: Number.isInteger(e.code) ? e.code : 1,
+          durationMs: Date.now() - startAll - compile.durationMs,
+        };
+      }
+
+      const totalDuration = Date.now() - startAll;
+      const success = run.exitCode === 0;
+      const shouldCleanup = cleanup === 'always' || (cleanup === 'on_success' ? success : false);
+      if (shouldCleanup) {
+        await rm(hostDir, { recursive: true, force: true }).catch(() => {});
+      }
+
+      return {
+        image,
+        limits: { cpus, memory },
+        timeoutMs: timeout_ms,
+        workdirHost: hostDir,
+        workdirContainer: workdir,
+        files: fileList.map((f) => f.path),
+        compile,
+        run,
+        durationMs: totalDuration,
+        success,
+      };
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -144,6 +319,8 @@ wss.on('connection', (ws) => {
             { name: 'tg_send_photo', description: 'Send Telegram photo by URL or file_id', inputSchema: { chat_id: 'string?', photo: 'string', caption: 'string?', parse_mode: 'string?' } },
             { name: 'tg_get_updates', description: 'Get Telegram updates (long polling)', inputSchema: { offset: 'number?', timeout: 'number?', allowed_updates: 'string[]?' } },
             { name: 'create_issue_and_notify', description: 'Create GitHub issue and notify Telegram chat', inputSchema: { owner: 'string', repo: 'string', title: 'string', body: 'string?', chat_id: 'string?', message_template: 'string?' } },
+            { name: 'docker_start_java', description: 'Start (or create and start) a local Docker container with Java JDK', inputSchema: { container_name: 'string?', image: 'string?', port: 'number?', extra_args: 'string?' } },
+            { name: 'docker_exec_java', description: 'Compile and run Java code inside a Docker container (volume-mounted workspace)', inputSchema: { filename: 'string?', code: 'string?', files: 'Array<{path:string,content:string}>?', entrypoint: 'string?', classpath: 'string?', compile_args: 'string[]?', run_args: 'string[]?', image: 'string?', container_name: 'string?', extra_args: 'string?', workdir: 'string?', timeout_ms: 'number?', limits: '{cpus?:number,memory?:string}?', cleanup: "'always'|'on_success'|'never'?" } },
           ],
         }));
       }

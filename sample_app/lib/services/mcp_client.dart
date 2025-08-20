@@ -57,7 +57,11 @@ class McpClient {
     }
   }
 
-  Future<dynamic> _send(String method, [Map<String, dynamic>? params]) {
+  Future<dynamic> _send(
+    String method, {
+    Map<String, dynamic>? params,
+    Duration? timeout,
+  }) {
     if (_channel == null) {
       throw StateError('MCP not connected');
     }
@@ -71,25 +75,29 @@ class McpClient {
       if (params != null) 'params': params,
     };
     _channel!.sink.add(jsonEncode(payload));
-    return c.future.timeout(const Duration(seconds: 15));
+    return c.future.timeout(timeout ?? const Duration(seconds: 15));
   }
 
-  Future<Map<String, dynamic>> initialize() async {
-    final result = await _send('initialize') as Map<String, dynamic>;
+  Future<Map<String, dynamic>> initialize({Duration? timeout}) async {
+    final result = await _send('initialize', timeout: timeout) as Map<String, dynamic>;
     _initialized = true;
     return result;
   }
 
-  Future<Map<String, dynamic>> toolsList() async {
-    final result = await _send('tools/list') as Map<String, dynamic>;
+  Future<Map<String, dynamic>> toolsList({Duration? timeout}) async {
+    final result = await _send('tools/list', timeout: timeout) as Map<String, dynamic>;
     return result;
   }
 
-  Future<dynamic> toolsCall(String name, Map<String, dynamic> args) async {
-    final result = await _send('tools/call', {
-      'name': name,
-      'arguments': args,
-    });
+  Future<dynamic> toolsCall(String name, Map<String, dynamic> args, {Duration? timeout}) async {
+    final result = await _send(
+      'tools/call',
+      params: {
+        'name': name,
+        'arguments': args,
+      },
+      timeout: timeout,
+    );
     return result;
   }
 }

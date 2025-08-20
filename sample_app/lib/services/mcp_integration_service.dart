@@ -32,7 +32,8 @@ class McpIntegrationService {
         final url = settings.mcpServerUrl?.trim();
         if (url == null || url.isEmpty) return githubData;
         await client.connect(url);
-        await client.initialize();
+        // Короткий таймаут на инициализацию MCP, чтобы UI не подвисал при недоступном сервере
+        await client.initialize(timeout: const Duration(seconds: 3));
 
         // Поиск github.com/owner/repo
         final repoMatch = repoPattern.firstMatch(query);
@@ -44,7 +45,7 @@ class McpIntegrationService {
               final resp = await client.toolsCall('get_repo', {
                 'owner': owner,
                 'repo': repo,
-              }) as Map<String, dynamic>;
+              }, timeout: const Duration(seconds: 8)) as Map<String, dynamic>;
               final result = resp['result'] ?? resp; // сервер возвращает {result}, но подстрахуемся
               if (result is Map<String, dynamic>) {
                 githubData['repository'] = result;
@@ -64,7 +65,7 @@ class McpIntegrationService {
                 final resp = await client.toolsCall('get_repo', {
                   'owner': owner,
                   'repo': repo,
-                }) as Map<String, dynamic>;
+                }, timeout: const Duration(seconds: 8)) as Map<String, dynamic>;
                 final result = resp['result'] ?? resp;
                 if (result is Map<String, dynamic>) {
                   githubData['repository'] = result;
@@ -82,7 +83,7 @@ class McpIntegrationService {
             if (searchTerms.isNotEmpty) {
               final resp = await client.toolsCall('search_repos', {
                 'query': searchTerms,
-              }) as Map<String, dynamic>;
+              }, timeout: const Duration(seconds: 8)) as Map<String, dynamic>;
               final result = resp['result'] ?? resp;
               if (result is List) {
                 githubData['search_results'] = result.take(5).toList();
