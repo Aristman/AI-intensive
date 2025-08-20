@@ -14,7 +14,7 @@ Server Info: name = `mcp-github-telegram-server`
   - `tg_send_photo(chat_id?, photo, caption?, parse_mode?)` — отправить фото в Telegram.
   - `tg_get_updates(offset?, timeout?, allowed_updates?)` — получить обновления (long polling) в Telegram.
   - `create_issue_and_notify(owner, repo, title, body?, chat_id?, message_template?)` — создать issue и отправить уведомление в Telegram.
-  - `docker_start_java(container_name?, image?, port?, extra_args?)` — запустить или создать+запустить локальный контейнер с JDK (по умолчанию образ `eclipse-temurin:17-jdk`, порт пробрасывается на 8080).
+  - `docker_start_java(container_name?, image?, port?, extra_args?)` — запустить или создать+запустить локальный контейнер с JDK (по умолчанию образ `eclipse-temurin:20-jdk`, порт пробрасывается на 8080).
 - WebSocket JSON-RPC 2.0 интерфейс: методы `initialize`, `tools/list`, `tools/call`
 - Токен GitHub хранится только на сервере (безопасно)
 
@@ -96,9 +96,14 @@ npm start
 
 - `docker_start_java`
   - Вход: `{ container_name?: string, image?: string, port?: number, extra_args?: string }`
-  - Значения по умолчанию: `container_name = "java-dev"`, `image = "eclipse-temurin:17-jdk"`, `port = 8080`, `extra_args = ""`
+  - Значения по умолчанию: `container_name = "java-dev"`, `image = "eclipse-temurin:20-jdk"`, `port = 8080`, `extra_args = ""`
   - Поведение: если контейнер существует — запускает (если не запущен); если нет — `docker pull` и `docker run -d --restart unless-stopped -p <port>:8080 <image> tail -f /dev/null`
   - Результат: `{ container: string, image: string, state: 'running', existed?: boolean, id?: string }`
+
+Примечание по `docker_exec_java` и JUnit4:
+- Сервер автоматически обнаруживает импорты JUnit4 (`import org.junit...`, `@Test`) и подгружает JAR-файлы `junit-4.13.2.jar` и `hamcrest-core-1.3.jar` из Maven Central во временную директорию на хосте, монтируемую в контейнер (`/work/lib`).
+- При обнаружении JUnit4 классы компилируются с соответствующим classpath, а запуск производится через `org.junit.runner.JUnitCore <FQCN>`, где `<FQCN>` — полностью квалифицированное имя класса теста (определяется из `package` + имени файла или берётся из аргумента `entrypoint`).
+- Если JUnit4 не обнаружен, сервер запускает обычный `main` указанного класса.
 
 ### Примеры JSON-RPC
 - Инициализация:
@@ -194,7 +199,7 @@ npm start
     "name": "docker_start_java",
     "arguments": {
       "container_name": "java-dev",
-      "image": "eclipse-temurin:17-jdk",
+      "image": "eclipse-temurin:20-jdk",
       "port": 8080
     }
   }
@@ -220,8 +225,8 @@ npm start
 
 Альтернатива — ручной запуск через Docker CLI (эквивалентно тому, что делает инструмент):
 ```bash
-docker pull eclipse-temurin:17-jdk
-docker run -d --name java-dev --restart unless-stopped -p 8080:8080 eclipse-temurin:17-jdk tail -f /dev/null
+docker pull eclipse-temurin:20-jdk
+docker run -d --name java-dev --restart unless-stopped -p 8080:8080 eclipse-temurin:20-jdk tail -f /dev/null
 docker ps --filter name=^/java-dev$
 # перезапуск/остановка при необходимости
 docker stop java-dev

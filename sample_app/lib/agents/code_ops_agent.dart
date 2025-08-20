@@ -58,6 +58,78 @@ class CodeOpsAgent {
     }
   }
 
+  /// Выполнить несколько исходных файлов в Docker через MCP `docker_exec_java`.
+  /// Каждый элемент в [files] должен содержать ключи 'path' (или 'filename') и 'content'.
+  Future<Map<String, dynamic>> execJavaFilesInDocker({
+    required List<Map<String, String>> files,
+    String? entrypoint,
+    String? classpath,
+    List<String>? compileArgs,
+    List<String>? runArgs,
+    String? image,
+    String? containerName,
+    String? extraArgs,
+    String workdir = '/work',
+    int timeoutMs = 15000,
+    int? cpus,
+    String? memory,
+    String cleanup = 'always',
+  }) async {
+    final url = _settings.mcpServerUrl?.trim();
+    if (!_settings.useMcpServer || url == null || url.isEmpty) {
+      throw StateError('MCP сервер не настроен. Включите useMcpServer и задайте mcpServerUrl в настройках.');
+    }
+
+    // Нормализуем структуру файлов под { path, content }
+    final normalized = files.map((f) => {
+          'path': (f['path'] ?? f['filename'] ?? '').toString(),
+          'content': (f['content'] ?? '').toString(),
+        }).toList();
+
+    final client = McpClient();
+    try {
+      _log('MCP Connect', {'url': url});
+      await client.connect(url);
+      try {
+        await client.initialize(timeout: const Duration(seconds: 3));
+        _log('MCP Initialized', {'ok': true});
+      } catch (e) {
+        _log('MCP Initialize Error', {'error': e.toString()});
+        throw StateError('MCP сервер недоступен или не отвечает. Проверьте, что сервер запущен и URL "$url" корректен. Детали: $e');
+      }
+
+      final args = <String, dynamic>{
+        'files': normalized,
+        if (entrypoint != null && entrypoint.isNotEmpty) 'entrypoint': entrypoint,
+        if (classpath != null && classpath.isNotEmpty) 'classpath': classpath,
+        if (compileArgs != null) 'compile_args': compileArgs,
+        if (runArgs != null) 'run_args': runArgs,
+        if (image != null && image.isNotEmpty) 'image': image,
+        if (containerName != null && containerName.isNotEmpty) 'container_name': containerName,
+        if (extraArgs != null && extraArgs.isNotEmpty) 'extra_args': extraArgs,
+        if (workdir.isNotEmpty) 'workdir': workdir,
+        'timeout_ms': timeoutMs,
+        'cleanup': cleanup,
+        if (cpus != null || (memory != null && memory.isNotEmpty))
+          'limits': {
+            if (cpus != null) 'cpus': cpus,
+            if (memory != null && memory.isNotEmpty) 'memory': memory,
+          },
+      };
+
+      _log('MCP Request', {'tool': 'docker_exec_java', 'args': args});
+      final resp = await client.toolsCall('docker_exec_java', args, timeout: Duration(milliseconds: timeoutMs + 2000));
+      _log('MCP Response', resp);
+      if (resp is Map<String, dynamic>) {
+        return (resp['result'] ?? resp) as Map<String, dynamic>;
+      }
+      return {'result': resp};
+    } finally {
+      _log('MCP Close', {'url': url});
+      await client.close();
+    }
+  }
+
   /// Выполнить Java-код внутри Docker через MCP-инструмент `docker_exec_java`.
   /// Возвращает структурированный результат с полями compile/run.
   Future<Map<String, dynamic>> execJavaInDocker({
@@ -145,6 +217,14 @@ class CodeOpsAgent {
         'Если запрашивают команды — давай точные команды и указывай рабочую директорию. '
         'Если не хватает данных, задай уточняющие вопросы перед финальным ответом.';
 
+    // Политика генерации кода для CodeOps
+    final codeGenPolicy =
+        'Правила генерации кода:\n'
+        '- Если язык не указан или указан неоднозначно — сначала задай уточняющий вопрос про язык/версию/SDK. Не выдавай финальный ответ до уточнения.\n'
+        '- Все импорты должны быть полностью указаны явно (полные пути пакетов). Никаких неявных/опущенных импортов.\n'
+        '- Если требуется более одного класса/файла — формируй многофайловый результат (каждый класс — в отдельном файле, корректные package/имена файлов для Java).\n'
+        '- Для запуска через Docker каждый файл должен передаваться отдельно. Для Java указывай корректный entrypoint как FQCN (например, com.example.Main).\n';
+
     final uncertaintyPolicy = 'Политика уточнений: оцени неопределённость 0..1. '
         'Если > 0.1 — задай уточняющие вопросы, не давай финал и не добавляй маркер окончания. '
         'Когда ≤ 0.1 — выдай итог и добавь маркер окончания $stopSequence. '
@@ -162,10 +242,11 @@ class CodeOpsAgent {
       return 'You are a code-focused assistant that returns data in JSON format. '
           'Think like a software engineer. Provide concise, actionable outputs. '
           'Evaluate uncertainty 0..1; if > 0.1 ask clarifying questions first and do NOT output final JSON nor stop token. '
+          '$codeGenPolicy'
           'Once ≤ 0.1, return ONLY minified JSON strictly matching schema: $schema $endNote$memoryBlock';
     }
 
-    return '${_settings.systemPrompt}\n\n$codeOpsGuide\n$uncertaintyPolicy$memoryBlock';
+    return '${_settings.systemPrompt}\n\n$codeOpsGuide\n$codeGenPolicy$uncertaintyPolicy$memoryBlock';
   }
 
   /// Сжать историю через LLM и сохранить summary в [_memory].
