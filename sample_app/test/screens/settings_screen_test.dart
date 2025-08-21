@@ -44,8 +44,8 @@ void main() {
       mockSettingsService = MockSettingsService();
       
       // Настройка моков для навигации
-      when(() => mockObserver.didPush(any(), any())).thenReturn(null);
-      when(() => mockObserver.didPop(any(), any())).thenReturn(true);
+      when(() => mockObserver.didPush(any(), any())).thenAnswer((_) {});
+      when(() => mockObserver.didPop(any(), any())).thenAnswer((_) {});
       
       // Настройка мока для SettingsService
       when(() => mockSettingsService.saveSettings(any())).thenAnswer((_) async => true);

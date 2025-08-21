@@ -28,7 +28,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _jsonSchemaController = TextEditingController();
   final _systemPromptController = TextEditingController();
   bool _isGithubTokenValid = false;
-  bool _isValidatingToken = false;
   // Controllers for quick GitHub Issue creation
   final _repoOwnerController = TextEditingController();
   final _repoNameController = TextEditingController();
@@ -71,21 +70,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {
         _isGithubTokenValid = isValid;
       });
-    }
-  }
-
-  Future<void> _validateGithubToken(String token) async {
-    // Этот метод больше не нужен, так как токен берется из .env
-    // Оставляем для совместимости, но перенаправляем на проверку токена из .env
-    await _checkGithubTokenValidity();
-    
-    if (mounted && !_isGithubTokenValid) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('GitHub токен не найден в .env файле или недействителен'),
-          backgroundColor: Colors.red,
-        ),
-      );
     }
   }
 

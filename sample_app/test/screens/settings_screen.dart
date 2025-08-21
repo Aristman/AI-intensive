@@ -16,11 +16,9 @@ class MockRoute<T> extends Mock implements Route<T> {
 void main() {
   group('SettingsScreen', () {
     late AppSettings initialSettings;
-    late ValueNotifier<AppSettings> settingsNotifier;
     
     setUp(() {
       initialSettings = const AppSettings();
-      settingsNotifier = ValueNotifier<AppSettings>(initialSettings);
       
       // Настройка моков для mocktail
       registerFallbackValue(MockRoute<dynamic>());

@@ -5,7 +5,7 @@ import 'dart:convert';
 Map<String, dynamic>? tryExtractJsonMap(String text) {
   String s = text.trim();
 
-  Map<String, dynamic>? _try(String candidate) {
+  Map<String, dynamic>? tryDecode(String candidate) {
     try {
       final v = jsonDecode(candidate);
       if (v is Map<String, dynamic>) return v;
@@ -14,7 +14,7 @@ Map<String, dynamic>? tryExtractJsonMap(String text) {
   }
 
   // 1) Direct attempt
-  final direct = _try(s);
+  final direct = tryDecode(s);
   if (direct != null) return direct;
 
   // 2) Strip code fences ```...```
@@ -33,7 +33,7 @@ Map<String, dynamic>? tryExtractJsonMap(String text) {
             inner = inner.substring(firstNl + 1);
           }
         }
-        final fenced = _try(inner.trim());
+        final fenced = tryDecode(inner.trim());
         if (fenced != null) return fenced;
       }
     }
@@ -44,7 +44,7 @@ Map<String, dynamic>? tryExtractJsonMap(String text) {
   final r = s.lastIndexOf('}');
   if (l >= 0 && r > l) {
     final sub = s.substring(l, r + 1);
-    final mid = _try(sub);
+    final mid = tryDecode(sub);
     if (mid != null) return mid;
   }
 

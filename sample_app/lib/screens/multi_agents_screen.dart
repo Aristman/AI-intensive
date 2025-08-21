@@ -41,7 +41,6 @@ class _MultiAgentsScreenState extends State<MultiAgentsScreen> {
   SimpleAgent? _agentB; // простой
 
   bool _sending = false;
-  int? _waitingBIndex; // индекс плейсхолдера ожидания ответа B
 
   void _focusInputAndScroll() {
     if (!mounted) return;
@@ -70,7 +69,6 @@ class _MultiAgentsScreenState extends State<MultiAgentsScreen> {
     setState(() {
       _msgsA.clear();
       _msgsB.clear();
-      _waitingBIndex = null;
     });
     _focusInputAndScroll();
   }
@@ -131,18 +129,6 @@ class _MultiAgentsScreenState extends State<MultiAgentsScreen> {
     if (_scrollA.hasClients) {
       _scrollA.animateTo(
         _scrollA.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeOut,
-      );
-    }
-    _focusInputAndScroll();
-  }
-
-  void _appendB(_Msg m) {
-    setState(() => _msgsB.add(m));
-    if (_scrollB.hasClients) {
-      _scrollB.animateTo(
-        _scrollB.position.maxScrollExtent,
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeOut,
       );
@@ -239,7 +225,6 @@ class _MultiAgentsScreenState extends State<MultiAgentsScreen> {
     int? localWaitingIndex;
     _safeSetState(() {
       localWaitingIndex = _msgsB.length;
-      _waitingBIndex = localWaitingIndex;
       _msgsB.add(_Msg('Ожидаем ответа В...', false));
     });
 
@@ -258,7 +243,6 @@ class _MultiAgentsScreenState extends State<MultiAgentsScreen> {
         } else {
           _msgsB.add(_Msg(answerB, false));
         }
-        _waitingBIndex = null;
       });
       
       if (!_isDisposed) {
@@ -275,7 +259,6 @@ class _MultiAgentsScreenState extends State<MultiAgentsScreen> {
           } else {
             _msgsB.add(errMsg);
           }
-          _waitingBIndex = null;
         });
         
         if (!_isDisposed) {
