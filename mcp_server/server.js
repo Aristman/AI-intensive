@@ -28,6 +28,19 @@ async function writeFilesToDir(baseDir, files) {
   }
 }
 
+async function downloadToFile(url, destAbsPath) {
+  const resp = await axios.get(url, { responseType: 'arraybuffer' });
+  await mkdir(path.dirname(destAbsPath), { recursive: true });
+  await writeFile(destAbsPath, resp.data);
+}
+
+function detectPackageFqcn(javaFilePath, javaContent) {
+  // Derive FQCN from optional package declaration + filename
+  const base = path.basename(javaFilePath).replace(/\.java$/i, '');
+  const m = /\bpackage\s+([a-zA-Z0-9_.]+)\s*;/m.exec(javaContent || '');
+  return m ? `${m[1]}.${base}` : base;
+}
+
 if (!GITHUB_TOKEN) {
   console.warn('[MCP] Warning: GITHUB_TOKEN is not set. create_issue and private repos will fail.');
 }
@@ -133,7 +146,7 @@ async function handleToolCall(name, args) {
     case 'docker_start_java': {
       const {
         container_name = 'java-dev',
-        image = 'eclipse-temurin:17-jdk',
+        image = 'eclipse-temurin:20-jdk',
         port = 8080,
         extra_args = '',
       } = args || {};
@@ -173,7 +186,7 @@ async function handleToolCall(name, args) {
         compile_args = [],
         run_args = [],
         // Docker config
-        image = 'eclipse-temurin:17-jdk',
+        image = 'eclipse-temurin:20-jdk',
         container_name,
         extra_args = '',
         workdir = '/work',
@@ -194,8 +207,22 @@ async function handleToolCall(name, args) {
         fileList = [{ path: String(filename), content: String(code) }];
       }
 
-      // Derive entrypoint if missing
-      const mainClass = entrypoint || path.basename(fileList[0].path).replace(/\.java$/i, '');
+      // Try to detect if tests with JUnit4 are present
+      const javaFilesWithContent = fileList.filter((f) => /\.java$/i.test(f.path));
+      const junit4Detected = javaFilesWithContent.some((f) => {
+        const c = String(f.content || '');
+        return c.includes('import org.junit') || /@Test\b/.test(c);
+      });
+
+      // Detect a plausible entrypoint (FQCN). Prefer a test class if JUnit4 detected.
+      let detectedFqcn = null;
+      if (!entrypoint) {
+        let candidate = javaFilesWithContent.find((f) => /Test\.java$/i.test(f.path)) || javaFilesWithContent[0] || fileList[0];
+        if (candidate) {
+          detectedFqcn = detectPackageFqcn(candidate.path, String(candidate.content || ''));
+        }
+      }
+      const mainClass = entrypoint || detectedFqcn || path.basename(fileList[0].path).replace(/\.java$/i, '');
 
       // Prepare temp dir and write files
       const hostDir = await createTempDir();
@@ -212,7 +239,31 @@ async function handleToolCall(name, args) {
       const { cpus = 1, memory = '512m' } = limits || {};
       const dockerBase = `docker run --rm ${container_name ? `--name ${container_name}` : ''} --cpus=${cpus} --memory=${memory} -v "${hostDir}":${workdir} -w ${workdir} ${extra_args} ${image}`;
 
-      const compileCp = classpath ? `-cp '${classpath}'` : '';
+      // Prepare JUnit4 libs if needed
+      let junitCpRel = '';
+      if (junit4Detected) {
+        try {
+          const libDir = path.join(hostDir, 'lib');
+          const junitJar = path.join(libDir, 'junit-4.13.2.jar');
+          const hamcrestJar = path.join(libDir, 'hamcrest-core-1.3.jar');
+          await downloadToFile('https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar', junitJar);
+          await downloadToFile('https://repo1.maven.org/maven2/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar', hamcrestJar);
+          // Inside container we address them via volume-mounted relative path
+          junitCpRel = `lib/junit-4.13.2.jar:lib/hamcrest-core-1.3.jar`;
+        } catch (e) {
+          // If download fails, continue without JUnit (will likely fail to compile)
+          junitCpRel = '';
+        }
+      }
+
+      // Build compile classpath
+      let compileCp = '';
+      const cpParts = [];
+      if (classpath) cpParts.push(String(classpath));
+      if (junitCpRel) cpParts.push(junitCpRel);
+      if (cpParts.length > 0) {
+        compileCp = `-cp '${cpParts.join(':')}'`;
+      }
       const compileArgsStr = Array.isArray(compile_args) ? compile_args.map((a) => `'${String(a)}'`).join(' ') : '';
       const filesStr = relJavaFiles.map((p) => `'${p}'`).join(' ');
       const compileCmd = `${dockerBase} sh -lc "javac -d . ${compileCp} ${compileArgsStr} ${filesStr}"`;
@@ -246,9 +297,13 @@ async function handleToolCall(name, args) {
         };
       }
 
-      const runCp = classpath ? `-cp '.:${classpath}'` : `-cp '.'`;
+      // Build run classpath
+      const runCpParts = [`.`, ...(classpath ? [String(classpath)] : []), ...(junitCpRel ? [junitCpRel] : [])];
+      const runCp = `-cp '${runCpParts.join(':')}'`;
       const runArgsStr = Array.isArray(run_args) ? run_args.map((a) => `'${String(a)}'`).join(' ') : '';
-      const runCmd = `${dockerBase} sh -lc "java ${runCp} '${mainClass}' ${runArgsStr}"`;
+      // If JUnit4 detected, run via JUnitCore; otherwise run main class
+      const runMain = junit4Detected ? `org.junit.runner.JUnitCore '${mainClass}'` : `'${mainClass}'`;
+      const runCmd = `${dockerBase} sh -lc "java ${runCp} ${runMain} ${runArgsStr}"`;
 
       let run = { stdout: '', stderr: '', exitCode: 0, durationMs: 0 };
       try {
