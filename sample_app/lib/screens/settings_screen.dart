@@ -41,6 +41,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _mcpInitialized = false;
   bool _isCheckingMcp = false;
   final _mcpUrlController = TextEditingController();
+  String? _mcpUrlErrorText; // отображение ошибки URL
 
   @override
   void initState() {
@@ -49,6 +50,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _jsonSchemaController.text = _currentSettings.customJsonSchema ?? '';
     _systemPromptController.text = _currentSettings.systemPrompt;
     _mcpUrlController.text = _currentSettings.mcpServerUrl ?? '';
+    // начальная валидация MCP URL
+    _mcpUrlErrorText = _currentSettings.useMcpServer && !_isValidWebSocketUrl(_mcpUrlController.text.trim())
+        ? 'Некорректный WebSocket URL (пример: ws://localhost:3001)'
+        : null;
     // Сообщаем о начальных настройках (полезно для виджет-тестов)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -162,6 +167,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (url == null || url.isEmpty) {
       throw Exception('MCP URL не указан');
     }
+    if (!_isValidWebSocketUrl(url)) {
+      throw Exception('Некорректный MCP URL');
+    }
     await _mcpClient.connect(url);
     setState(() {
       _mcpConnected = true;
@@ -213,6 +221,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       jsonDecode(jsonString);
       return true;
     } catch (e) {
+      return false;
+    }
+  }
+
+  bool _isValidWebSocketUrl(String? url) {
+    if (url == null || url.trim().isEmpty) return false;
+    try {
+      final u = Uri.parse(url.trim());
+      return (u.scheme == 'ws' || u.scheme == 'wss') && (u.host.isNotEmpty);
+    } catch (_) {
       return false;
     }
   }
@@ -482,26 +500,56 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         },
                       ),
                     ],
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // MCP Provider Selection
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Выбор MCP',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                    
+                    if (_currentSettings.useMcpServer) ...[
+                      TextField(
+                        enabled: _currentSettings.useMcpServer,
+                        decoration: InputDecoration(
+                          labelText: 'MCP WebSocket URL (например, ws://localhost:3001)',
+                          border: const OutlineInputBorder(),
+                          errorText: _mcpUrlErrorText,
+                          helperText: _mcpUrlErrorText == null ? 'Подключение выполняется по JSON-RPC 2.0' : null,
+                        ),
+                        controller: _mcpUrlController,
+                        onChanged: (v) {
+                          final valid = _isValidWebSocketUrl(v);
+                          setState(() {
+                            _currentSettings = _currentSettings.copyWith(mcpServerUrl: v);
+                            _mcpUrlErrorText = valid ? null : 'Некорректный WebSocket URL (пример: ws://localhost:3001)';
+                          });
+                          widget.onSettingsChanged(_currentSettings);
+                        },
                       ),
-                    ),
-                    const SizedBox(height: 8),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: !_currentSettings.useMcpServer || _isCheckingMcp || _mcpUrlErrorText != null
+                                ? null
+                                : _checkMcp,
+                            icon: _isCheckingMcp
+                                ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                : const Icon(Icons.link),
+                            label: Text(_isCheckingMcp ? 'Проверка...' : 'Проверить MCP'),
+                          ),
+                          const SizedBox(width: 12),
+                          Icon(
+                            _mcpConnected && _mcpInitialized ? Icons.check_circle : Icons.error,
+                            color: _mcpConnected && _mcpInitialized ? Colors.green : Colors.red,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _mcpConnected && _mcpInitialized
+                                ? 'Подключено и инициализировано'
+                                : (_mcpUrlErrorText != null ? 'Неверный URL' : 'Не подключено'),
+                            style: TextStyle(
+                              color: _mcpConnected && _mcpInitialized ? Colors.green : (_mcpUrlErrorText != null ? Colors.orange : Colors.red),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                     CheckboxListTile(
                       title: const Text('Github MCP'),
                       value: _currentSettings.isGithubMcpEnabled,
@@ -517,6 +565,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             enabledMCPProviders: updatedProviders,
                           );
                         });
+                        widget.onSettingsChanged(_currentSettings);
                       },
                       controlAffinity: ListTileControlAffinity.leading,
                     ),
@@ -613,28 +662,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 style: TextStyle(fontWeight: FontWeight.bold),
                               ),
                               const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: TextField(
-                                      controller: _repoOwnerController,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Владелец (owner)',
-                                        border: OutlineInputBorder(),
+                              LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final narrow = constraints.maxWidth < 480;
+                                  final children = <Widget>[
+                                    Expanded(
+                                      child: TextField(
+                                        controller: _repoOwnerController,
+                                        decoration: const InputDecoration(
+                                          labelText: 'Владелец (owner)',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: TextField(
-                                      controller: _repoNameController,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Репозиторий (repo)',
-                                        border: OutlineInputBorder(),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: TextField(
+                                        controller: _repoNameController,
+                                        decoration: const InputDecoration(
+                                          labelText: 'Репозиторий (repo)',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ],
+                                  ];
+                                  return narrow
+                                      ? Column(
+                                          children: [
+                                            children[0],
+                                            const SizedBox(height: 8),
+                                            children[1],
+                                          ],
+                                        )
+                                      : Row(children: children);
+                                },
                               ),
                               const SizedBox(height: 8),
                               TextField(
@@ -660,7 +721,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   onPressed: _isCreatingIssue
                                       ? null
                                       : (_currentSettings.useMcpServer
-                                          ? _handleCreateIssue
+                                          ? (_mcpUrlErrorText == null ? _handleCreateIssue : null)
                                           : (_isGithubTokenValid ? _handleCreateIssue : null)),
                                   icon: _isCreatingIssue
                                       ? const SizedBox(
@@ -683,74 +744,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 16),
-            // MCP Server settings
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'MCP сервер (WebSocket)',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    SwitchListTile(
-                      title: const Text('Использовать внешний MCP сервер'),
-                      value: _currentSettings.useMcpServer,
-                      onChanged: (v) {
-                        setState(() {
-                          _currentSettings = _currentSettings.copyWith(useMcpServer: v);
-                        });
-                      },
-                      controlAffinity: ListTileControlAffinity.leading,
-                    ),
-                    const SizedBox(height: 8),
-                    if (_currentSettings.useMcpServer) ...[
-                      TextField(
-                        enabled: _currentSettings.useMcpServer,
-                        decoration: const InputDecoration(
-                          labelText: 'MCP WebSocket URL (например, ws://localhost:3001)',
-                          border: OutlineInputBorder(),
-                        ),
-                        controller: _mcpUrlController,
-                        onChanged: (v) {
-                          _currentSettings = _currentSettings.copyWith(mcpServerUrl: v);
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          ElevatedButton.icon(
-                            onPressed: !_currentSettings.useMcpServer || _isCheckingMcp ? null : _checkMcp,
-                            icon: _isCheckingMcp
-                                ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                                : const Icon(Icons.link),
-                            label: Text(_isCheckingMcp ? 'Проверка...' : 'Проверить MCP'),
-                          ),
-                          const SizedBox(width: 12),
-                          Icon(
-                            _mcpConnected && _mcpInitialized ? Icons.check_circle : Icons.error,
-                            color: _mcpConnected && _mcpInitialized ? Colors.green : Colors.red,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            _mcpConnected && _mcpInitialized
-                                ? 'Подключено и инициализировано'
-                                : 'Не подключено',
-                            style: TextStyle(
-                              color: _mcpConnected && _mcpInitialized ? Colors.green : Colors.red,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
+            
           ],
         ),
       ),

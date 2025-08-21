@@ -6,6 +6,8 @@ import { promisify } from 'node:util';
 import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
@@ -13,6 +15,42 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_DEFAULT_CHAT_ID = process.env.TELEGRAM_DEFAULT_CHAT_ID;
 
 const execAsync = promisify(_exec);
+
+// ------------ Structured JSON logging ------------
+function jlog(level, event, meta = {}) {
+  const entry = {
+    ts: new Date().toISOString(),
+    level,
+    event,
+    ...meta,
+  };
+  try {
+    console.log(JSON.stringify(entry));
+  } catch (e) {
+    // Fallback minimal log if meta contains circular structures
+    try {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'log_failed', reason: String(e) }));
+    } catch {}
+  }
+}
+
+class RpcError extends Error {
+  constructor(code, message, data) {
+    super(message);
+    this.code = code;
+    this.data = data;
+  }
+}
+
+function toJsonRpcError(err) {
+  if (err instanceof RpcError) {
+    return { code: err.code, message: err.message, data: err.data };
+  }
+  const msg = err?.message || String(err);
+  return { code: -32603, message: 'Internal error', data: msg };
+}
+
+export { RpcError, toJsonRpcError, jlog };
 
 async function createTempDir(prefix = 'mcp-java-') {
   const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
@@ -42,14 +80,11 @@ function detectPackageFqcn(javaFilePath, javaContent) {
 }
 
 if (!GITHUB_TOKEN) {
-  console.warn('[MCP] Warning: GITHUB_TOKEN is not set. create_issue and private repos will fail.');
+  jlog('warn', 'config_missing', { variable: 'GITHUB_TOKEN', note: 'create_issue and private repos will fail' });
 }
 if (!TELEGRAM_BOT_TOKEN) {
-  console.warn('[MCP] Warning: TELEGRAM_BOT_TOKEN is not set. Telegram tools will fail.');
+  jlog('warn', 'config_missing', { variable: 'TELEGRAM_BOT_TOKEN', note: 'Telegram tools will fail' });
 }
-
-const wss = new WebSocketServer({ port: PORT });
-console.log(`[MCP] Server started on ws://localhost:${PORT}`);
 
 function send(ws, msg) {
   ws.send(JSON.stringify(msg));
@@ -69,43 +104,56 @@ async function ghRequest(method, url, body) {
     Accept: 'application/vnd.github.v3+json',
     ...(GITHUB_TOKEN ? { Authorization: `token ${GITHUB_TOKEN}` } : {}),
   };
-  const resp = await axios({ method, url: base + url, data: body, headers });
-  return resp.data;
+  try {
+    const resp = await axios({ method, url: base + url, data: body, headers });
+    return resp.data;
+  } catch (e) {
+    const status = e?.response?.status;
+    const data = e?.response?.data;
+    throw new RpcError(-32010, 'GitHub API error', { status, data, url });
+  }
 }
 
 async function tgRequest(methodName, payload) {
-  if (!TELEGRAM_BOT_TOKEN) throw new Error('TELEGRAM_BOT_TOKEN is not configured on server');
+  if (!TELEGRAM_BOT_TOKEN) throw new RpcError(-32001, 'Server misconfiguration', 'TELEGRAM_BOT_TOKEN is not configured on server');
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${methodName}`;
-  const resp = await axios.post(url, payload);
-  const data = resp.data;
-  if (data && data.ok === false) {
-    throw new Error(`Telegram API error: ${JSON.stringify(data)}`);
+  try {
+    const resp = await axios.post(url, payload);
+    const data = resp.data;
+    if (data && data.ok === false) {
+      throw new RpcError(-32011, 'Telegram API error', data);
+    }
+    return data?.result ?? data;
+  } catch (e) {
+    if (e instanceof RpcError) throw e;
+    const status = e?.response?.status;
+    const data = e?.response?.data;
+    throw new RpcError(-32011, 'Telegram API error', { status, data, methodName });
   }
-  return data?.result ?? data;
 }
 
 async function handleToolCall(name, args) {
   switch (name) {
     case 'get_repo': {
       const { owner, repo } = args || {};
-      if (!owner || !repo) throw new Error('owner and repo are required');
+      if (!owner || !repo) throw new RpcError(-32602, 'Invalid params', 'owner and repo are required');
       return await ghRequest('GET', `/repos/${owner}/${repo}`);
     }
     case 'search_repos': {
       const { query } = args || {};
-      if (!query) throw new Error('query is required');
+      if (!query) throw new RpcError(-32602, 'Invalid params', 'query is required');
       const data = await ghRequest('GET', `/search/repositories?q=${encodeURIComponent(query)}`);
       return data.items || [];
     }
     case 'create_issue': {
-      if (!GITHUB_TOKEN) throw new Error('GITHUB_TOKEN is not configured on server');
+      if (!GITHUB_TOKEN) throw new RpcError(-32001, 'Server misconfiguration', 'GITHUB_TOKEN is not configured on server');
       const { owner, repo, title, body } = args || {};
-      if (!owner || !repo || !title) throw new Error('owner, repo, title are required');
+      if (!owner || !repo || !title) throw new RpcError(-32602, 'Invalid params', 'owner, repo, title are required');
       return await ghRequest('POST', `/repos/${owner}/${repo}/issues`, { title, body });
     }
     case 'list_issues': {
       const { owner, repo, state = 'open', per_page = 5, page = 1 } = args || {};
-      if (!owner || !repo) throw new Error('owner and repo are required');
+      if (!owner || !repo) throw new RpcError(-32602, 'Invalid params', 'owner and repo are required');
       const qs = new URLSearchParams({ state: String(state), per_page: String(per_page), page: String(page) }).toString();
       const items = await ghRequest('GET', `/repos/${owner}/${repo}/issues?${qs}`);
       // Filter out PRs
@@ -114,16 +162,16 @@ async function handleToolCall(name, args) {
     }
     case 'tg_send_message': {
       const { chat_id, text, parse_mode, disable_web_page_preview } = args || {};
-      if (!text) throw new Error('text is required');
+      if (!text) throw new RpcError(-32602, 'Invalid params', 'text is required');
       const cid = chat_id ?? TELEGRAM_DEFAULT_CHAT_ID;
-      if (!cid) throw new Error('chat_id is required (or set TELEGRAM_DEFAULT_CHAT_ID)');
+      if (!cid) throw new RpcError(-32602, 'Invalid params', 'chat_id is required (or set TELEGRAM_DEFAULT_CHAT_ID)');
       return await tgRequest('sendMessage', { chat_id: cid, text, parse_mode, disable_web_page_preview });
     }
     case 'tg_send_photo': {
       const { chat_id, photo, caption, parse_mode } = args || {};
-      if (!photo) throw new Error('photo (URL or file_id) is required');
+      if (!photo) throw new RpcError(-32602, 'Invalid params', 'photo (URL or file_id) is required');
       const cid = chat_id ?? TELEGRAM_DEFAULT_CHAT_ID;
-      if (!cid) throw new Error('chat_id is required (or set TELEGRAM_DEFAULT_CHAT_ID)');
+      if (!cid) throw new RpcError(-32602, 'Invalid params', 'chat_id is required (or set TELEGRAM_DEFAULT_CHAT_ID)');
       return await tgRequest('sendPhoto', { chat_id: cid, photo, caption, parse_mode });
     }
     case 'tg_get_updates': {
@@ -131,12 +179,12 @@ async function handleToolCall(name, args) {
       return await tgRequest('getUpdates', { offset, timeout, allowed_updates });
     }
     case 'create_issue_and_notify': {
-      if (!GITHUB_TOKEN) throw new Error('GITHUB_TOKEN is not configured on server');
+      if (!GITHUB_TOKEN) throw new RpcError(-32001, 'Server misconfiguration', 'GITHUB_TOKEN is not configured on server');
       const { owner, repo, title, body, chat_id, message_template } = args || {};
-      if (!owner || !repo || !title) throw new Error('owner, repo, title are required');
+      if (!owner || !repo || !title) throw new RpcError(-32602, 'Invalid params', 'owner, repo, title are required');
       const issue = await ghRequest('POST', `/repos/${owner}/${repo}/issues`, { title, body });
       const cid = chat_id ?? TELEGRAM_DEFAULT_CHAT_ID;
-      if (!cid) throw new Error('chat_id is required (or set TELEGRAM_DEFAULT_CHAT_ID)');
+      if (!cid) throw new RpcError(-32602, 'Invalid params', 'chat_id is required (or set TELEGRAM_DEFAULT_CHAT_ID)');
       const issueUrl = issue?.html_url || issue?.url || '';
       const defaultMsg = `New GitHub issue created: ${owner}/${repo}\n#${issue?.number ?? ''} ${title}\n${issueUrl}`;
       const text = message_template || defaultMsg;
@@ -162,15 +210,29 @@ async function handleToolCall(name, args) {
         const { stdout: statusOut } = await execAsync(statusCmd).catch(() => ({ stdout: '' }));
         const isUp = Boolean((statusOut || '').trim());
         if (!isUp) {
-          await execAsync(`docker start ${container_name}`);
+          try {
+            await execAsync(`docker start ${container_name}`);
+          } catch (e) {
+            throw new RpcError(-32020, 'Docker error', { action: 'start', container_name, error: String(e?.stderr || e?.message || e) });
+          }
         }
         return { container: container_name, image, state: 'running', existed: true };
       }
 
       // 3) Pull image and run new container
-      await execAsync(`docker pull ${image}`);
+      try {
+        await execAsync(`docker pull ${image}`);
+      } catch (e) {
+        throw new RpcError(-32020, 'Docker error', { action: 'pull', image, error: String(e?.stderr || e?.message || e) });
+      }
       const runCmd = `docker run -d --name ${container_name} --restart unless-stopped -p ${port}:8080 ${extra_args} ${image} tail -f /dev/null`;
-      const { stdout: runOut } = await execAsync(runCmd);
+      let runOut;
+      try {
+        const { stdout } = await execAsync(runCmd);
+        runOut = stdout;
+      } catch (e) {
+        throw new RpcError(-32020, 'Docker error', { action: 'run', container_name, image, error: String(e?.stderr || e?.message || e) });
+      }
       return { container: container_name, image, state: 'running', id: (runOut || '').trim(), existed: false };
     }
     case 'docker_exec_java': {
@@ -202,7 +264,7 @@ async function handleToolCall(name, args) {
         fileList = files.map((f) => ({ path: String(f.path), content: String(f.content ?? '') }));
       } else {
         if (!filename || typeof code !== 'string') {
-          throw new Error("Either 'files' or both 'filename' and 'code' are required");
+          throw new RpcError(-32602, 'Invalid params', "Either 'files' or both 'filename' and 'code' are required");
         }
         fileList = [{ path: String(filename), content: String(code) }];
       }
@@ -225,8 +287,13 @@ async function handleToolCall(name, args) {
       const mainClass = entrypoint || detectedFqcn || path.basename(fileList[0].path).replace(/\.java$/i, '');
 
       // Prepare temp dir and write files
-      const hostDir = await createTempDir();
-      await writeFilesToDir(hostDir, fileList);
+      let hostDir;
+      try {
+        hostDir = await createTempDir();
+        await writeFilesToDir(hostDir, fileList);
+      } catch (e) {
+        throw new RpcError(-32021, 'Workspace preparation failed', String(e?.message || e));
+      }
 
       const relJavaFiles = fileList
         .map((f) => f.path)
@@ -340,55 +407,94 @@ async function handleToolCall(name, args) {
       };
     }
     default:
-      throw new Error(`Unknown tool: ${name}`);
+      throw new RpcError(-32601, 'Tool not found', String(name));
   }
 }
 
-wss.on('connection', (ws) => {
-  ws.on('message', async (raw) => {
-    let msg;
-    try { msg = JSON.parse(raw.toString()); } catch {
-      return send(ws, makeError(null, -32700, 'Parse error'));
-    }
+function startServer() {
+  const wss = new WebSocketServer({ port: PORT });
+  jlog('info', 'server_started', { port: PORT, url: `ws://localhost:${PORT}` });
 
-    const { id, method, params } = msg;
-    if (!method) {
-      return send(ws, makeError(id ?? null, -32600, 'Invalid Request'));
-    }
+  wss.on('connection', (ws) => {
+    jlog('info', 'ws_connection_open', { remote: ws._socket?.remoteAddress });
 
-    try {
-      if (method === 'initialize') {
-        return send(ws, makeResult(id, {
-          serverInfo: { name: 'mcp-github-telegram-server', version: '1.1.0' },
-          capabilities: { tools: true },
-        }));
-      }
-      if (method === 'tools/list') {
-        return send(ws, makeResult(id, {
-          tools: [
-            { name: 'get_repo', description: 'Get GitHub repo info', inputSchema: { owner: 'string', repo: 'string' } },
-            { name: 'search_repos', description: 'Search GitHub repos', inputSchema: { query: 'string' } },
-            { name: 'create_issue', description: 'Create GitHub issue', inputSchema: { owner: 'string', repo: 'string', title: 'string', body: 'string?' } },
-            { name: 'list_issues', description: 'List issues for a repo (no PRs)', inputSchema: { owner: 'string', repo: 'string', state: 'string?', per_page: 'number?', page: 'number?' } },
-            { name: 'tg_send_message', description: 'Send Telegram text message', inputSchema: { chat_id: 'string?', text: 'string', parse_mode: 'string?', disable_web_page_preview: 'boolean?' } },
-            { name: 'tg_send_photo', description: 'Send Telegram photo by URL or file_id', inputSchema: { chat_id: 'string?', photo: 'string', caption: 'string?', parse_mode: 'string?' } },
-            { name: 'tg_get_updates', description: 'Get Telegram updates (long polling)', inputSchema: { offset: 'number?', timeout: 'number?', allowed_updates: 'string[]?' } },
-            { name: 'create_issue_and_notify', description: 'Create GitHub issue and notify Telegram chat', inputSchema: { owner: 'string', repo: 'string', title: 'string', body: 'string?', chat_id: 'string?', message_template: 'string?' } },
-            { name: 'docker_start_java', description: 'Start (or create and start) a local Docker container with Java JDK', inputSchema: { container_name: 'string?', image: 'string?', port: 'number?', extra_args: 'string?' } },
-            { name: 'docker_exec_java', description: 'Compile and run Java code inside a Docker container (volume-mounted workspace)', inputSchema: { filename: 'string?', code: 'string?', files: 'Array<{path:string,content:string}>?', entrypoint: 'string?', classpath: 'string?', compile_args: 'string[]?', run_args: 'string[]?', image: 'string?', container_name: 'string?', extra_args: 'string?', workdir: 'string?', timeout_ms: 'number?', limits: '{cpus?:number,memory?:string}?', cleanup: "'always'|'on_success'|'never'?" } },
-          ],
-        }));
-      }
-      if (method === 'tools/call') {
-        const { name, arguments: args } = params || {};
-        const result = await handleToolCall(name, args);
-        return send(ws, makeResult(id, { name, result }));
+    ws.on('message', async (raw) => {
+      const traceId = randomUUID();
+      const t0 = Date.now();
+      let msg;
+      try {
+        msg = JSON.parse(raw.toString());
+      } catch (e) {
+        jlog('error', 'rpc_parse_error', { traceId, rawSize: raw?.length, error: String(e?.message || e) });
+        return send(ws, makeError(null, -32700, 'Parse error'));
       }
 
-      return send(ws, makeError(id, -32601, 'Method not found'));
-    } catch (err) {
-      const message = err?.response?.data || err?.message || String(err);
-      return send(ws, makeError(id, -32000, 'Tool call failed', message));
-    }
+      const { id, method, params } = msg;
+      if (!method) {
+        jlog('warn', 'rpc_invalid_request', { traceId, id });
+        return send(ws, makeError(id ?? null, -32600, 'Invalid Request'));
+      }
+
+      jlog('info', 'rpc_request', { traceId, id, method });
+
+      try {
+        if (method === 'initialize') {
+          const payload = {
+            serverInfo: { name: 'mcp-github-telegram-server', version: '1.1.0' },
+            capabilities: { tools: true },
+          };
+          jlog('info', 'rpc_response', { traceId, id, method, ok: true, durationMs: Date.now() - t0 });
+          return send(ws, makeResult(id, payload));
+        }
+        if (method === 'tools/list') {
+          const payload = {
+            tools: [
+              { name: 'get_repo', description: 'Get GitHub repo info', inputSchema: { owner: 'string', repo: 'string' } },
+              { name: 'search_repos', description: 'Search GitHub repos', inputSchema: { query: 'string' } },
+              { name: 'create_issue', description: 'Create GitHub issue', inputSchema: { owner: 'string', repo: 'string', title: 'string', body: 'string?' } },
+              { name: 'list_issues', description: 'List issues for a repo (no PRs)', inputSchema: { owner: 'string', repo: 'string', state: 'string?', per_page: 'number?', page: 'number?' } },
+              { name: 'tg_send_message', description: 'Send Telegram text message', inputSchema: { chat_id: 'string?', text: 'string', parse_mode: 'string?', disable_web_page_preview: 'boolean?' } },
+              { name: 'tg_send_photo', description: 'Send Telegram photo by URL or file_id', inputSchema: { chat_id: 'string?', photo: 'string', caption: 'string?', parse_mode: 'string?' } },
+              { name: 'tg_get_updates', description: 'Get Telegram updates (long polling)', inputSchema: { offset: 'number?', timeout: 'number?', allowed_updates: 'string[]?' } },
+              { name: 'create_issue_and_notify', description: 'Create GitHub issue and notify Telegram chat', inputSchema: { owner: 'string', repo: 'string', title: 'string', body: 'string?', chat_id: 'string?', message_template: 'string?' } },
+              { name: 'docker_start_java', description: 'Start (or create and start) a local Docker container with Java JDK', inputSchema: { container_name: 'string?', image: 'string?', port: 'number?', extra_args: 'string?' } },
+              { name: 'docker_exec_java', description: 'Compile and run Java code inside a Docker container (volume-mounted workspace)', inputSchema: { filename: 'string?', code: 'string?', files: 'Array<{path:string,content:string}>?', entrypoint: 'string?', classpath: 'string?', compile_args: 'string[]?', run_args: 'string[]?', image: 'string?', container_name: 'string?', extra_args: 'string?', workdir: 'string?', timeout_ms: 'number?', limits: '{cpus?:number,memory?:string}?', cleanup: "'always'|'on_success'|'never'?" } },
+            ],
+          };
+          jlog('info', 'rpc_response', { traceId, id, method, ok: true, durationMs: Date.now() - t0 });
+          return send(ws, makeResult(id, payload));
+        }
+        if (method === 'tools/call') {
+          const { name, arguments: args } = params || {};
+          if (!name) {
+            jlog('warn', 'rpc_invalid_params', { traceId, id, method, reason: 'name is required' });
+            return send(ws, makeError(id, -32602, 'Invalid params', { details: 'name is required' }));
+          }
+          const result = await handleToolCall(name, args);
+          jlog('info', 'rpc_response', { traceId, id, method, ok: true, durationMs: Date.now() - t0, tool: name });
+          return send(ws, makeResult(id, { name, result }));
+        }
+
+        jlog('warn', 'rpc_method_not_found', { traceId, id, method, durationMs: Date.now() - t0 });
+        return send(ws, makeError(id, -32601, 'Method not found'));
+      } catch (err) {
+        const { code, message, data } = toJsonRpcError(err);
+        jlog('error', 'rpc_response', { traceId, id, method, ok: false, durationMs: Date.now() - t0, code, error: message, data });
+        return send(ws, makeError(id, code, message, data));
+      }
+    });
+
+    ws.on('close', () => {
+      jlog('info', 'ws_connection_closed', { remote: ws._socket?.remoteAddress });
+    });
   });
-});
+
+  return wss;
+}
+
+// Auto-start only when executed directly (not when imported for tests)
+try {
+  if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+    startServer();
+  }
+} catch {}
