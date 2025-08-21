@@ -1,4 +1,4 @@
-library code_exec_args;
+library;
 
 Map<String, dynamic> buildDockerExecJavaArgs({
   required String code,
@@ -27,7 +27,7 @@ Map<String, dynamic> buildDockerExecJavaArgs({
         final pkgPath = inferredPackage.replaceAll('.', '/');
         return '$pkgPath/$inferredClass.java';
       }
-      return '${inferredClass}.java';
+      return '$inferredClass.java';
     }
     return (filename == null || filename.isEmpty) ? 'Main.java' : filename;
   })();
@@ -72,13 +72,13 @@ Map<String, dynamic> buildDockerExecJavaArgs({
 String? _inferPackageName(String code) {
   final pkgRe = RegExp(r'package\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*;');
   final m = pkgRe.firstMatch(code);
-  return m == null ? null : m.group(1);
+  return m?.group(1);
 }
 
 String? _inferPublicClassName(String code) {
   final clsRe = RegExp(r'public\s+class\s+([A-Za-z_]\w*)');
   final m = clsRe.firstMatch(code);
-  return m == null ? null : m.group(1);
+  return m?.group(1);
 }
 
 String? _inferClassFromFilename(String? filename) {

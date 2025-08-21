@@ -20,7 +20,7 @@ class McpIntegrationService {
     };
 
     /// Обрабатывает запрос, связанный с GitHub, через MCP сервер
-    Future<Map<String, dynamic>> _processGithubQueryViaMcp(String query, AppSettings settings) async {
+    Future<Map<String, dynamic>> processGithubQueryViaMcp(String query, AppSettings settings) async {
       final githubData = <String, dynamic>{};
       final lowerQuery = query.toLowerCase();
 
@@ -105,7 +105,7 @@ class McpIntegrationService {
       try {
         Map<String, dynamic> githubData = {};
         if (settings.useMcpServer) {
-          githubData = await _processGithubQueryViaMcp(userQuery, settings);
+          githubData = await processGithubQueryViaMcp(userQuery, settings);
         } else {
           final token = dotenv.env['GITHUB_MCP_TOKEN'];
           if (token?.isNotEmpty == true) {

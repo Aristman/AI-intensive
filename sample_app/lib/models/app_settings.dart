@@ -92,7 +92,7 @@ class AppSettings {
       enabledMCPProviders: ((json['enabledMCPProviders'] as List?) ?? const <dynamic>[]) 
           .map((e) => e.toString())
           .map((name) => MCPProvider.values.firstWhere(
-                (p) => p.toString() == 'MCPProvider.' + name,
+                (p) => p.toString() == 'MCPProvider.$name',
                 orElse: () => MCPProvider.github,
               ))
           .toSet(),

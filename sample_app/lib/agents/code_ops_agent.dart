@@ -50,7 +50,7 @@ class CodeOpsAgent {
         text = const JsonEncoder.withIndent('  ').convert(data);
       }
       if (text.length > 800) {
-        text = text.substring(0, 800) + '...<truncated>';
+        text = '${text.substring(0, 800)}...<truncated>';
       }
       dev.log(text, name: 'CodeOpsAgent/$title');
     } catch (_) {
@@ -377,7 +377,7 @@ class CodeOpsAgent {
         'provider': _settings.selectedNetworkName,
         'format': _settings.responseFormatName,
         'messagesCount': messages.length,
-        'lastUserPreview': userText.length > 200 ? userText.substring(0, 200) + '...' : userText,
+        'lastUserPreview': userText.length > 200 ? '${userText.substring(0, 200)}...' : userText,
       });
       var answer = await usecase.complete(messages: messages, settings: _settings);
 
@@ -390,7 +390,7 @@ class CodeOpsAgent {
       _log('LLM Response', {
         'chars': answer.length,
         'isFinal': isFinal,
-        'preview': answer.length > 200 ? answer.substring(0, 200) + '...' : answer,
+        'preview': answer.length > 200 ? '${answer.substring(0, 200)}...' : answer,
       });
 
       _history.add(_Msg('assistant', answer));
