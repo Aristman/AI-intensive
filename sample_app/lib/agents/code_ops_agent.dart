@@ -49,9 +49,9 @@ class CodeOpsAgent {
       } else {
         text = const JsonEncoder.withIndent('  ').convert(data);
       }
-      if (text.length > 800) {
-        text = '${text.substring(0, 800)}...<truncated>';
-      }
+      // if (text.length > 800) {
+      //   text = '${text.substring(0, 800)}...<truncated>';
+      // }
       dev.log(text, name: 'CodeOpsAgent/$title');
     } catch (_) {
       // ignore logging errors
