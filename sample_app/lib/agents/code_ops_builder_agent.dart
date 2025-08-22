@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:async';
+import 'dart:math';
 
 import 'package:sample_app/agents/agent_interface.dart';
 import 'package:sample_app/agents/code_ops_agent.dart';
@@ -12,7 +14,7 @@ import 'package:sample_app/utils/code_utils.dart' as cu;
 /// 2) Ask user whether to create tests;
 /// 3) If confirmed and language is Java, run tests in Docker via MCP;
 /// 4) Analyze results and refine tests if necessary (bounded retries).
-class CodeOpsBuilderAgent implements IAgent, IToolingAgent {
+class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
   final CodeOpsAgent _inner;
   AppSettings _settings;
 
@@ -29,7 +31,7 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent {
   @override
   AgentCapabilities get capabilities => const AgentCapabilities(
         stateful: true,
-        streaming: false,
+        streaming: true,
         reasoning: true,
         tools: {'docker_exec_java', 'docker_start_java'},
       );
@@ -44,6 +46,15 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent {
   void dispose() {
     // delegate cleanups if needed in future
   }
+
+  // ===== IStatefulAgent =====
+  @override
+  void clearHistory() {
+    _inner.clearHistory();
+  }
+
+  @override
+  int get historyDepth => -1; // unknown depth (inner history is private)
 
   // ===== IToolingAgent =====
   @override
@@ -174,7 +185,110 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent {
   }
 
   @override
-  Stream<AgentEvent>? start(AgentRequest req) => null;
+  Stream<AgentEvent>? start(AgentRequest req) {
+    final controller = StreamController<AgentEvent>();
+    final runId = _genId('run');
+
+    Future<void>(() async {
+      void emit(AgentStage stage, String message, {AgentSeverity sev = AgentSeverity.info, double? prog, int? idx, int? total, Map<String, dynamic>? meta}) {
+        controller.add(AgentEvent(
+          id: _genId('evt'),
+          runId: runId,
+          stage: stage,
+          severity: sev,
+          message: message,
+          progress: prog,
+          stepIndex: idx,
+          totalSteps: total,
+          meta: meta,
+        ));
+      }
+
+      try {
+        const totalSteps = 4; // classify -> code -> ask -> done (tests are separate turn)
+        emit(AgentStage.pipeline_start, 'Старт пайплайна', prog: 0.0, idx: 1, total: totalSteps);
+
+        final userText = req.input.trim();
+        final intent = await _classifyIntent(userText);
+        emit(AgentStage.intent_classified, 'Интент: ${intent['intent']}', prog: 0.15, idx: 1, total: totalSteps, meta: intent);
+
+        if ((intent['intent'] as String?) != 'code_generate') {
+          // Fallback to inner conversation
+          final res = await _inner.ask(
+            userText,
+            overrideResponseFormat: req.overrideFormat,
+            overrideJsonSchema: req.overrideJsonSchema,
+          );
+          final answer = (res['answer']?.toString() ?? '').trim();
+          emit(AgentStage.pipeline_complete, answer.isEmpty ? 'Готово' : answer, prog: 1.0, idx: totalSteps, total: totalSteps, meta: {'mcp_used': res['mcp_used'] == true});
+          await controller.close();
+          return;
+        }
+
+        final intentLang = (intent['language'] as String?)?.trim();
+        if (intentLang == null || intentLang.isEmpty) {
+          emit(AgentStage.pipeline_error, 'Не указан язык. Уточните язык и повторите.', sev: AgentSeverity.warning, prog: 1.0, idx: totalSteps, total: totalSteps, meta: {'need_language': true});
+          await controller.close();
+          return;
+        }
+
+        emit(AgentStage.code_generation_started, 'Генерация кода...', prog: 0.35, idx: 2, total: totalSteps, meta: {'language': intentLang});
+        final codeJson = await _requestCodeJson(userText, language: intentLang);
+        if (codeJson == null) {
+          emit(AgentStage.pipeline_error, 'Не удалось получить корректный JSON с кодом.', sev: AgentSeverity.error, prog: 1.0, idx: totalSteps, total: totalSteps);
+          await controller.close();
+          return;
+        }
+
+        final files = (codeJson['files'] as List?)
+            ?.map((e) => {'path': e['path'].toString(), 'content': e['content'].toString()})
+            .cast<Map<String, String>>()
+            .toList();
+        _pendingLanguage = codeJson['language']?.toString();
+        _pendingEntrypoint = codeJson['entrypoint']?.toString();
+        _pendingFiles = files;
+
+        emit(
+          AgentStage.code_generated,
+          'Код сгенерирован: файлов=${files?.length ?? 0}, язык=${_pendingLanguage ?? '-'}',
+          prog: 0.6,
+          idx: 2,
+          total: totalSteps,
+          meta: {
+            'language': _pendingLanguage,
+            'entrypoint': _pendingEntrypoint,
+            'files': files,
+          },
+        );
+
+        // Ask user if we should create and run tests (Java only)
+        _awaitTestsConfirm = true;
+        emit(
+          AgentStage.ask_create_tests,
+          'Создать тесты и прогнать их? (да/нет) Поддержка авто‑запуска в Docker есть только для Java.',
+          prog: 0.75,
+          idx: 3,
+          total: totalSteps,
+          meta: {'await_user': true},
+        );
+
+        emit(AgentStage.pipeline_complete, 'Ожидание подтверждения на тесты', prog: 1.0, idx: totalSteps, total: totalSteps);
+        await controller.close();
+      } catch (e) {
+        // Any unexpected error
+        emit(AgentStage.pipeline_error, 'Ошибка пайплайна: $e', sev: AgentSeverity.error, prog: 1.0);
+        await controller.close();
+      }
+    });
+
+    return controller.stream;
+  }
+
+  String _genId(String prefix) {
+    final r = Random();
+    final n = DateTime.now().microsecondsSinceEpoch ^ r.nextInt(1 << 31);
+    return '$prefix-$n';
+  }
 
   String _buildFilesSummary(List<Map<String, String>>? files, String? language, String? entrypoint) {
     if (files == null || files.isEmpty) {

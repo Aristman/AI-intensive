@@ -1,4 +1,5 @@
 // Defines a unified agent interface and common data classes without modifying existing agents.
+// ignore_for_file: constant_identifier_names
 // This file introduces IAgent, IStatefulAgent, IToolingAgent and shared DTOs to be used
 // by future or adapted agents. Existing agents can migrate gradually.
 
@@ -54,10 +55,62 @@ class AgentCapabilities {
 }
 
 /// Streaming event emitted by an agent when using streaming mode.
+enum AgentStage {
+  pipeline_start,
+  intent_classified,
+  code_generation_started,
+  code_generated,
+  ask_create_tests,
+  test_generation_started,
+  test_generated,
+  docker_exec_started,
+  docker_exec_progress,
+  docker_exec_result,
+  analysis_started,
+  analysis_result,
+  refine_tests_started,
+  refine_tests_result,
+  pipeline_complete,
+  pipeline_error,
+}
+
+enum AgentSeverity { info, warning, error }
+
+/// Streaming event emitted by an agent when using streaming mode.
 class AgentEvent {
-  final String type; // 'token' | 'response' | 'tool_call' | 'error' | 'debug'
-  final dynamic data;
-  const AgentEvent(this.type, this.data);
+  final String id;           // unique event id (e.g., uuid)
+  final String runId;        // correlation id of a pipeline run
+  final AgentStage stage;    // pipeline stage
+  final AgentSeverity severity; // default info
+  final String message;      // short human-readable message
+  final double? progress;    // 0.0..1.0 overall pipeline progress
+  final int? stepIndex;      // current step index (1-based)
+  final int? totalSteps;     // total number of steps in pipeline
+  final DateTime timestamp;  // event time
+  final Map<String, dynamic>? meta; // structured payload per stage
+
+  AgentEvent({
+    required this.id,
+    required this.runId,
+    required this.stage,
+    this.severity = AgentSeverity.info,
+    required this.message,
+    this.progress,
+    this.stepIndex,
+    this.totalSteps,
+    DateTime? timestamp,
+    this.meta,
+  }) : timestamp = timestamp ?? DateTime.now();
+
+  /// Legacy compatibility constructor (optional). Not used yet, but handy for gradual migration.
+  factory AgentEvent.legacy(String type, dynamic data) => AgentEvent(
+        id: 'legacy',
+        runId: 'legacy',
+        stage: AgentStage.pipeline_error,
+        severity: AgentSeverity.warning,
+        message: 'Legacy event: $type',
+        meta: {'data': data},
+      );
 }
 
 /// Unified agent interface.

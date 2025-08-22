@@ -77,4 +77,43 @@ void main() {
       expect(r.hadStop, isFalse);
     });
   });
+
+  group('AgentEvent & enums', () {
+    test('AgentStage contains key pipeline stages', () {
+      expect(AgentStage.values.contains(AgentStage.code_generated), isTrue);
+      expect(AgentStage.values.contains(AgentStage.docker_exec_result), isTrue);
+      expect(AgentStage.values.contains(AgentStage.pipeline_complete), isTrue);
+      expect(AgentStage.values.contains(AgentStage.pipeline_error), isTrue);
+    });
+
+    test('AgentEvent creates structured event with defaults', () {
+      final e = AgentEvent(
+        id: 'e1',
+        runId: 'r1',
+        stage: AgentStage.code_generation_started,
+        message: 'Начата генерация кода',
+        progress: 0.2,
+        stepIndex: 1,
+        totalSteps: 6,
+        meta: {'hint': 'java'},
+      );
+      expect(e.id, 'e1');
+      expect(e.runId, 'r1');
+      expect(e.stage, AgentStage.code_generation_started);
+      expect(e.severity, AgentSeverity.info); // default
+      expect(e.message, contains('генерация'));
+      expect(e.progress, closeTo(0.2, 1e-9));
+      expect(e.stepIndex, 1);
+      expect(e.totalSteps, 6);
+      expect(e.meta, containsPair('hint', 'java'));
+      expect(e.timestamp, isA<DateTime>());
+    });
+
+    test('AgentEvent.legacy builds compatibility wrapper', () {
+      final e = AgentEvent.legacy('tool_call', {'x': 1});
+      expect(e.stage, AgentStage.pipeline_error);
+      expect(e.severity, AgentSeverity.warning);
+      expect(e.meta, contains('data'));
+    });
+  });
 }

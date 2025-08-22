@@ -9,11 +9,11 @@ void main() {
       final agent = CodeOpsBuilderAgent(baseSettings: const AppSettings());
       final caps = agent.capabilities;
       expect(caps.stateful, isTrue);
-      expect(caps.streaming, isFalse);
+      expect(caps.streaming, isTrue);
       expect(caps.reasoning, isTrue);
       expect(caps.tools, containsAll(['docker_exec_java', 'docker_start_java']));
 
-      expect(agent is IToolingAgent, isTrue);
+      expect(agent, isA<IToolingAgent>());
       expect(agent.supportsTool('docker_exec_java'), isTrue);
       expect(agent.supportsTool('docker_start_java'), isTrue);
       expect(agent.supportsTool('unknown_tool'), isFalse);
@@ -54,10 +54,6 @@ void main() {
       );
     });
 
-    test('start() returns null (no streaming yet)', () {
-      final agent = CodeOpsBuilderAgent(baseSettings: const AppSettings());
-      final s = agent.start(AgentRequest('ping'));
-      expect(s, isNull);
-    });
+    // Streaming is supported; do not call start() here to avoid network calls.
   });
 }

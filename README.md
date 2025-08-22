@@ -91,6 +91,8 @@ This repository contains multiple projects that showcase and integrate AI-assist
  - Новый оркестратор `CodeOpsBuilderAgent` реализует унифицированный интерфейс `IAgent`/`IToolingAgent` и композиционно использует `CodeOpsAgent`.
    На запросы пользователя генерирует классы, спрашивает про создание тестов, запускает JUnit4‑тесты в Docker через MCP, анализирует
    результаты и при необходимости пытается доработать тесты. См. `sample_app/lib/agents/code_ops_builder_agent.dart`.
+  - Поддерживается стриминг событий пайплайна в UI (прогресс, live‑лог, подтверждения). Подробнее: `docs/code_ops_builder_agent.md`.
+  - Планируется кнопка отмены пайплайна в UI и поддержка отмены в агенте (см. `ROADMAP.md`).
 
 ---
 

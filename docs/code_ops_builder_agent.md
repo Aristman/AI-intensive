@@ -27,7 +27,7 @@
 ```dart
 AgentCapabilities(
   stateful: true,
-  streaming: false,
+  streaming: true,
   reasoning: true,
   tools: {'docker_exec_java', 'docker_start_java'},
 )
@@ -42,6 +42,44 @@ AgentCapabilities(
    - Для каждого теста подбираются зависимости (исходный класс), строится корректный `entrypoint` (FQCN теста), и выполняется `docker_exec_java`.
    - Анализируется результат; при падениях выполняется одна попытка автоматической доработки теста и повторный запуск.
 5) Возвращается отчёт (compile/run exit codes, stderr/short), флаг использования MCP.
+
+## События и стриминг
+Агент поддерживает поток событий через `IAgent.start(...)` (см. интерфейс `AgentEvent`, `AgentStage`, `AgentSeverity` в `sample_app/lib/agents/agent_interface.dart`).
+
+Ключевые стадии пайплайна:
+- `pipeline_start`, `intent_classified`
+- `code_generation_started`, `code_generated`
+- `ask_create_tests`
+- `test_generation_started`, `test_generated`
+- `docker_exec_started`, `docker_exec_progress`, `docker_exec_result`
+- `analysis_started`, `analysis_result`
+- `refine_tests_started`, `refine_tests_result`
+- `pipeline_complete`, `pipeline_error`
+
+Структура события:
+```
+AgentEvent(
+  id, runId, stage, severity=info, message,
+  progress? (0..1), stepIndex?, totalSteps?, timestamp, meta?
+)
+```
+
+### Интеграция в UI
+- Экран `CodeOpsScreen` (`sample_app/lib/screens/code_ops_screen.dart`) подписывается на `Stream<AgentEvent>`:
+  - показывает прогресс пайплайна (`LinearProgressIndicator`) и live‑лог событий,
+  - визуализирует сгенерированные файлы как карточки кода (с кнопками запуска/теста для Java),
+  - обрабатывает стадию `ask_create_tests` (кнопки подтверждения).
+  
+
+Рекомендации по meta:
+- `code_generated`: `{ files: [{path, content, isTest:false}] }`
+- `test_generated`: `{ files: [{path, content, isTest:true}] }`
+- `docker_exec_started`: `{ testName, entrypoint, classpath }`
+- `docker_exec_progress`: `{ current, total, testName? }`
+- `docker_exec_result`: `{ testName, exitCode, durationMs, stdoutTail, stderrTail }`
+- `analysis_result`: `{ total, passed, failed: [testName], notes }`
+- `refine_tests_result`: `{ refinedFiles: [{path, content}], notes }`
+- `pipeline_error`: `{ errorCode, details }`
 
 ## Использование
 Пример (псевдокод):
