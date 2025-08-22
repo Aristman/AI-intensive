@@ -7,6 +7,8 @@
 - [ ] Единый шаблон `.env.example`/`config.properties.sample` и инструкция по секретам
 - [ ] Версионирование релизов (tags, changelog) и релиз артефактов (jar, docker image)
 - [ ] Улучшить документацию: обзор архитектуры (MCP ↔ apps), схемы обмена, частые ошибки
+ - [x] Унифицированный интерфейс агентов (IAgent, IStatefulAgent, IToolingAgent, DTOs и утилиты),
+       добавлены юнит-тесты; документация: `docs/agent_interface.md`
 
 ## mcp_server/
 - [ ] Dockerfile + docker-compose (node:lts-alpine, healthcheck)

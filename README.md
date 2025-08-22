@@ -87,6 +87,7 @@ This repository contains multiple projects that showcase and integrate AI-assist
 - Инструменты MCP с примерами JSON‑RPC описаны в `mcp_server/README.md`.
 - CodeOpsAgent умеет сжимать историю чата и вызывать MCP при включённом режиме.
 - Инструмент Java/Docker компилирует и запускает код в контейнере с таймаутами и лимитами.
+ - Спецификация интерфейса агента: см. `docs/agent_interface.md`.
 
 ---
 
