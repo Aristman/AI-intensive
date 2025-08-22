@@ -103,6 +103,15 @@ AgentEvent(
 - `refine_tests_result`: `{ refinedFiles: [{path, content}], notes }`
 - `pipeline_error`: `{ errorCode, details }`
 
+### Нормализация ключей результатов тестов (MCP ↔ агент)
+- MCP возвращает результаты компиляции/запуска с полями в camelCase (например, `exitCode`).
+- Агент принимает ОБЕ формы ключей для совместимости: `exit_code` и `exitCode` (а также `stdout`/`stderr`).
+- Внутри `CodeOpsBuilderAgent` используются вспомогательные методы для унификации:
+  - `_exitCodeOf(Map m)` — читает `exit_code` или `exitCode` и приводит к int
+  - `_stderrOf(Map m)`, `_stdoutOf(Map m)` — читают соответствующие поля
+  - `_isRunSuccessful(Map result)` — корректно определяет успех/провал по унифицированным ключам и маркеру `FAILURES!!!` в stderr
+- Формат стриминговых событий для UI остаётся как в списке выше (camelCase в примере `docker_exec_result`). Агент лишь нормализует входные данные от MCP.
+
 ## Использование
 Пример (псевдокод):
 ```dart

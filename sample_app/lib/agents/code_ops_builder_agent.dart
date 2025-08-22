@@ -488,7 +488,11 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
               'test': t['path'],
               'entrypoint': entrypoint,
             });
-            final result = await _inner.execJavaFilesInDocker(files: files, entrypoint: entrypoint);
+            final result = await _inner.execJavaFilesInDocker(
+              files: files,
+              entrypoint: entrypoint,
+              timeoutMs: 20000, // align with UI _runTestWithDeps timeout
+            );
             runReport.add({'test': t['path'], 'entrypoint': entrypoint, 'result': result});
             emit(AgentStage.docker_exec_result, 'Результат теста: ${t['path']}', prog: 0.94, idx: 3, total: totalSteps, meta: {
               'runId': runId,
@@ -511,7 +515,11 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
                 final deps2 = cu.collectTestDeps(testFile: refined, pendingFiles: _pendingFiles);
                 final files2 = (deps2['files'] as List).cast<Map<String, String>>();
                 final ep2 = deps2['entrypoint']?.toString();
-                final result2 = await _inner.execJavaFilesInDocker(files: files2, entrypoint: ep2);
+                final result2 = await _inner.execJavaFilesInDocker(
+                  files: files2,
+                  entrypoint: ep2,
+                  timeoutMs: 20000, // align with UI _runTestWithDeps timeout
+                );
                 runReport.add({'test': refined['path'], 'entrypoint': ep2, 'result': result2, 'refined': true});
                 emit(AgentStage.refine_tests_result, 'Результат исправленного теста: ${refined['path']}', prog: 0.97, idx: 3, total: totalSteps, meta: {
                   'runId': runId,
@@ -901,12 +909,28 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
     );
   }
 
+  int? _exitCodeOf(Map<String, dynamic>? m) {
+    if (m == null) return null;
+    final v = m['exit_code'] ?? m['exitCode'];
+    if (v == null) return null;
+    if (v is int) return v;
+    return int.tryParse(v.toString());
+  }
+
+  String? _stderrOf(Map<String, dynamic>? m) => m?['stderr']?.toString();
+  String? _stdoutOf(Map<String, dynamic>? m) => m?['stdout']?.toString();
+
+  bool _hasFailuresMarker(Map<String, dynamic>? m) {
+    final s = _stderrOf(m);
+    return s?.contains('FAILURES!!!') ?? false;
+  }
+
   bool _isRunSuccessful(Map<String, dynamic> result) {
     try {
       final compile = result['compile'] as Map<String, dynamic>?;
       final run = result['run'] as Map<String, dynamic>?;
-      final cOk = compile == null || (compile['exit_code'] == 0);
-      final rOk = run == null || (run['exit_code'] == 0 && !(run['stderr']?.toString().contains('FAILURES!!!') ?? false));
+      final cOk = compile == null || ((_exitCodeOf(compile) ?? 0) == 0);
+      final rOk = run == null || (((_exitCodeOf(run) ?? 0) == 0) && !_hasFailuresMarker(run));
       return cOk && rOk;
     } catch (_) {
       return false;
@@ -919,14 +943,14 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
       final test = item['test'];
       final ep = item['entrypoint'];
       final res = item['result'] as Map<String, dynamic>;
-      final compiled = (res['compile'] is Map) ? res['compile'] : null;
-      final run = (res['run'] is Map) ? res['run'] : null;
+      final compiled = (res['compile'] is Map) ? res['compile'] as Map<String, dynamic> : null;
+      final run = (res['run'] is Map) ? res['run'] as Map<String, dynamic> : null;
       b.writeln('- ${test ?? '(unknown)'} [entrypoint: ${ep ?? '-'}]');
       if (compiled != null) {
-        b.writeln('  compile: exit=${compiled['exit_code']}, stderr=${_short(compiled['stderr'])}');
+        b.writeln('  compile: exit=${_exitCodeOf(compiled)}, stderr=${_short(_stderrOf(compiled))}');
       }
       if (run != null) {
-        b.writeln('  run:     exit=${run['exit_code']}, stderr=${_short(run['stderr'])}');
+        b.writeln('  run:     exit=${_exitCodeOf(run)}, stderr=${_short(_stderrOf(run))}');
       }
       if (item['refined'] == true) b.writeln('  (refined and retried)');
     }
@@ -968,11 +992,11 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
     final compile = result['compile'] as Map<String, dynamic>?;
     final run = result['run'] as Map<String, dynamic>?;
     final errs = StringBuffer();
-    if (compile != null && (compile['exit_code'] != 0)) {
-      errs.writeln('Compile errors:\n${compile['stderr'] ?? compile['stdout'] ?? ''}');
+    if (compile != null && ((_exitCodeOf(compile) ?? 0) != 0)) {
+      errs.writeln('Compile errors:\n${_stderrOf(compile) ?? _stdoutOf(compile) ?? ''}');
     }
-    if (run != null && (run['exit_code'] != 0 || (run['stderr']?.toString().contains('FAILURES!!!') ?? false))) {
-      errs.writeln('Run errors:\n${run['stderr'] ?? run['stdout'] ?? ''}');
+    if (run != null && (((_exitCodeOf(run) ?? 0) != 0) || _hasFailuresMarker(run))) {
+      errs.writeln('Run errors:\n${_stderrOf(run) ?? _stdoutOf(run) ?? ''}');
     }
     final errText = errs.toString().trim();
     if (errText.isEmpty) return null;

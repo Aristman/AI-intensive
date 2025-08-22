@@ -101,6 +101,7 @@
       - интеграционные smoke‑тесты стрима — TODO (планируются отдельно)
     - [x] Двухфазные подтверждения: двойное `ask_create_tests` с `meta.action = 'create_tests'` и `meta.action = 'run_tests'`; подтверждения отправляются через повторный потоковый вызов `start()`
     - [x] Метаданные тестов в стриме: события `test_generated` содержат `meta.language` и список `meta.tests` для визуализации в UI
+    - [x] Нормализация ключей результатов тестов (MCP camelCase ↔ агент snake_case): поддержка `exit_code`/`exitCode`, `stdout`/`stderr`; добавлены юнит‑тесты на camelCase (успех/провал)
 
   ### Вопросы для уточнения (CodeOps)
   - Начать с UI‑тестов `CodeOpsScreen` и небольшого рефакторинга (DI) для мокирования `CodeOpsAgent`?

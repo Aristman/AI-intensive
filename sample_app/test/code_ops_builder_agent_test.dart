@@ -242,6 +242,36 @@ void main() {
       // а не слово «Java»
       expect(fake.lastCodeGenPrompt, contains(firstPrompt));
     });
+
+    test('camelCase results: success path ends with all_green=true', () async {
+      final fake = _CamelCaseSuccessAgent();
+      final agent = CodeOpsBuilderAgent(inner: fake, baseSettings: const AppSettings());
+
+      // Phase 1
+      await agent.start(const AgentRequest('Сгенерируй на Java класс CamelOk'))!.toList();
+      // Phase 2: approve tests generation
+      final ev2 = await agent.start(const AgentRequest('да'))!.toList();
+      expect(ev2.any((e) => e.stage == AgentStage.test_generated), isTrue);
+      // Phase 3: approve run
+      final ev3 = await agent.start(const AgentRequest('да'))!.toList();
+      final complete = ev3.lastWhere((e) => e.stage == AgentStage.pipeline_complete);
+      expect(complete.meta?['all_green'], isTrue);
+    });
+
+    test('camelCase results: failure path ends with all_green=false', () async {
+      final fake = _CamelCaseFailureAgent();
+      final agent = CodeOpsBuilderAgent(inner: fake, baseSettings: const AppSettings());
+
+      // Phase 1
+      await agent.start(const AgentRequest('Сгенерируй на Java класс CamelFail'))!.toList();
+      // Phase 2: approve tests generation
+      final ev2 = await agent.start(const AgentRequest('да'))!.toList();
+      expect(ev2.any((e) => e.stage == AgentStage.test_generated), isTrue);
+      // Phase 3: approve run
+      final ev3 = await agent.start(const AgentRequest('да'))!.toList();
+      final complete = ev3.lastWhere((e) => e.stage == AgentStage.pipeline_complete);
+      expect(complete.meta?['all_green'], isFalse);
+    });
   });
 }
 
@@ -338,3 +368,86 @@ class _FakeCodeOpsAgent extends CodeOpsAgent {
     };
   }
 }
+
+class _CamelCaseSuccessAgent extends _FakeCodeOpsAgent {
+  _CamelCaseSuccessAgent() : super();
+
+  @override
+  Future<Map<String, dynamic>> execJavaFilesInDocker({
+    required List<Map<String, String>> files,
+    String? entrypoint,
+    String? classpath,
+    List<String>? compileArgs,
+    List<String>? runArgs,
+    String? image,
+    String? containerName,
+    String? extraArgs,
+    String workdir = '/work',
+    int timeoutMs = 15000,
+    int? cpus,
+    String? memory,
+    String cleanup = 'always',
+  }) async {
+    execCalls.add({
+      'files': files,
+      'entrypoint': entrypoint,
+      'classpath': classpath,
+      'compileArgs': compileArgs,
+      'runArgs': runArgs,
+      'image': image,
+      'containerName': containerName,
+      'extraArgs': extraArgs,
+      'workdir': workdir,
+      'timeoutMs': timeoutMs,
+      'cpus': cpus,
+      'memory': memory,
+      'cleanup': cleanup,
+    });
+    return {
+      'compile': {'exitCode': 0, 'stderr': ''},
+      'run': {'exitCode': 0, 'stderr': ''},
+    };
+  }
+}
+
+class _CamelCaseFailureAgent extends _FakeCodeOpsAgent {
+  _CamelCaseFailureAgent() : super();
+
+  @override
+  Future<Map<String, dynamic>> execJavaFilesInDocker({
+    required List<Map<String, String>> files,
+    String? entrypoint,
+    String? classpath,
+    List<String>? compileArgs,
+    List<String>? runArgs,
+    String? image,
+    String? containerName,
+    String? extraArgs,
+    String workdir = '/work',
+    int timeoutMs = 15000,
+    int? cpus,
+    String? memory,
+    String cleanup = 'always',
+  }) async {
+    execCalls.add({
+      'files': files,
+      'entrypoint': entrypoint,
+      'classpath': classpath,
+      'compileArgs': compileArgs,
+      'runArgs': runArgs,
+      'image': image,
+      'containerName': containerName,
+      'extraArgs': extraArgs,
+      'workdir': workdir,
+      'timeoutMs': timeoutMs,
+      'cpus': cpus,
+      'memory': memory,
+      'cleanup': cleanup,
+    });
+    return {
+      'compile': {'exitCode': 0, 'stderr': ''},
+      'run': {'exitCode': 1, 'stderr': 'FAILURES!!! 1 tests failed'},
+    };
+  }
+}
+
