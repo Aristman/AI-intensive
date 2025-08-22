@@ -79,6 +79,16 @@
   - [ ] UI‑конфигурация Docker параметров: `image`, `container_name`, `limits`, `timeout`
   - [ ] E2E‑тест потока CodeOps: генерация → подтверждение → запуск в Docker → отображение результата (smoke‑тест)
 
+- [x] Новый агент‑оркестратор CodeOpsBuilderAgent
+  - Реализует унифицированный интерфейс `IAgent`/`IToolingAgent`, композиционно использует `CodeOpsAgent`
+  - Поток: генерация классов → вопрос о создании тестов → JUnit4 тесты → запуск в Docker → анализ → рефайн тестов
+  - Добавлена документация: `docs/code_ops_builder_agent.md`
+  - Добавлены юнит‑тесты: `sample_app/test/code_ops_builder_agent_test.dart`
+  - [ ] Стриминг для CodeOpsBuilderAgent
+    - Реализовать `start()` со `Stream<AgentEvent>` (прогресс шагов, промежуточные ответы)
+    - Интегрировать отображение стрима в UI CodeOps (индикатор этапов, live‑лог)
+    - Покрыть тестами: unit для событий и интеграционные smoke‑тесты стрима
+
   ### Вопросы для уточнения (CodeOps)
   - Начать с UI‑тестов `CodeOpsScreen` и небольшого рефакторинга (DI) для мокирования `CodeOpsAgent`?
   - Вынести утилиты парсинга карточек/фенсов (`_decodeCodeCard`, `_stripCodeFencesGlobal`) в `lib/utils/` и покрыть юнит‑тестами?

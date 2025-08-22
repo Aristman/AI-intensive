@@ -88,6 +88,9 @@ This repository contains multiple projects that showcase and integrate AI-assist
 - CodeOpsAgent умеет сжимать историю чата и вызывать MCP при включённом режиме.
 - Инструмент Java/Docker компилирует и запускает код в контейнере с таймаутами и лимитами.
  - Спецификация интерфейса агента: см. `docs/agent_interface.md`.
+ - Новый оркестратор `CodeOpsBuilderAgent` реализует унифицированный интерфейс `IAgent`/`IToolingAgent` и композиционно использует `CodeOpsAgent`.
+   На запросы пользователя генерирует классы, спрашивает про создание тестов, запускает JUnit4‑тесты в Docker через MCP, анализирует
+   результаты и при необходимости пытается доработать тесты. См. `sample_app/lib/agents/code_ops_builder_agent.dart`.
 
 ---
 
