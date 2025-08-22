@@ -38,6 +38,7 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
   double? _pipelineProgress; // 0..1 when streaming
   final List<String> _eventLogs = [];
   bool _awaitTestsConfirm = false;
+  String? _awaitAction; // 'create_tests' | 'run_tests'
 
   // Pending code to execute
   String? _pendingEntrypoint;
@@ -156,8 +157,33 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
           }
         }
         break;
+      case AgentStage.test_generated:
+        final language = e.meta?['language']?.toString() ?? 'java';
+        final tests = (e.meta?['tests'] as List?)
+            ?.map((m) => {
+                  'path': m['path'].toString(),
+                  'content': m['content'].toString(),
+                })
+            .cast<Map<String, String>>()
+            .toList();
+        if (tests != null && tests.isNotEmpty) {
+          _appendMessage(Message(text: 'Тесты сгенерированы: ${tests.length} (язык: $language)', isUser: false));
+          for (final f in tests) {
+            final payload = jsonEncode({
+              'language': language,
+              'path': f['path'],
+              'content': f['content'],
+            });
+            final card = 'CODE_CARD::${base64Encode(utf8.encode(payload))}';
+            _appendMessage(Message(text: card, isUser: false));
+          }
+        }
+        break;
       case AgentStage.ask_create_tests:
-        setState(() => _awaitTestsConfirm = true);
+        setState(() {
+          _awaitTestsConfirm = true;
+          _awaitAction = e.meta?['action']?.toString();
+        });
         _appendMessage(Message(text: e.message, isUser: false));
         break;
       case AgentStage.pipeline_complete:
@@ -211,23 +237,11 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
     setState(() {
       _awaitTestsConfirm = false;
       _isLoading = true;
-      _isUsingMcp = yes; // ожидаем MCP при запуске тестов
+      // MCP используется только при запуске тестов
+      _isUsingMcp = yes && (_awaitAction == 'run_tests');
     });
-    try {
-      final resp = await _agent.ask(AgentRequest(yes ? 'да' : 'нет'));
-      _appendMessage(Message(text: resp.text, isUser: false));
-      setState(() => _isLoading = false);
-      if (resp.mcpUsed) {
-        _mcpIndicatorTimer = Timer(const Duration(seconds: 5), () {
-          if (mounted) setState(() => _isUsingMcp = false);
-        });
-      } else {
-        setState(() => _isUsingMcp = false);
-      }
-    } catch (e) {
-      setState(() => _isLoading = false);
-      _appendMessage(Message(text: 'Ошибка при запуске тестов: $e', isUser: false));
-    }
+    // Вторая фаза должна идти через стрим, чтобы видеть промежуточные этапы
+    await _startStreaming(yes ? 'да' : 'нет');
   }
 
   Future<void> _sendMessage(String text) async {
