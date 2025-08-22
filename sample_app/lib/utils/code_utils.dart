@@ -1,4 +1,4 @@
-library code_utils;
+library;
 
 /// Remove a single triple-backtick fenced block wrapper if present.
 String stripCodeFencesGlobal(String text) {
@@ -22,13 +22,13 @@ String stripCodeFencesGlobal(String text) {
 String? inferPackageName(String code) {
   final pkgRe = RegExp(r'package\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*;');
   final m = pkgRe.firstMatch(code);
-  return m == null ? null : m.group(1);
+  return m?.group(1);
 }
 
 String? inferPublicClassName(String code) {
   final clsRe = RegExp(r'public\s+class\s+([A-Za-z_]\w*)');
   final m = clsRe.firstMatch(code);
-  return m == null ? null : m.group(1);
+  return m?.group(1);
 }
 
 String basenameNoExt(String path) {
@@ -63,7 +63,7 @@ bool isTestFile(Map<String, String> f) {
 
 /// Collect minimal set of files to run a JUnit test: the test itself and
 /// its paired source class if found among pendingFiles.
-/// Returns a map: { 'files': List<Map<String,String>>, 'entrypoint': String }
+/// Returns a map: { 'files': List of maps (String->String), 'entrypoint': String }
 Map<String, dynamic> collectTestDeps({
   required Map<String, String> testFile,
   required List<Map<String, String>>? pendingFiles,

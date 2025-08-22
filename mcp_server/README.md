@@ -59,6 +59,40 @@ npm start
 }
 ```
 
+## Логирование и диагностика
+
+- Сервер пишет логи в JSON-формате (одна строка = один JSON-объект).
+- Ключевые поля:
+  - `ts` — ISO‑время
+  - `level` — `info` | `warn` | `error`
+  - `event` — тип события (`server_started`, `ws_connection_open`, `rpc_request`, `rpc_response`, `rpc_parse_error`, ...)
+  - `traceId` — уникальный идентификатор запроса (для корреляции `rpc_request` ↔ `rpc_response`)
+  - `id`, `method`, `code`, `error`, `durationMs`, `tool` — контекст запроса/ответа
+
+Примеры логов:
+```json
+{"ts":"2025-08-21T19:20:00.000Z","level":"info","event":"server_started","port":3001,"url":"ws://localhost:3001"}
+{"ts":"2025-08-21T19:20:05.000Z","level":"info","event":"rpc_request","traceId":"...","id":1,"method":"tools/call"}
+{"ts":"2025-08-21T19:20:05.100Z","level":"info","event":"rpc_response","traceId":"...","id":1,"method":"tools/call","ok":true,"durationMs":100,"tool":"create_issue"}
+```
+
+### Коды ошибок JSON‑RPC
+- Базовые (спецификация JSON-RPC 2.0):
+  - `-32700` Parse error
+  - `-32600` Invalid Request
+  - `-32601` Method not found (включая неизвестные инструменты)
+  - `-32602` Invalid params
+  - `-32603` Internal error
+
+- Серверные (расширенная диагностика):
+  - `-32001` Server misconfiguration (например, отсутствует `GITHUB_TOKEN`/`TELEGRAM_BOT_TOKEN`)
+  - `-32010` GitHub API error (поля: `status`, `data`, `url`)
+  - `-32011` Telegram API error (поля: `status`, `data`, `methodName`)
+  - `-32020` Docker error (действия `pull`/`run`/`start`, поля: `action`, `image`/`container_name`, `error`)
+  - `-32021` Workspace preparation failed (ошибка подготовки временного каталога/записи файлов)
+
+Каждому запросу соответствует `traceId`, который присутствует в логах запроса и ответа, что позволяет быстро найти связанный стек событий и измерить `durationMs`.
+
 ### Методы
 - `initialize`
   - Ответ: `{ serverInfo, capabilities }`, где `capabilities.tools = true`

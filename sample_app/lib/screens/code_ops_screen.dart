@@ -33,9 +33,7 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
   Timer? _mcpIndicatorTimer;
 
   // Pending code to execute
-  String? _pendingCode;
   String? _pendingLanguage;
-  String? _pendingFilename;
   String? _pendingEntrypoint;
   List<Map<String, String>>? _pendingFiles; // for multi-file execution
   String? _awaitLangFor; // original user request awaiting language clarification
@@ -148,112 +146,7 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
     _scrollToBottom();
   }
 
-  Future<void> _handleRunPendingCode() async {
-    if (_pendingFiles == null && _pendingCode == null) return;
-    setState(() => _isLoading = true);
-    try {
-      String _stripCodeFences(String text) {
-        final t = text.trim();
-        if (!t.contains('```')) return t;
-        final start = t.indexOf('```');
-        if (start == -1) return t;
-        final end = t.indexOf('```', start + 3);
-        if (end == -1) return t;
-        var inner = t.substring(start + 3, end);
-        final firstNl = inner.indexOf('\n');
-        if (firstNl > -1) {
-          final firstLine = inner.substring(0, firstNl).trim();
-          if (firstLine.isNotEmpty && firstLine.length < 20) {
-            inner = inner.substring(firstNl + 1);
-          }
-        }
-        return inner.trim();
-      }
-
-      Map<String, dynamic> result;
-      _isUsingMcp = true;
-      if (_pendingFiles != null && _pendingFiles!.isNotEmpty) {
-        // Очистим code fences во всех файлах
-        final files = _pendingFiles!
-            .map((f) => {
-                  'path': f['path'] ?? 'Main.java',
-                  'content': _stripCodeFences(f['content'] ?? ''),
-                })
-            .toList();
-        if ((_pendingLanguage ?? '').toLowerCase() != 'java') {
-          _appendMessage(Message(text: 'Запуск доступен только для Java. Сгенерирован ${_pendingLanguage ?? 'код'}, запуск пропущен.', isUser: false));
-          return;
-        }
-        result = await _agent.execJavaFilesInDocker(
-          files: files,
-          entrypoint: _pendingEntrypoint,
-          timeoutMs: 20000,
-        );
-      } else {
-        final cleanedCode = _stripCodeFences(_pendingCode!);
-        final filename = _pendingFilename?.trim().isNotEmpty == true ? _pendingFilename!.trim() : 'Main.java';
-        if ((_pendingLanguage ?? '').toLowerCase() != 'java') {
-          _appendMessage(Message(text: 'Запуск доступен только для Java. Сгенерирован ${_pendingLanguage ?? 'код'}, запуск пропущен.', isUser: false));
-          return;
-        }
-        result = await _agent.execJavaInDocker(
-          code: cleanedCode,
-          filename: filename,
-          entrypoint: _pendingEntrypoint,
-          timeoutMs: 15000,
-        );
-      }
-
-      // Короткая сводка
-      final compile = result['compile'] as Map<String, dynamic>?;
-      final run = result['run'] as Map<String, dynamic>?;
-      final success = result['success'] == true;
-      final compileExit = compile?['exitCode'];
-      final runExit = run?['exitCode'];
-
-      final buf = StringBuffer();
-      buf.writeln('Результат выполнения Docker/Java (success=$success):');
-      if (compile != null) {
-        buf.writeln('- Compile exitCode: $compileExit');
-        final cErr = (compile['stderr'] as String? ?? '').trim();
-        if (cErr.isNotEmpty) {
-          buf.writeln('- Compile stderr (фрагмент):');
-          buf.writeln(cErr.length > 300 ? cErr.substring(0, 300) + '...'
-                                        : cErr);
-        }
-      }
-      if (run != null) {
-        buf.writeln('- Run exitCode: $runExit');
-        final rOut = (run['stdout'] as String? ?? '').trim();
-        if (rOut.isNotEmpty) {
-          buf.writeln('- Run stdout (фрагмент):');
-          buf.writeln(rOut.length > 300 ? rOut.substring(0, 300) + '...'
-                                       : rOut);
-        }
-        final rErr = (run['stderr'] as String? ?? '').trim();
-        if (rErr.isNotEmpty) {
-          buf.writeln('- Run stderr (фрагмент):');
-          buf.writeln(rErr.length > 300 ? rErr.substring(0, 300) + '...'
-                                       : rErr);
-        }
-      }
-      _appendMessage(Message(text: buf.toString(), isUser: false));
-      // Убрано: не показываем сырой JSON-ответ, чтобы не засорять интерфейс
-    } catch (e) {
-      _appendMessage(Message(text: 'Ошибка выполнения кода в Docker: $e', isUser: false));
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-        // Погасить MCP-индикатор через 5 сек
-        _mcpIndicatorTimer = Timer(const Duration(seconds: 5), () {
-          if (mounted) setState(() => _isUsingMcp = false);
-        });
-      }
-    }
-  }
-
+  
   Future<void> _sendMessage(String text) async {
     final userText = text.trim();
     if (userText.isEmpty || _isLoading) return;
@@ -284,8 +177,6 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
           _pendingLanguage = language;
           _pendingEntrypoint = entrypoint;
           _pendingFiles = files;
-          _pendingCode = (files != null && files.isNotEmpty) ? files.first['content'] : null;
-          _pendingFilename = (files != null && files.isNotEmpty) ? files.first['path'] : null;
           if (files != null && files.isNotEmpty) {
             if (files.length > 1) {
               _appendMessage(Message(text: '$title\n\nФайлов: ${files.length}\nЯзык: ${language ?? '-'}\nEntrypoint: ${entrypoint ?? '-'}', isUser: false));
@@ -347,8 +238,6 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
           // Сохраним pending
           _pendingLanguage = language;
           _pendingFiles = files;
-          _pendingCode = (files != null && files.isNotEmpty) ? files.first['content'] : null;
-          _pendingFilename = (files != null && files.isNotEmpty) ? files.first['path'] : null;
           _pendingEntrypoint = entrypoint;
 
           // Show summary + files в виде карточек кода
@@ -405,8 +294,6 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
               'path': e['path'].toString(),
               'content': e['content'].toString(),
             }).cast<Map<String, String>>().toList();
-        _pendingCode = (_pendingFiles != null && _pendingFiles!.isNotEmpty) ? _pendingFiles!.first['content'] : null;
-        _pendingFilename = (_pendingFiles != null && _pendingFiles!.isNotEmpty) ? _pendingFiles!.first['path'] : null;
         _pendingEntrypoint = codeJson['entrypoint']?.toString();
 
         if (_pendingFiles != null && _pendingFiles!.isNotEmpty) {
@@ -485,13 +372,13 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
   String? _inferPackageName(String code) {
     final pkgRe = RegExp(r'package\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*;');
     final m = pkgRe.firstMatch(code);
-    return m == null ? null : m.group(1);
+    return m?.group(1);
   }
 
   String? _inferPublicClassName(String code) {
     final clsRe = RegExp(r'public\s+class\s+([A-Za-z_]\w*)');
     final m = clsRe.firstMatch(code);
-    return m == null ? null : m.group(1);
+    return m?.group(1);
   }
 
   String _basenameNoExt(String path) {
@@ -613,7 +500,7 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
         final cErr = (compile['stderr'] as String? ?? '').trim();
         if (cErr.isNotEmpty) {
           buf.writeln('- Compile stderr (фрагмент):');
-          buf.writeln(cErr.length > 300 ? cErr.substring(0, 300) + '...' : cErr);
+          buf.writeln(cErr.length > 300 ? '${cErr.substring(0, 300)}...' : cErr);
         }
       }
       if (run != null) {
@@ -621,12 +508,12 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
         final rOut = (run['stdout'] as String? ?? '').trim();
         if (rOut.isNotEmpty) {
           buf.writeln('- Run stdout (фрагмент):');
-          buf.writeln(rOut.length > 300 ? rOut.substring(0, 300) + '...' : rOut);
+          buf.writeln(rOut.length > 300 ? '${rOut.substring(0, 300)}...' : rOut);
         }
         final rErr = (run['stderr'] as String? ?? '').trim();
         if (rErr.isNotEmpty) {
           buf.writeln('- Run stderr (фрагмент):');
-          buf.writeln(rErr.length > 300 ? rErr.substring(0, 300) + '...' : rErr);
+          buf.writeln(rErr.length > 300 ? '${rErr.substring(0, 300)}...' : rErr);
         }
       }
       _appendMessage(Message(text: buf.toString(), isUser: false));
@@ -674,7 +561,7 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
         final cErr = (compile['stderr'] as String? ?? '').trim();
         if (cErr.isNotEmpty) {
           buf.writeln('- Compile stderr (фрагмент):');
-          buf.writeln(cErr.length > 300 ? cErr.substring(0, 300) + '...' : cErr);
+          buf.writeln(cErr.length > 300 ? '${cErr.substring(0, 300)}...' : cErr);
         }
       }
       if (run != null) {
@@ -682,12 +569,12 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
         final rOut = (run['stdout'] as String? ?? '').trim();
         if (rOut.isNotEmpty) {
           buf.writeln('- Run stdout (фрагмент):');
-          buf.writeln(rOut.length > 300 ? rOut.substring(0, 300) + '...' : rOut);
+          buf.writeln(rOut.length > 300 ? '${rOut.substring(0, 300)}...' : rOut);
         }
         final rErr = (run['stderr'] as String? ?? '').trim();
         if (rErr.isNotEmpty) {
           buf.writeln('- Run stderr (фрагмент):');
-          buf.writeln(rErr.length > 300 ? rErr.substring(0, 300) + '...' : rErr);
+          buf.writeln(rErr.length > 300 ? '${rErr.substring(0, 300)}...' : rErr);
         }
       }
       _appendMessage(Message(text: buf.toString(), isUser: false));
@@ -889,9 +776,7 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
               _agent.clearHistory();
               setState(() {
                 _messages.clear();
-                _pendingCode = null;
                 _pendingLanguage = null;
-                _pendingFilename = null;
               });
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('Контекст очищен')),
