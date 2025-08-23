@@ -15,6 +15,28 @@ For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
 
+## YandexGPT интеграция: краткий порядок подключения
+
+1) Получите `FOLDER_ID` в Yandex Cloud.
+2) Создайте сервисный аккаунт и выдайте роль `ai.languageModels.user`.
+3) Получите IAM токен на бэкенде для сервисного аккаунта.
+4) Вызов API:
+   - POST `https://llm.api.cloud.yandex.net/foundationModels/v1/completion`
+   - Headers: `Authorization: Bearer <IAM_TOKEN>`, `x-folder-id: <FOLDER_ID>`, `Content-Type: application/json`
+   - Body: `modelUri: "gpt://<FOLDER_ID>/yandexgpt(-lite)/latest"`, `completionOptions`, `messages: [{ role, text }]`
+5) Безопасность: храните IAM токен на сервере и вызывайте API через ваш бэкенд‑прокси.
+6) Временный fallback: `Authorization: Api-Key <YANDEX_API_KEY>` + `x-folder-id` поддержан в
+   `lib/data/llm/yandexgpt_usecase.dart`.
+
+Переменные окружения (`assets/.env`):
+- `YANDEX_IAM_TOKEN=`   # предпочтительно
+- `YANDEX_API_KEY=`     # временный fallback
+- `YANDEX_FOLDER_ID=`
+- `YANDEX_GPT_BASE_URL=`   # опционально (override эндпоинта)
+- `YANDEX_MODEL_URI=`      # опционально (например: `gpt://<folder>/yandexgpt-lite/latest`)
+
+См. реализацию: `sample_app/lib/data/llm/yandexgpt_usecase.dart`.
+
 ## MCP GitHub интеграция
 
 Примечание: cейчас MCP сервер расположен на верхнем уровне проекта в папке `mcp_server/` (раньше был в `sample_app/mcp_server/`).

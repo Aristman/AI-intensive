@@ -11,15 +11,20 @@ class YandexGptUseCase implements LlmUseCase {
   // Базовый URL берем из .env: YANDEX_GPT_BASE_URL
   // Фоллбэк — официальный endpoint.
   String get _endpoint => dotenv.env['YANDEX_GPT_BASE_URL'] ??
-      'https://llm.api.cloud.yandex.net/foundationModels/v1/chat/completions';
+      'https://llm.api.cloud.yandex.net/foundationModels/v1/completion';
 
+  String get _iamToken =>
+      dotenv.env['YANDEX_IAM_TOKEN'] ?? dotenv.env['YC_IAM_TOKEN'] ?? '';
   String get _apiKey => dotenv.env['YANDEX_API_KEY'] ?? '';
   String get _folderId => dotenv.env['YANDEX_FOLDER_ID'] ?? '';
 
   String get _modelUri {
+    // Позволяем переопределить модель через .env (YANDEX_MODEL_URI), иначе используем дефолт
+    final override = dotenv.env['YANDEX_MODEL_URI'];
+    if (override != null && override.isNotEmpty) return override;
     // По умолчанию используем yandexgpt/latest; можно заменить на yandexgpt-lite/latest
     final folder = _folderId;
-    return 'gpt://$folder/yandexgpt/latest';
+    return 'gpt://$folder/yandexgpt';
   }
 
   @override
@@ -27,8 +32,9 @@ class YandexGptUseCase implements LlmUseCase {
     required List<Map<String, String>> messages,
     required AppSettings settings,
   }) async {
-    if (_apiKey.isEmpty) {
-      throw Exception('API ключ Yandex не найден. Добавьте YANDEX_API_KEY в assets/.env');
+    // Требуем либо IAM токен (предпочтительно), либо Api-Key (временный fallback)
+    if (_iamToken.isEmpty && _apiKey.isEmpty) {
+      throw Exception('Не найден Yandex IAM токен или API ключ. Укажите YANDEX_IAM_TOKEN (предпочтительно) или YANDEX_API_KEY в assets/.env');
     }
     if (_folderId.isEmpty) {
       throw Exception('Не указан YANDEX_FOLDER_ID в assets/.env');
@@ -53,13 +59,20 @@ class YandexGptUseCase implements LlmUseCase {
       'messages': ycMessages,
     });
 
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      if (_iamToken.isNotEmpty) ...{
+        'Authorization': 'Bearer $_iamToken',
+      } else ...{
+        // Временный fallback на Api-Key (менее предпочтительно)
+        'Authorization': 'Api-Key $_apiKey',
+        'x-folder-id': _folderId,
+      }
+    };
+
     final response = await http.post(
       Uri.parse(_endpoint),
-      headers: {
-        'Content-Type': 'application/json',
-        // Авторизация через API-ключ
-        'Authorization': 'Api-Key $_apiKey',
-      },
+      headers: headers,
       body: body,
     );
 
