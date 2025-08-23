@@ -745,43 +745,33 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
   @override
   Widget build(BuildContext context) {
     if (_loadingSettings) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          children: [
-            const Text('CodeOps'),
-            _mcpStatusChip(),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: _openSettings,
-            tooltip: 'Настройки',
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_sweep),
-            onPressed: () {
-              _agent.clearHistory();
-              setState(() {
-                _messages.clear();
-              });
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Контекст очищен')),
-              );
-            },
-            tooltip: 'Очистить контекст',
-          ),
-        ],
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
-      body: Column(
+    return Column(
         children: [
+          // Панель действий CodeOps (ранее в AppBar)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Row(
+              children: [
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.delete_sweep),
+                  onPressed: () {
+                    _agent.clearHistory();
+                    setState(() {
+                      _messages.clear();
+                    });
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Контекст очищен')),
+                    );
+                  },
+                  tooltip: 'Очистить контекст',
+                ),
+              ],
+            ),
+          ),
           if (_isLoading)
             Padding(
               padding: const EdgeInsets.all(16.0),
@@ -893,7 +883,6 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
               ),
             ),
         ],
-      ),
-    );
+      );
   }
 }

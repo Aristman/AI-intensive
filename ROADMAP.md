@@ -43,6 +43,7 @@
 - [ ] Тесты: unit (формирование сообщения/парсинг ответа), интеграционные (локальный тестовый MCP)
 
 ## sample_app/
+- [x] Централизация навигации через enum `Screen` (SSOT: иконки, лейблы, пункты нижней навигации и фабрика страниц в `screens.dart`)
 - [ ] Настроить работу экрана CodeOps с LLM YandexGPT (приоритет: первый)
   - [ ] Интегрировать `YandexGptUseCase` в `CodeOpsAgent`/`CodeOpsBuilderAgent` через интерфейс `LlmUseCase`
   - [ ] Обновить выбор сети в настройках: добавить/актуализировать `NeuralNetwork.yandexgpt` для CodeOps

@@ -27,13 +27,15 @@ This repository contains multiple projects that showcase and integrate AI-assist
   - Flutter приложение (CodeOpsAgent + чат‑интерфейс), интегрированное с MCP.
   - Умеет запускать Java‑код внутри Docker через MCP (`docker_exec_java`).
   - Автоопределяет `entrypoint` (FQCN) и корректный путь `filename` по `package`.
-  - В `CodeOpsScreen` в AppBar есть индикатор статуса MCP: `MCP off`/`MCP ready`/`MCP active`; тултип показывает URL MCP или сообщение о fallback.
+  - Глобальный AppBar (`HomeScreen`) содержит индикатор статуса MCP: `MCP off`/`MCP ready`/`MCP active`; тултип показывает URL MCP или сообщение о fallback.
+  - Навигация построена на enum `Screen` как едином источнике правды (иконки, лейблы, пункты нижней навигации и фабрика страниц) — см. `sample_app/lib/screens/screens.dart`.
   - Подробности в `sample_app/README.md`.
   
   Flutter app (CodeOpsAgent + chat UI) integrated with MCP:
   - Runs Java code in Docker via MCP (`docker_exec_java`).
   - Automatically infers Java `entrypoint` (FQCN) and `filename` path from source `package`.
-  - AppBar in `CodeOpsScreen` contains an MCP status chip: `MCP off`/`MCP ready`/`MCP active`; tooltip shows MCP URL or fallback note.
+  - Global AppBar (`HomeScreen`) contains an MCP status chip: `MCP off`/`MCP ready`/`MCP active`; tooltip shows MCP URL or fallback note.
+  - Navigation is driven by the `Screen` enum as the single source of truth (icons, labels, bottom navigation destinations, and page factory) — see `sample_app/lib/screens/screens.dart`.
   - See `sample_app/README.md` for details.
 
 - `issue-monitor/`

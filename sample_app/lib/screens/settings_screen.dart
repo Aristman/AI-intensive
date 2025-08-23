@@ -247,23 +247,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       key: SettingsScreen.settingsScreenKey,
-      appBar: AppBar(
-        title: const Text('Настройки'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.save),
-            onPressed: _saveSettings,
-          ),
-        ],
-      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: ListView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Настройки', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Отменить'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: _saveSettings,
+                      icon: const Icon(Icons.save),
+                      label: const Text('Сохранить'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: ListView(
+                children: [
             // Neural Network Selection (moved to top so it's visible in tests)
             Card(
               child: Padding(
@@ -386,22 +398,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('Количество последних сообщений в контексте'),
-                        Text('${/* display */ _currentSettings.historyDepth}')
+                        Text('Сообщений: ${_currentSettings.historyDepth}'),
+                        SizedBox(
+                          width: 200,
+                          child: Slider(
+                            value: _currentSettings.historyDepth.toDouble(),
+                            min: 1,
+                            max: 100,
+                            divisions: 99,
+                            label: _currentSettings.historyDepth.toString(),
+                            onChanged: (v) {
+                              final val = v.round().clamp(1, 100);
+                              setState(() {
+                                _currentSettings = _currentSettings.copyWith(historyDepth: val);
+                              });
+                              widget.onSettingsChanged(_currentSettings);
+                            },
+                          ),
+                        ),
                       ],
-                    ),
-                    Slider(
-                      key: const Key('history_depth_slider'),
-                      value: _currentSettings.historyDepth.toDouble().clamp(0, 100),
-                      min: 0,
-                      max: 100,
-                      divisions: 20,
-                      label: _currentSettings.historyDepth.toString(),
-                      onChanged: (v) {
-                        setState(() {
-                          _currentSettings = _currentSettings.copyWith(historyDepth: v.round());
-                        });
-                      },
                     ),
                     const SizedBox(height: 4),
                     const Text(
@@ -732,6 +747,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         ),
       ),
-    );
+      ],
+    ),
+  ),
+);
   }
 }

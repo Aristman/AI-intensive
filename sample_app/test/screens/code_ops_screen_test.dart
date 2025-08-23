@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sample_app/models/app_settings.dart';
-import 'package:sample_app/screens/code_ops_screen.dart';
+import 'package:sample_app/screens/home_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -24,7 +24,7 @@ void main() {
         'app_settings': jsonEncode(settings.toJson()),
       });
 
-      await tester.pumpWidget(const MaterialApp(home: CodeOpsScreen()));
+      await tester.pumpWidget(const MaterialApp(home: HomeScreen(initialIndex: 3)));
       await tester.pumpAndSettle();
 
       expect(find.text('MCP off'), findsOneWidget);
@@ -39,7 +39,7 @@ void main() {
         'app_settings': jsonEncode(settings.toJson()),
       });
 
-      await tester.pumpWidget(const MaterialApp(home: CodeOpsScreen()));
+      await tester.pumpWidget(const MaterialApp(home: HomeScreen(initialIndex: 3)));
       await tester.pumpAndSettle();
 
       expect(find.text('MCP ready'), findsOneWidget);

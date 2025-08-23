@@ -291,76 +291,87 @@ class _MultiAgentsScreenState extends State<MultiAgentsScreen> {
   @override
   Widget build(BuildContext context) {
     if (_loadingSettings) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     final isWide = MediaQuery.of(context).size.width >= 900;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Два агента: A (Reasoning) → B (Simple)'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.clear_all),
-            tooltip: 'Очистить',
-            onPressed: _clearAll,
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: _openSettings,
-          )
-        ],
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
-      body: isWide
-          ? Row(
-              children: [
-                Expanded(child: _chatPane(title: 'Агент A (Reasoning)', messages: _msgsA, scroll: _scrollA)),
-                Expanded(child: _chatPane(title: 'Агент B (Simple)', messages: _msgsB, scroll: _scrollB)),
-              ],
-            )
-          : Column(
-              children: [
-                Expanded(child: _chatPane(title: 'Агент A (Reasoning)', messages: _msgsA, scroll: _scrollA)),
-                Expanded(child: _chatPane(title: 'Агент B (Simple)', messages: _msgsB, scroll: _scrollB)),
-              ],
-            ),
-      bottomNavigationBar: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        child: Row(
-          children: [
-            Expanded(
-              child: SafeSendTextField(
-                controller: _textController,
-                focusNode: _inputFocus,
-                enabled: !_sending,
-                hintText: _sending ? 'Ожидаем ответа A...' : 'Сообщение для агента A...',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24.0),
-                  borderSide: BorderSide.none,
-                ),
-                filled: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                onSend: (text) => _sendToA(text),
-                onTap: () {
-                  // Позволяем снова показать клавиатуру при тапе по полю ввода
-                  _inputFocus.requestFocus();
-                },
+    return Column(
+      children: [
+        // Верхняя панель действий экрана (очистка/настройки)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+          child: Row(
+            children: [
+              const Text('Два агента: A (Reasoning) → B (Simple)')
+                  .applyDefaultTextStyle(context),
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.clear_all),
+                tooltip: 'Очистить',
+                onPressed: _clearAll,
               ),
-            ),
-            const SizedBox(width: 8),
-            _sending
-                ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
-                : IconButton(
-                    icon: const Icon(Icons.send),
-                    onPressed: () => _sendToA(_textController.text),
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-          ],
+            ],
+          ),
         ),
-      ),
+        Expanded(
+          child: isWide
+              ? Row(
+                  children: [
+                    Expanded(child: _chatPane(title: 'Агент A (Reasoning)', messages: _msgsA, scroll: _scrollA)),
+                    Expanded(child: _chatPane(title: 'Агент B (Simple)', messages: _msgsB, scroll: _scrollB)),
+                  ],
+                )
+              : Column(
+                  children: [
+                    Expanded(child: _chatPane(title: 'Агент A (Reasoning)', messages: _msgsA, scroll: _scrollA)),
+                    Expanded(child: _chatPane(title: 'Агент B (Simple)', messages: _msgsB, scroll: _scrollB)),
+                  ],
+                ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: SafeSendTextField(
+                  controller: _textController,
+                  focusNode: _inputFocus,
+                  enabled: !_sending,
+                  hintText: _sending ? 'Ожидаем ответа A...' : 'Сообщение для агента A...',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(24.0),
+                    borderSide: BorderSide.none,
+                  ),
+                  filled: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                  onSend: (text) => _sendToA(text),
+                  onTap: () {
+                    _inputFocus.requestFocus();
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              _sending
+                  ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+                  : IconButton(
+                      icon: const Icon(Icons.send),
+                      onPressed: () => _sendToA(_textController.text),
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+extension on Widget {
+  Widget applyDefaultTextStyle(BuildContext context) {
+    return DefaultTextStyle(
+      style: Theme.of(context).textTheme.titleMedium ?? const TextStyle(fontSize: 16),
+      child: this,
     );
   }
 }
