@@ -40,11 +40,18 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
         _inner = inner ?? CodeOpsAgent(baseSettings: (baseSettings ?? const AppSettings()).copyWith(reasoningMode: true));
 
   @override
-  AgentCapabilities get capabilities => const AgentCapabilities(
+  AgentCapabilities get capabilities => AgentCapabilities(
         stateful: true,
         streaming: true,
         reasoning: true,
-        tools: {'docker_exec_java', 'docker_start_java'},
+        tools: const {'docker_exec_java', 'docker_start_java'},
+        systemPrompt: _settings.systemPrompt,
+        responseRules: const [
+          'Кратко и по делу; используй списки и короткие абзацы.',
+          'Используй Markdown; код — в fenced-блоках с указанием языка.',
+          'Ссылайся на файлы/пути в обратных кавычках: `path/to/file`.',
+          'Если неопределённость > 0.1 — задавай уточняющие вопросы перед финалом.',
+        ],
       );
 
   @override

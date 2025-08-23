@@ -45,12 +45,16 @@ class AgentCapabilities {
   final bool streaming;           // can stream tokens/events
   final bool reasoning;           // applies uncertainty/stop-sequence policy
   final Set<String> tools;        // named tools, e.g. 'docker_exec_java'
+  final String? systemPrompt;     // base system/system-like prompt used by the agent (if any)
+  final List<String> responseRules; // concise rules/guidelines for formatting the answer
 
   const AgentCapabilities({
     required this.stateful,
     required this.streaming,
     required this.reasoning,
     this.tools = const {},
+    this.systemPrompt,
+    this.responseRules = const [],
   });
 }
 
