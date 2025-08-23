@@ -48,14 +48,14 @@
 - [ ] Настроить работу экрана CodeOps с LLM YandexGPT (приоритет: первый)
   - [ ] Интегрировать `YandexGptUseCase` в `CodeOpsAgent`/`CodeOpsBuilderAgent` через интерфейс `LlmUseCase`
   - [ ] Обновить выбор сети в настройках: добавить/актуализировать `NeuralNetwork.yandexgpt` для CodeOps
-  - [ ] Проверить совместимость формата сообщений/ответов (JSON с `files`/`tests`) в пайплайне генерация → тесты → запуск
+  - [x] Проверить совместимость формата сообщений/ответов (JSON с `files`/`tests`) в пайплайне генерация → тесты → запуск
   - [ ] Конфигурация окружения: `YANDEX_IAM_TOKEN`/`YANDEX_FOLDER_ID` (предпочтительно), временный fallback `YANDEX_API_KEY`
   - [ ] Проверить заголовки запросов:
     - IAM: `Authorization: Bearer <IAM_TOKEN>`; `folderId` только в `modelUri` (без `x-folder-id`)
     - Api-Key (временный fallback): `Authorization: Api-Key <API_KEY>` + `x-folder-id: <FOLDER_ID>`
   - [ ] Проверить эндпоинт `/completion` и корректность `modelUri`
   - [ ] Юнит/интеграционные тесты: успешный сценарий и негативные кейсы (таймаут/ошибка ответа)
-  - [ ] Обновить документацию: `sample_app/README.md` (секция YandexGPT + привязка к CodeOps)
+  - [x] Обновить документацию: `sample_app/README.md` (секция YandexGPT + привязка к CodeOps)
 - [ ] Оптимизировать страницу настроек
   - Упростить UX: единый блок MCP (URL, проверка подключения), явная индикация статуса
   - Валидация ввода (URL, пустые поля), подсказки и описание сценариев

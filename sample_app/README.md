@@ -37,6 +37,15 @@ samples, guidance on mobile development, and a full API reference.
 
 См. реализацию: `sample_app/lib/data/llm/yandexgpt_usecase.dart`.
 
+### Совместимость CodeOps/CodeOpsBuilderAgent с YandexGPT
+
+- Некоторые модели YandexGPT могут игнорировать `system` и возвращать нестрогий JSON. В `yandexgpt_usecase.dart` системные инструкции встраиваются в первое `user`‑сообщение для повышения дисциплины формата.
+- При отсутствии валидного JSON оркестратор `CodeOpsBuilderAgent` применяет fallback:
+  - для кода: извлекает fenced‑блок (```java ... ```) и формирует минимальный JSON с `files`, определяя путь и entrypoint (Java) из кода;
+  - для тестов: извлекает один/несколько тестовых классов из fenced‑блоков, корректно строит пути из `package` и имён публичных классов.
+- Реализация и утилиты: `sample_app/lib/agents/code_ops_builder_agent.dart`, `sample_app/lib/utils/code_utils.dart`.
+- Тесты: `sample_app/test/code_ops_builder_agent_yandex_fallback_test.dart` (проверка генерации кода/тестов и запуска JUnit с fallback).
+
 ## MCP GitHub интеграция
 
 Примечание: cейчас MCP сервер расположен на верхнем уровне проекта в папке `mcp_server/` (раньше был в `sample_app/mcp_server/`).

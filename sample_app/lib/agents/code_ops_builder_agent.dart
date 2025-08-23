@@ -1224,6 +1224,39 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
             })
         .cast<Map<String, String>>()
         .toList();
+    if (tests.isNotEmpty) return tests;
+
+    // Fallback: extract Java test classes from fenced code blocks in plain text
+    final t = answer.trim();
+    if (t.contains('```')) {
+      final extracted = <Map<String, String>>[];
+      int idx = 0;
+      while (idx < t.length) {
+        final start = t.indexOf('```', idx);
+        if (start == -1) break;
+        final end = t.indexOf('```', start + 3);
+        if (end == -1) break;
+        var inner = t.substring(start + 3, end).trim();
+        final nl = inner.indexOf('\n');
+        if (nl > -1) {
+          final first = inner.substring(0, nl).trim().toLowerCase();
+          if (first.isNotEmpty && first.length <= 10) {
+            inner = inner.substring(nl + 1).trim();
+          }
+        }
+        final code = inner;
+        if (code.isNotEmpty && (cu.isTestContent(code) || (cu.inferPublicClassName(code) ?? '').endsWith('Test'))) {
+          final pkg = cu.inferPackageName(code);
+          final cls = cu.inferPublicClassName(code) ?? 'GeneratedTest';
+          final rel = (pkg != null && pkg.isNotEmpty)
+              ? '${pkg.replaceAll('.', '/')}/$cls.java'
+              : '$cls.java';
+          extracted.add({'path': rel, 'content': code});
+        }
+        idx = end + 3;
+      }
+      if (extracted.isNotEmpty) return extracted;
+    }
     return tests;
   }
 
@@ -1266,12 +1299,9 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
       overrideJsonSchema: schema,
     );
     final answer = res['answer'] as String? ?? '';
-    try {
-      final m = jsonDecode(answer) as Map<String, dynamic>;
-      return m;
-    } catch (_) {
-      return {'intent': 'other', 'reason': 'failed_to_parse'};
-    }
+    final m = tryExtractJsonMap(answer);
+    if (m != null) return m;
+    return {'intent': 'other', 'reason': 'failed_to_parse'};
   }
 
   Future<Map<String, dynamic>?> _requestCodeJson(String userText, {String? language}) async {
@@ -1287,7 +1317,73 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
     );
     final answer = res['answer'] as String? ?? '';
     final jsonMap = tryExtractJsonMap(answer);
-    if (jsonMap == null) return null;
+    if (jsonMap == null) {
+      // Fallback: build minimal structure from a single fenced code block
+      final code = cu.stripCodeFencesGlobal(answer);
+      final clean = code.trim();
+      if (clean.isNotEmpty && language != null && language.trim().isNotEmpty) {
+        final lang = language.trim();
+        String path = 'Main';
+        String? entry;
+        switch (lang.toLowerCase()) {
+          case 'java':
+            final pkg = cu.inferPackageName(clean);
+            final cls = cu.inferPublicClassName(clean) ?? 'Main';
+            path = (pkg != null && pkg.isNotEmpty)
+                ? '${pkg.replaceAll('.', '/')}/$cls.java'
+                : '$cls.java';
+            entry = (pkg != null && pkg.isNotEmpty) ? '$pkg.$cls' : cls;
+            break;
+          case 'kotlin':
+            path = 'Main.kt';
+            break;
+          case 'dart':
+            path = 'main.dart';
+            break;
+          case 'python':
+            path = 'main.py';
+            break;
+          case 'js':
+          case 'javascript':
+            path = 'index.js';
+            break;
+          case 'typescript':
+          case 'ts':
+            path = 'index.ts';
+            break;
+          case 'go':
+            path = 'main.go';
+            break;
+          case 'c#':
+            path = 'Program.cs';
+            break;
+          case 'c++':
+            path = 'main.cpp';
+            break;
+          case 'rust':
+            path = 'main.rs';
+            break;
+          case 'swift':
+            path = 'Main.swift';
+            break;
+          default:
+            path = 'main.txt';
+        }
+        return {
+          'title': '',
+          'description': '',
+          'language': lang,
+          'entrypoint': entry,
+          'files': [
+            {
+              'path': path,
+              'content': clean,
+            }
+          ],
+        };
+      }
+      return null;
+    }
     if (!jsonMap.containsKey('files') && jsonMap.containsKey('code')) {
       final fname = (jsonMap['filename']?.toString().isNotEmpty ?? false) ? jsonMap['filename'].toString() : 'Main.java';
       final content = jsonMap['code']?.toString() ?? '';

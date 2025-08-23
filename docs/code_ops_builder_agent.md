@@ -148,3 +148,19 @@ final r2 = await agent.ask(AgentRequest('да'));
 - Генерация/рефайн тестов выполняется через `_inner.ask(..., ResponseFormat.json)` с малой схемой.
 - Для подбора зависимостей и точки входа используются утилиты из `sample_app/lib/utils/code_utils.dart` (`collectTestDeps`, `fqcnFromFile`).
 - Маркер финала ответа наследуется от `CodeOpsAgent.stopSequence` и удаляется из текста для пользователя.
+
+## Совместимость с YandexGPT (строгий JSON и fallbacks)
+
+Некоторые модели (например, YandexGPT) могут игнорировать `system`-подсказки и возвращать не JSON, а обычный текст/код в fenced-блоках. Для устойчивости пайплайна реализованы два механизма:
+
+1) Перенос системных инструкций в первый user-сообщение (в `YandexGptUseCase`):
+   - В `sample_app/lib/data/llm/yandexgpt_usecase.dart` содержимое `system`-сообщений встраивается в начало первого `user`-сообщения.
+   - Это повышает соблюдение требований «вернуть строго JSON по схеме».
+
+2) Fallback при отсутствии JSON в ответе модели (в `CodeOpsBuilderAgent`):
+   - В методе `_requestCodeJson(...)` при неудачной JSON-экстракции выполняется разбор fenced-блоков и формируется минимально валидный объект с `files` для продолжения пайплайна (включая определение имени файла и entrypoint для Java).
+   - В методе `_generateJavaTests(...)` при отсутствии JSON извлекаются один или несколько тестовых классов из fenced-блоков. Для каждого файла корректно строится путь с учётом `package` и имени публичного класса.
+   - Для эвристик используются утилиты из `sample_app/lib/utils/code_utils.dart`: `stripCodeFencesGlobal`, `inferPackageName`, `inferPublicClassName`, `isTestContent`, `collectTestDeps`.
+
+Покрыто тестами:
+- `sample_app/test/code_ops_builder_agent_yandex_fallback_test.dart` — сценарии с Yandex‑стилем ответов (code fences вместо JSON) для генерации кода и тестов, включая запуск JUnit.
