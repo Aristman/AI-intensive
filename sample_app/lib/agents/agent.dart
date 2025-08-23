@@ -1,8 +1,6 @@
 import 'dart:async';
 
-import 'package:sample_app/data/llm/deepseek_usecase.dart';
-import 'package:sample_app/data/llm/yandexgpt_usecase.dart';
-import 'package:sample_app/domain/llm_usecase.dart';
+import 'package:sample_app/domain/llm_resolver.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/mcp_integration_service.dart';
 
@@ -65,15 +63,6 @@ class Agent {
     return '${_settings.systemPrompt}\n\n$uncertaintyPolicy';
   }
 
-  LlmUseCase _resolveUseCase() {
-    switch (_settings.selectedNetwork) {
-      case NeuralNetwork.deepseek:
-        return DeepSeekUseCase();
-      case NeuralNetwork.yandexgpt:
-        return YandexGptUseCase();
-    }
-  }
-
   Future<void> send(String userText) async {
     if (userText.trim().isEmpty) return;
 
@@ -98,7 +87,7 @@ class Agent {
     ];
 
     try {
-      final usecase = _resolveUseCase();
+      final usecase = resolveLlmUseCase(_settings);
       final answer = await usecase.complete(messages: messages, settings: _settings);
 
       // Сохраняем ответ в историю и эмитим для подписчиков

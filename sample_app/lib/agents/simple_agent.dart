@@ -1,6 +1,4 @@
-import 'package:sample_app/domain/llm_usecase.dart';
-import 'package:sample_app/data/llm/deepseek_usecase.dart';
-import 'package:sample_app/data/llm/yandexgpt_usecase.dart';
+import 'package:sample_app/domain/llm_resolver.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/mcp_integration_service.dart';
 
@@ -25,15 +23,6 @@ class SimpleAgent {
         ),
         _mcpIntegrationService = McpIntegrationService();
 
-  LlmUseCase _resolveUseCase() {
-    switch (_settings.selectedNetwork) {
-      case NeuralNetwork.deepseek:
-        return DeepSeekUseCase();
-      case NeuralNetwork.yandexgpt:
-        return YandexGptUseCase();
-    }
-  }
-
   /// Выполнить запрос к модели без сохранения истории
   Future<Map<String, dynamic>> ask(String userText) async {
     if (userText.trim().isEmpty) return {'answer': '', 'mcp_used': false};
@@ -52,7 +41,7 @@ class SimpleAgent {
       {'role': 'user', 'content': userText},
     ];
 
-    final usecase = _resolveUseCase();
+    final usecase = resolveLlmUseCase(_settings);
     final answer = await usecase.complete(messages: messages, settings: _settings);
     
     return {

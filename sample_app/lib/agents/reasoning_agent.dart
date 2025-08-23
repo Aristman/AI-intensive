@@ -1,7 +1,5 @@
 import 'package:sample_app/agents/agent.dart' show Agent; // for stopSequence
-import 'package:sample_app/domain/llm_usecase.dart';
-import 'package:sample_app/data/llm/deepseek_usecase.dart';
-import 'package:sample_app/data/llm/yandexgpt_usecase.dart';
+import 'package:sample_app/domain/llm_resolver.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/mcp_integration_service.dart';
 
@@ -70,15 +68,6 @@ class ReasoningAgent {
 
   void clearHistory() => _history.clear();
 
-  LlmUseCase _resolveUseCase() {
-    switch (_settings.selectedNetwork) {
-      case NeuralNetwork.deepseek:
-        return DeepSeekUseCase();
-      case NeuralNetwork.yandexgpt:
-        return YandexGptUseCase();
-    }
-  }
-
   String _buildSystemContent() {
     final uncertaintyPolicy = 'Политика уточнений (режим рассуждения): Прежде чем выдавать итоговый ответ, '
         'оцени неопределённость результата по шкале от 0 до 1. '
@@ -137,7 +126,7 @@ class ReasoningAgent {
     ];
 
     try {
-      final usecase = _resolveUseCase();
+      final usecase = resolveLlmUseCase(_settings);
       var answer = await usecase.complete(messages: messages, settings: _settings);
 
       // предварительно определяем финальность по наличию stopSequence

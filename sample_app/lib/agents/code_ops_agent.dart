@@ -2,9 +2,7 @@ import 'dart:convert';
 import 'dart:developer' as dev;
 import 'package:sample_app/agents/agent.dart' show Agent; // for stopSequence
 import 'package:sample_app/agents/code_exec_args.dart';
-import 'package:sample_app/domain/llm_usecase.dart';
-import 'package:sample_app/data/llm/deepseek_usecase.dart';
-import 'package:sample_app/data/llm/yandexgpt_usecase.dart';
+import 'package:sample_app/domain/llm_resolver.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/mcp_client.dart';
 import 'package:sample_app/services/mcp_integration_service.dart';
@@ -200,15 +198,6 @@ class CodeOpsAgent {
     _memory = null;
   }
 
-  LlmUseCase _resolveUseCase() {
-    switch (_settings.selectedNetwork) {
-      case NeuralNetwork.deepseek:
-        return DeepSeekUseCase();
-      case NeuralNetwork.yandexgpt:
-        return YandexGptUseCase();
-    }
-  }
-
   String _buildSystemContent({ResponseFormat? overrideResponseFormat, String? overrideJsonSchema}) {
     final codeOpsGuide =
         'Ты — инженерный агент, работающий с кодом и инфраструктурой. '
@@ -255,7 +244,7 @@ class CodeOpsAgent {
     if (_history.isEmpty) return;
 
     // Формируем краткую сводку: факты, решения, TODO, ограничения, указания на файлы.
-    final usecase = _resolveUseCase();
+    final usecase = resolveLlmUseCase(_settings);
 
     final historyText = _history
         .map((m) => '[${m.role}] ${m.content}')
@@ -372,7 +361,7 @@ class CodeOpsAgent {
     ];
 
     try {
-      final usecase = _resolveUseCase();
+      final usecase = resolveLlmUseCase(_settings);
       _log('LLM Request', {
         'provider': _settings.selectedNetworkName,
         'format': _settings.responseFormatName,
