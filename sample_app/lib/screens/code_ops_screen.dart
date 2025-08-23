@@ -3,7 +3,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
-import 'package:sample_app/agents/code_ops_agent.dart';
+import 'package:sample_app/agents/code_ops_builder_agent.dart';
+import 'package:sample_app/agents/agent_interface.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/models/message.dart';
 import 'package:sample_app/services/settings_service.dart';
@@ -25,18 +26,24 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
 
   late AppSettings _settings;
   bool _loadingSettings = true;
-  late CodeOpsAgent _agent;
+  late CodeOpsBuilderAgent _agent;
 
   final List<Message> _messages = [];
   bool _isLoading = false;
   bool _isUsingMcp = false;
   Timer? _mcpIndicatorTimer;
 
+  // Streaming state
+  StreamSubscription<AgentEvent>? _streamSub;
+  double? _pipelineProgress; // 0..1 when streaming
+  final List<String> _eventLogs = [];
+  bool _awaitTestsConfirm = false;
+  String? _awaitAction; // 'create_tests' | 'run_tests'
+
   // Pending code to execute
-  String? _pendingLanguage;
   String? _pendingEntrypoint;
-  List<Map<String, String>>? _pendingFiles; // for multi-file execution
-  String? _awaitLangFor; // original user request awaiting language clarification
+  // removed unused: _pendingLanguage, _pendingFiles, _awaitLangFor
+  List<Map<String, String>>? _lastGeneratedFiles; // keep last code files from stream for deps resolution
 
   @override
   void initState() {
@@ -66,8 +73,8 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
   Future<void> _loadSettings() async {
     setState(() => _loadingSettings = true);
     _settings = await _settingsService.getSettings();
-    // CodeOpsAgent всегда в reasoning режиме
-    _agent = CodeOpsAgent(baseSettings: _settings.copyWith(reasoningMode: true));
+    // CodeOpsBuilderAgent всегда в reasoning режиме
+    _agent = CodeOpsBuilderAgent(baseSettings: _settings.copyWith(reasoningMode: true));
     if (mounted) setState(() => _loadingSettings = false);
   }
 
@@ -76,6 +83,7 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
     _textController.dispose();
     _scrollController.dispose();
     _mcpIndicatorTimer?.cancel();
+    _streamSub?.cancel();
     super.dispose();
   }
 
@@ -96,57 +104,146 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
     return false;
   }
 
-  Future<Map<String, dynamic>> _classifyIntent(String userText) async {
-    const schema = '{"intent":"code_generate|other","language":"string?","filename":"string?","reason":"string"}';
-    final res = await _agent.ask(
-      'Классифицируй следующий запрос пользователя как code_generate или other. Ответь строго по схеме. Запрос: "${userText.replaceAll('"', '\\"')}"',
-      overrideResponseFormat: ResponseFormat.json,
-      overrideJsonSchema: schema,
-    );
-    final answer = res['answer'] as String? ?? '';
-    try {
-      final jsonMap = jsonDecode(answer) as Map<String, dynamic>;
-      return jsonMap;
-    } catch (_) {
-      return {'intent': 'other', 'reason': 'failed_to_parse'};
-    }
-  }
-
-  Future<Map<String, dynamic>?> _requestCodeJson(String userText, {String? language}) async {
-    const codeSchema = '{"title":"string","description":"string","language":"string","entrypoint":"string?","files":"Array<{path:string,content:string}>"}';
-    final langHint = (language != null && language.trim().isNotEmpty)
-        ? 'Сгенерируй код на языке ${language.trim()}.'
-        : 'Если язык явно не указан пользователем — задай уточняющий вопрос. Не возвращай итог, пока язык не подтверждён.';
-    // Для Java явно требуем JUnit4, чтобы соответствовать текущей поддержке MCP docker_exec_java (junit-4.13.2 + hamcrest 1.3)
-    const junitHint = 'Если язык Java — генерируй тесты строго на JUnit 4: используй импорты "import org.junit.Test;" и "import static org.junit.Assert.*;". Не используй JUnit 5 (org.junit.jupiter.*).';
-    final res = await _agent.ask(
-      '$langHint $junitHint Верни строго JSON по схеме. Если требуется несколько классов/файлов — каждый в отдельном файле с полными импортами. Запрос: "${userText.replaceAll('"', '\\"')}"',
-      overrideResponseFormat: ResponseFormat.json,
-      overrideJsonSchema: codeSchema,
-    );
-    final answer = res['answer'] as String? ?? '';
-    final jsonMap = tryExtractJsonMap(answer);
-    if (jsonMap == null) return null;
-    // Back-compat: если пришёл одиночный файл полями filename+code, преобразуем
-    if (!jsonMap.containsKey('files') && jsonMap.containsKey('code')) {
-      final fname = (jsonMap['filename']?.toString().isNotEmpty ?? false) ? jsonMap['filename'].toString() : 'Main.java';
-      final content = jsonMap['code']?.toString() ?? '';
-      jsonMap['files'] = [
-        {
-          'path': fname,
-          'content': content,
-        }
-      ];
-    }
-    return jsonMap;
-  }
+  // Removed unused helper methods: _classifyIntent, _requestCodeJson
 
   void _appendMessage(Message m) {
     setState(() => _messages.add(m));
     _scrollToBottom();
   }
 
-  
+  void _handleAgentEvent(AgentEvent e) {
+    // Log line
+    final stage = e.stage.name;
+    final sev = e.severity.name;
+    final line = '[$sev/$stage] ${e.message}';
+    setState(() {
+      if (e.progress != null) _pipelineProgress = e.progress;
+      _eventLogs.add(line);
+      if (_eventLogs.length > 200) {
+        _eventLogs.removeRange(0, _eventLogs.length - 200);
+      }
+    });
+
+    switch (e.stage) {
+      case AgentStage.code_generated:
+        final language = e.meta?['language']?.toString();
+        final entrypoint = e.meta?['entrypoint']?.toString();
+        final files = (e.meta?['files'] as List?)
+            ?.map((m) => {
+                  'path': m['path'].toString(),
+                  'content': m['content'].toString(),
+                })
+            .cast<Map<String, String>>()
+            .toList();
+        setState(() {
+          _pendingEntrypoint = entrypoint;
+          _lastGeneratedFiles = files;
+        });
+        if (files != null && files.isNotEmpty) {
+          final title = 'Код';
+          if (files.length > 1) {
+            _appendMessage(Message(text: '$title\n\nФайлов: ${files.length}\nЯзык: ${language ?? '-'}\nEntrypoint: ${entrypoint ?? '-'}', isUser: false));
+          } else {
+            _appendMessage(Message(text: '$title\n\nЯзык: ${language ?? '-'}\nEntrypoint: ${entrypoint ?? '-'}', isUser: false));
+          }
+          for (final f in files) {
+            final payload = jsonEncode({
+              'language': language ?? 'java',
+              'path': f['path'],
+              'content': f['content'],
+            });
+            final card = 'CODE_CARD::${base64Encode(utf8.encode(payload))}';
+            _appendMessage(Message(text: card, isUser: false));
+          }
+        }
+        break;
+      case AgentStage.test_generated:
+        final language = e.meta?['language']?.toString() ?? 'java';
+        final tests = (e.meta?['tests'] as List?)
+            ?.map((m) => {
+                  'path': m['path'].toString(),
+                  'content': m['content'].toString(),
+                })
+            .cast<Map<String, String>>()
+            .toList();
+        if (tests != null && tests.isNotEmpty) {
+          _appendMessage(Message(text: 'Тесты сгенерированы: ${tests.length} (язык: $language)', isUser: false));
+          for (final f in tests) {
+            final payload = jsonEncode({
+              'language': language,
+              'path': f['path'],
+              'content': f['content'],
+            });
+            final card = 'CODE_CARD::${base64Encode(utf8.encode(payload))}';
+            _appendMessage(Message(text: card, isUser: false));
+          }
+        }
+        break;
+      case AgentStage.ask_create_tests:
+        setState(() {
+          _awaitTestsConfirm = true;
+          _awaitAction = e.meta?['action']?.toString();
+        });
+        _appendMessage(Message(text: e.message, isUser: false));
+        break;
+      case AgentStage.pipeline_complete:
+        if (e.message.trim().isNotEmpty) {
+          _appendMessage(Message(text: e.message, isUser: false));
+        }
+        setState(() => _isLoading = false);
+        break;
+      case AgentStage.pipeline_error:
+        _appendMessage(Message(text: e.message, isUser: false));
+        setState(() => _isLoading = false);
+        break;
+      default:
+        // other stages are just logged
+        break;
+    }
+  }
+
+  Future<void> _startStreaming(String userText) async {
+    setState(() {
+      _isLoading = true;
+      _isUsingMcp = false;
+      _pipelineProgress = 0.0;
+      _eventLogs.clear();
+      _awaitTestsConfirm = false;
+    });
+
+    await _streamSub?.cancel();
+    final stream = _agent.start(AgentRequest(userText));
+    if (stream == null) {
+      // Fallback: non-streaming ask
+      final resp = await _agent.ask(AgentRequest(userText));
+      _appendMessage(Message(text: resp.text, isUser: false));
+      setState(() => _isLoading = false);
+      return;
+    }
+    _streamSub = stream.listen(
+      _handleAgentEvent,
+      onError: (e, st) {
+        _appendMessage(Message(text: 'Ошибка пайплайна: $e', isUser: false));
+        setState(() => _isLoading = false);
+      },
+      onDone: () {
+        setState(() => _isLoading = false);
+      },
+      cancelOnError: false,
+    );
+  }
+
+  Future<void> _confirmCreateTests(bool yes) async {
+    setState(() {
+      _awaitTestsConfirm = false;
+      _isLoading = true;
+      // MCP используется только при запуске тестов
+      _isUsingMcp = yes && (_awaitAction == 'run_tests');
+    });
+    // Вторая фаза должна идти через стрим, чтобы видеть промежуточные этапы
+    await _startStreaming(yes ? 'да' : 'нет');
+  }
+
   Future<void> _sendMessage(String text) async {
     final userText = text.trim();
     if (userText.isEmpty || _isLoading) return;
@@ -161,46 +258,15 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
     });
 
     try {
-      // Language answer flow
-      if (_awaitLangFor != null) {
-        final lang = userText;
-        final codeJson = await _requestCodeJson(_awaitLangFor!, language: lang);
-        _awaitLangFor = null;
-        if (codeJson != null) {
-          final title = codeJson['title']?.toString() ?? 'Код';
-          final language = codeJson['language']?.toString();
-          final entrypoint = codeJson['entrypoint']?.toString();
-          final files = (codeJson['files'] as List?)?.map((e) => {
-                'path': e['path'].toString(),
-                'content': e['content'].toString(),
-              }).cast<Map<String, String>>().toList();
-          _pendingLanguage = language;
-          _pendingEntrypoint = entrypoint;
-          _pendingFiles = files;
-          if (files != null && files.isNotEmpty) {
-            if (files.length > 1) {
-              _appendMessage(Message(text: '$title\n\nФайлов: ${files.length}\nЯзык: ${language ?? '-'}\nEntrypoint: ${entrypoint ?? '-'}', isUser: false));
-            } else {
-              _appendMessage(Message(text: '$title\n\nЯзык: ${language ?? '-'}\nEntrypoint: ${entrypoint ?? '-'}', isUser: false));
-            }
-            for (final f in files) {
-              final payload = jsonEncode({
-                'language': 'java',
-                'path': f['path'],
-                'content': f['content'],
-              });
-              final card = 'CODE_CARD::${base64Encode(utf8.encode(payload))}';
-              _appendMessage(Message(text: card, isUser: false));
-            }
-          }
-        } else {
-          _appendMessage(Message(text: 'Не удалось получить корректный JSON с кодом.', isUser: false));
-        }
-        setState(() => _isLoading = false);
+      // Если ждём подтверждение на тесты — обработаем да/нет
+      if (_awaitTestsConfirm) {
+        final t = userText.toLowerCase();
+        final yes = t.startsWith('y') || t.startsWith('д') || t.contains('да') || t.contains('yes');
+        await _confirmCreateTests(yes);
         return;
       }
 
-      // If user pasted code directly — отрисуем карточку кода с кнопкой запуска
+      // Если пользователь прислал код напрямую — покажем карточку
       if (_looksLikeCode(userText)) {
         final payload = jsonEncode({
           'language': 'java',
@@ -213,114 +279,8 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
         return;
       }
 
-      // Classify intent
-      final intent = await _classifyIntent(userText);
-      if ((intent['intent'] as String?) == 'code_generate') {
-        // Если язык не определён — спросим у пользователя
-        final intentLang = (intent['language'] as String?)?.trim();
-        if (intentLang == null || intentLang.isEmpty) {
-          _awaitLangFor = userText;
-          _appendMessage(Message(text: 'На каком языке сгенерировать код? (Поддерживается запуск в Docker только для Java)', isUser: false));
-          setState(() => _isLoading = false);
-          return;
-        }
-
-        final codeJson = await _requestCodeJson(userText, language: intentLang);
-        if (codeJson != null) {
-          final title = codeJson['title']?.toString() ?? 'Код';
-          final language = codeJson['language']?.toString();
-          final entrypoint = codeJson['entrypoint']?.toString();
-          final files = (codeJson['files'] as List?)?.map((e) => {
-                'path': e['path'].toString(),
-                'content': e['content'].toString(),
-              }).cast<Map<String, String>>().toList();
-
-          // Сохраним pending
-          _pendingLanguage = language;
-          _pendingFiles = files;
-          _pendingEntrypoint = entrypoint;
-
-          // Show summary + files в виде карточек кода
-          if (files != null && files.isNotEmpty) {
-            if (files.length > 1) {
-              _appendMessage(Message(text: '$title\n\nФайлов: ${files.length}\nЯзык: ${language ?? '-'}\nEntrypoint: ${entrypoint ?? '-'}', isUser: false));
-            } else {
-              _appendMessage(Message(text: '$title\n\nЯзык: ${language ?? '-'}\nEntrypoint: ${entrypoint ?? '-'}', isUser: false));
-            }
-            for (final f in files) {
-              final payload = jsonEncode({
-                'language': 'java',
-                'path': f['path'],
-                'content': f['content'],
-              });
-              final card = 'CODE_CARD::${base64Encode(utf8.encode(payload))}';
-              _appendMessage(Message(text: card, isUser: false));
-            }
-          }
-          setState(() => _isLoading = false);
-          return;
-        }
-      }
-
-      // General conversation with CodeOpsAgent
-      final res = await _agent.ask(userText);
-      final answer = res['answer'] as String? ?? '';
-      final used = res['mcp_used'] == true;
-
-      setState(() {
-        _isUsingMcp = used;
-        _isLoading = false;
-      });
-
-      // Попробуем извлечь JSON с кодом (в т.ч. из ```json ... ```)
-      final detected = tryExtractJsonMap(answer);
-      if (detected != null && (detected.containsKey('files') || detected.containsKey('code'))) {
-        // Приведём к многофайловому формату при необходимости
-        final codeJson = Map<String, dynamic>.from(detected);
-        if (!codeJson.containsKey('files') && codeJson.containsKey('code')) {
-          final fname = (codeJson['filename']?.toString().isNotEmpty ?? false) ? codeJson['filename'].toString() : 'Main.java';
-          final content = codeJson['code']?.toString() ?? '';
-          codeJson['files'] = [
-            {
-              'path': fname,
-              'content': content,
-            }
-          ];
-        }
-
-        // Сохраним pending
-        _pendingLanguage = codeJson['language']?.toString();
-        _pendingFiles = (codeJson['files'] as List?)?.map((e) => {
-              'path': e['path'].toString(),
-              'content': e['content'].toString(),
-            }).cast<Map<String, String>>().toList();
-        _pendingEntrypoint = codeJson['entrypoint']?.toString();
-
-        if (_pendingFiles != null && _pendingFiles!.isNotEmpty) {
-          if (_pendingFiles!.length > 1) {
-            _appendMessage(Message(text: 'Файлов: ${_pendingFiles!.length}\nЯзык: ${_pendingLanguage ?? '-'}\nEntrypoint: ${_pendingEntrypoint ?? '-'}', isUser: false));
-          } else {
-            _appendMessage(Message(text: 'Язык: ${_pendingLanguage ?? '-'}\nEntrypoint: ${_pendingEntrypoint ?? '-'}', isUser: false));
-          }
-          for (final f in _pendingFiles!) {
-            final payload = jsonEncode({
-              'language': 'java',
-              'path': f['path'],
-              'content': f['content'],
-            });
-            final card = 'CODE_CARD::${base64Encode(utf8.encode(payload))}';
-            _appendMessage(Message(text: card, isUser: false));
-          }
-        }
-      } else {
-        _appendMessage(Message(text: answer, isUser: false));
-      }
-
-      if (used) {
-        _mcpIndicatorTimer = Timer(const Duration(seconds: 5), () {
-          if (mounted) setState(() => _isUsingMcp = false);
-        });
-      }
+      // Запускаем потоковый пайплайн агента
+      await _startStreaming(userText);
     } catch (e) {
       setState(() {
         _isLoading = false;
@@ -445,12 +405,12 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
         if (testCls.endsWith('Test')) {
           baseName = testCls.substring(0, testCls.length - 4);
         }
-        if (baseName != null && baseName.isNotEmpty && _pendingFiles != null && _pendingFiles!.isNotEmpty) {
+        if (baseName != null && baseName.isNotEmpty && _lastGeneratedFiles != null && _lastGeneratedFiles!.isNotEmpty) {
           final expectedRel = (pkg != null && pkg.isNotEmpty)
               ? '${pkg.replaceAll('.', '/')}/$baseName.java'
               : '$baseName.java';
           // 1) точное совпадение пути (или окончание пути)
-          for (final f in _pendingFiles!) {
+          for (final f in _lastGeneratedFiles!) {
             final p = (f['path'] ?? '').trim();
             if (p == expectedRel || p.endsWith('/$expectedRel') || p.endsWith('\\$expectedRel')) {
               srcFile = f;
@@ -459,7 +419,7 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
           }
           // 2) по содержимому и имени класса
           if (srcFile == null) {
-            for (final f in _pendingFiles!) {
+            for (final f in _lastGeneratedFiles!) {
               final content = _stripCodeFencesGlobal(f['content'] ?? '');
               final pkg2 = _inferPackageName(content);
               final cls2 = _inferPublicClassName(content) ?? _basenameNoExt(f['path'] ?? 'Main.java');
@@ -481,11 +441,11 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
         });
       }
 
-      final result = await _agent.execJavaFilesInDocker(
-        files: files,
-        entrypoint: testFqcn,
-        timeoutMs: 20000,
-      );
+      final result = await _agent.callTool('docker_exec_java', {
+        'files': files,
+        'entrypoint': testFqcn,
+        'timeout_ms': 20000,
+      });
 
       final compile = result['compile'] as Map<String, dynamic>?;
       final run = result['run'] as Map<String, dynamic>?;
@@ -541,12 +501,12 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
     try {
       // Всегда отправляем только файл с текущей карточки
       final cleaned = _stripCodeFencesGlobal(file['content'] ?? '');
-      final result = await _agent.execJavaInDocker(
-        code: cleaned,
-        filename: (file['path'] ?? 'Main.java'),
-        entrypoint: _fqcnFromFile(file) ?? _pendingEntrypoint,
-        timeoutMs: 15000,
-      );
+      final result = await _agent.callTool('docker_exec_java', {
+        'code': cleaned,
+        'filename': (file['path'] ?? 'Main.java'),
+        'entrypoint': _fqcnFromFile(file) ?? _pendingEntrypoint,
+        'timeout_ms': 15000,
+      });
 
       final compile = result['compile'] as Map<String, dynamic>?;
       final run = result['run'] as Map<String, dynamic>?;
@@ -776,7 +736,6 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
               _agent.clearHistory();
               setState(() {
                 _messages.clear();
-                _pendingLanguage = null;
               });
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('Контекст очищен')),
@@ -790,9 +749,32 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
       body: Column(
         children: [
           if (_isLoading)
-            const Padding(
-              padding: EdgeInsets.all(16.0),
-              child: Center(child: CircularProgressIndicator()),
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_pipelineProgress != null)
+                    LinearProgressIndicator(value: _pipelineProgress),
+                  if (_eventLogs.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      constraints: const BoxConstraints(maxHeight: 160),
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: _eventLogs.take(20).map((l) => Text(l, style: const TextStyle(fontSize: 12))).toList(),
+                      ),
+                    ),
+                  ],
+                  if (_pipelineProgress == null && _eventLogs.isEmpty)
+                    const Center(child: CircularProgressIndicator()),
+                ],
+              ),
             ),
           Expanded(
             child: ListView.builder(
@@ -857,6 +839,25 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
               ],
             ),
           ),
+          if (_awaitTestsConfirm)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: _isLoading ? null : () => _confirmCreateTests(false),
+                    child: const Text('Не создавать тесты'),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: _isLoading ? null : () => _confirmCreateTests(true),
+                    icon: const Icon(Icons.science),
+                    label: const Text('Создать и запустить тесты'),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
