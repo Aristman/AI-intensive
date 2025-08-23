@@ -90,16 +90,22 @@ AgentEvent(
   - обрабатывает стадию `ask_create_tests` (кнопки подтверждения), различая `meta.action = create_tests` и `meta.action = run_tests`,
   - отправляет подтверждения обратно агенту через повторный потоковый вызов `start()` (мульти‑ходовая континуация),
   - отображает `test_generated` как карточки тестов с кнопкой запуска; события содержат `meta.language` и список `meta.tests`.
+  - В AppBar постоянно отображается чип статуса MCP:
+    - `MCP off` (серый) — MCP выключен или не задан URL; будет использован fallback‑делегат.
+    - `MCP ready` (синий) — MCP включён и URL задан, но сейчас не выполняется вызов.
+    - `MCP active` (зелёный) — идёт активный вызов MCP (например, запуск тестов). Подсказка показывает текущий `mcpServerUrl`.
+    - Логика: `_isUsingMcp` становится true на время вызова и автоматически сбрасывается спустя короткий таймер после завершения.
+    - Покрытие тестами: добавлены виджет‑тесты на состояния `MCP off` и `MCP ready`; тест на `MCP active` планируется (проверка активации и таймера сброса).
   
 
 Рекомендации по meta:
-- `code_generated`: `{ files: [{path, content, isTest:false}], language? }`
-- `ask_create_tests`: `{ action: 'create_tests' | 'run_tests', language? }`
-- `test_generated`: `{ language: 'java', tests: [{ path, content }] }`
-- `docker_exec_started`: `{ testName, entrypoint, classpath }`
-- `docker_exec_progress`: `{ current, total, testName? }`
-- `docker_exec_result`: `{ testName, exitCode, durationMs, stdoutTail, stderrTail }`
-- `analysis_result`: `{ total, passed, failed: [testName], notes }`
+- `code_generated`: `{ files: [{path, content, isTest:false}], language?, runId }`
+- `ask_create_tests`: `{ action: 'create_tests' | 'run_tests', language?, runId }`
+- `test_generated`: `{ language: 'java', tests: [{ path, content }], runId }`
+- `docker_exec_started`: `{ runId, tests_count, language }`  // заявка на пакетный прогон
+- `docker_exec_progress`: `{ current?, total?, test? }`       // опционально
+- `docker_exec_result`: `{ runId, test, entrypoint, result, refined? }`  // result — полный JSON от запуска
+- `analysis_result`: `{ total, passed, failed: [test], notes }`
 - `refine_tests_result`: `{ refinedFiles: [{path, content}], notes }`
 - `pipeline_error`: `{ errorCode, details }`
 
@@ -110,7 +116,15 @@ AgentEvent(
   - `_exitCodeOf(Map m)` — читает `exit_code` или `exitCode` и приводит к int
   - `_stderrOf(Map m)`, `_stdoutOf(Map m)` — читают соответствующие поля
   - `_isRunSuccessful(Map result)` — корректно определяет успех/провал по унифицированным ключам и маркеру `FAILURES!!!` в stderr
-- Формат стриминговых событий для UI остаётся как в списке выше (camelCase в примере `docker_exec_result`). Агент лишь нормализует входные данные от MCP.
+- Формат стриминговых событий для UI остаётся как в списке выше (camelCase в примере `docker_exec_result`). Агент лишь нормализует входные данные от MCP. Поле `meta.result` содержит исходный (нормализованный) объект результата от запуска.
+
+## MCP и fallback поведения
+
+- Внутренний вспомогательный метод `_execJavaFilesWithFallback(...)` выбирает стратегию выполнения:
+  - если `useMcpServer = true` и указан непустой `mcpServerUrl` — используется локальный MCP‑клиент (`_execJavaFilesInDockerLocal`) для вызова инструментов `docker_exec_java`/`docker_start_java`;
+  - иначе — делегирование во внутренний `CodeOpsAgent` (`_inner.execJavaFilesInDocker(...)`).
+- Это поведение важно для тестирования: при отключённом MCP поток всё равно отрабатывает за счёт делегата и моков во внутренних тестах.
+- События `docker_exec_started`/`docker_exec_result` эмитятся в стриминговой фазе запуска тестов; `meta` всегда содержит `runId` и по одному `docker_exec_result` на каждый тест (а также для повтора после рефайна — с `refined: true`).
 
 ## Использование
 Пример (псевдокод):

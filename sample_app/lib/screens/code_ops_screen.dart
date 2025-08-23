@@ -51,6 +51,66 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
     _loadSettings();
   }
 
+  Widget _mcpStatusChip() {
+    final mcpConfigured = _settings.useMcpServer && (_settings.mcpServerUrl?.trim().isNotEmpty ?? false);
+    Color bg;
+    Color border;
+    Color fg;
+    String label;
+    if (_isUsingMcp) {
+      bg = Colors.green.shade100;
+      border = Colors.green.shade300;
+      fg = Colors.green.shade700;
+      label = 'MCP active';
+    } else if (mcpConfigured) {
+      bg = Colors.blue.shade50;
+      border = Colors.blue.shade200;
+      fg = Colors.blue.shade700;
+      label = 'MCP ready';
+    } else {
+      bg = Colors.grey.shade200;
+      border = Colors.grey.shade300;
+      fg = Colors.grey.shade700;
+      label = 'MCP off';
+    }
+    final tooltip = mcpConfigured
+        ? 'MCP сервер: ${_settings.mcpServerUrl}'
+        : 'MCP отключен (используется fallback-делегат)';
+    return Padding(
+      padding: const EdgeInsets.only(left: 8.0),
+      child: Tooltip(
+        message: tooltip,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: border),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.integration_instructions,
+                size: 14,
+                color: fg,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: fg,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _openSettings() async {
     await Navigator.push<AppSettings>(
       context,
@@ -237,8 +297,9 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
     setState(() {
       _awaitTestsConfirm = false;
       _isLoading = true;
-      // MCP используется только при запуске тестов
-      _isUsingMcp = yes && (_awaitAction == 'run_tests');
+      // MCP используется только при запуске тестов и если он включён и настроен
+      final mcpConfigured = _settings.useMcpServer && (_settings.mcpServerUrl?.trim().isNotEmpty ?? false);
+      _isUsingMcp = yes && (_awaitAction == 'run_tests') && mcpConfigured;
     });
     // Вторая фаза должна идти через стрим, чтобы видеть промежуточные этапы
     await _startStreaming(yes ? 'да' : 'нет');
@@ -378,7 +439,8 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
     }
     setState(() {
       _isLoading = true;
-      _isUsingMcp = true;
+      final mcpConfigured = _settings.useMcpServer && (_settings.mcpServerUrl?.trim().isNotEmpty ?? false);
+      _isUsingMcp = mcpConfigured;
     });
     try {
       final testClean = _stripCodeFencesGlobal(testFile['content'] ?? '');
@@ -496,7 +558,8 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
     }
     setState(() {
       _isLoading = true;
-      _isUsingMcp = true;
+      final mcpConfigured = _settings.useMcpServer && (_settings.mcpServerUrl?.trim().isNotEmpty ?? false);
+      _isUsingMcp = mcpConfigured;
     });
     try {
       // Всегда отправляем только файл с текущей карточки
@@ -692,36 +755,7 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
         title: Row(
           children: [
             const Text('CodeOps'),
-            if (_isUsingMcp) ...[
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade100,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.green.shade300),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.integration_instructions,
-                      size: 14,
-                      color: Colors.green.shade700,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      'MCP',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green.shade700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            _mcpStatusChip(),
           ],
         ),
         actions: [

@@ -4,9 +4,11 @@ import 'dart:math';
 
 import 'package:sample_app/agents/agent_interface.dart';
 import 'package:sample_app/agents/code_ops_agent.dart';
+import 'package:sample_app/agents/code_exec_args.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/utils/json_utils.dart';
 import 'package:sample_app/utils/code_utils.dart' as cu;
+import 'package:sample_app/services/mcp_client.dart';
 
 /// Orchestrator agent built on top of CodeOpsAgent.
 /// Implements unified IAgent interface and adds a flow:
@@ -58,6 +60,59 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
   void updateSettings(AppSettings settings) {
     _settings = settings.copyWith(reasoningMode: true);
     _inner.updateSettings(_settings);
+  }
+
+  // Fallback wrapper: prefer local MCP call when configured; otherwise delegate to inner agent (used in tests).
+  Future<Map<String, dynamic>> _execJavaFilesWithFallback({
+    required List<Map<String, String>> files,
+    String? entrypoint,
+    String? classpath,
+    List<String>? compileArgs,
+    List<String>? runArgs,
+    String? image,
+    String? containerName,
+    String? extraArgs,
+    String workdir = '/work',
+    int timeoutMs = 15000,
+    int? cpus,
+    String? memory,
+    String cleanup = 'always',
+  }) async {
+    final url = _settings.mcpServerUrl?.trim();
+    final canUseMcp = _settings.useMcpServer && (url != null && url.isNotEmpty);
+    if (canUseMcp) {
+      return _execJavaFilesInDockerLocal(
+        files: files,
+        entrypoint: entrypoint,
+        classpath: classpath,
+        compileArgs: compileArgs,
+        runArgs: runArgs,
+        image: image,
+        containerName: containerName,
+        extraArgs: extraArgs,
+        workdir: workdir,
+        timeoutMs: timeoutMs,
+        cpus: cpus,
+        memory: memory,
+        cleanup: cleanup,
+      );
+    }
+    // Delegate to inner agent's exec for testing/mocked environment.
+    return _inner.execJavaFilesInDocker(
+      files: files,
+      entrypoint: entrypoint,
+      classpath: classpath,
+      compileArgs: compileArgs,
+      runArgs: runArgs,
+      image: image,
+      containerName: containerName,
+      extraArgs: extraArgs,
+      workdir: workdir,
+      timeoutMs: timeoutMs,
+      cpus: cpus,
+      memory: memory,
+      cleanup: cleanup,
+    );
   }
 
   // Try to extract language name from short replies like "Java", "на Java", etc.
@@ -136,7 +191,7 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
               'content': e['content'].toString(),
             }).cast<Map<String, String>>().toList();
         if (files == null) {
-          return await _inner.execJavaInDocker(
+          return await _execJavaInDockerLocal(
             code: (args['code']?.toString() ?? ''),
             filename: args['filename']?.toString(),
             entrypoint: args['entrypoint']?.toString(),
@@ -153,7 +208,7 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
             cleanup: (args['cleanup']?.toString() ?? 'always'),
           );
         } else {
-          return await _inner.execJavaFilesInDocker(
+          return await _execJavaFilesInDockerLocal(
             files: files,
             entrypoint: args['entrypoint']?.toString(),
             classpath: args['classpath']?.toString(),
@@ -170,7 +225,7 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
           );
         }
       case 'docker_start_java':
-        return await _inner.startLocalJavaDocker(
+        return await _startLocalJavaDockerLocal(
           containerName: args['container_name']?.toString(),
           image: args['image']?.toString(),
           port: args['port'] as int?,
@@ -485,54 +540,64 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
           // Run tests with deps
           var anyFailure = false;
           final runReport = <Map<String, dynamic>>[];
+          emit(
+            AgentStage.docker_exec_started,
+            'Запуск тестов в Docker...',
+            prog: 0.92,
+            idx: 3,
+            total: totalSteps,
+            meta: {
+              'runId': runId,
+              'tests_count': tests.length,
+              'language': _pendingLanguage,
+            },
+          );
           for (final t in tests) {
             final deps = cu.collectTestDeps(testFile: t, pendingFiles: _pendingFiles);
             final files = (deps['files'] as List).cast<Map<String, String>>();
             final entrypoint = deps['entrypoint']?.toString();
-
-            emit(AgentStage.docker_exec_started, 'Запуск теста: ${t['path']}', prog: 0.92, idx: 3, total: totalSteps, meta: {
-              'runId': runId,
-              'test': t['path'],
-              'entrypoint': entrypoint,
-            });
-            final result = await _inner.execJavaFilesInDocker(
-              files: files,
-              entrypoint: entrypoint,
-              timeoutMs: 20000, // align with UI _runTestWithDeps timeout
-            );
-            runReport.add({'test': t['path'], 'entrypoint': entrypoint, 'result': result});
-            emit(AgentStage.docker_exec_result, 'Результат теста: ${t['path']}', prog: 0.94, idx: 3, total: totalSteps, meta: {
-              'runId': runId,
-              'test': t['path'],
-              'result': result,
-            });
-
-            if (!_isRunSuccessful(result)) {
-              anyFailure = true;
-              emit(AgentStage.analysis_started, 'Анализ падения и попытка исправления теста', prog: 0.95, idx: 3, total: totalSteps, meta: {
+            final result = await _execJavaFilesWithFallback(files: files, entrypoint: entrypoint);
+            emit(
+              AgentStage.docker_exec_result,
+              'Результат запуска теста ${t['path']}',
+              prog: 0.95,
+              idx: 3,
+              total: totalSteps,
+              meta: {
                 'runId': runId,
                 'test': t['path'],
-              });
+                'entrypoint': entrypoint,
+                'result': result,
+              },
+            );
+            runReport.add({'test': t['path'], 'entrypoint': entrypoint, 'result': result});
+            if (!_isRunSuccessful(result)) {
+              anyFailure = true;
+              // Attempt to refine and retry once per failing test
               final refined = await _refineJavaTest(t, result);
               if (refined != null) {
-                emit(AgentStage.refine_tests_started, 'Повторный запуск исправленного теста', prog: 0.96, idx: 3, total: totalSteps, meta: {
-                  'runId': runId,
-                  'test': refined['path'],
-                });
                 final deps2 = cu.collectTestDeps(testFile: refined, pendingFiles: _pendingFiles);
                 final files2 = (deps2['files'] as List).cast<Map<String, String>>();
                 final ep2 = deps2['entrypoint']?.toString();
-                final result2 = await _inner.execJavaFilesInDocker(
-                  files: files2,
-                  entrypoint: ep2,
-                  timeoutMs: 20000, // align with UI _runTestWithDeps timeout
-                );
+                final result2 = await _execJavaFilesWithFallback(files: files2, entrypoint: ep2);
                 runReport.add({'test': refined['path'], 'entrypoint': ep2, 'result': result2, 'refined': true});
-                emit(AgentStage.refine_tests_result, 'Результат исправленного теста: ${refined['path']}', prog: 0.97, idx: 3, total: totalSteps, meta: {
-                  'runId': runId,
-                  'test': refined['path'],
-                  'result': result2,
-                });
+                emit(
+                  AgentStage.docker_exec_result,
+                  'Результат повтора теста ${refined['path']}',
+                  prog: 0.97,
+                  idx: 3,
+                  total: totalSteps,
+                  meta: {
+                    'runId': runId,
+                    'test': refined['path'],
+                    'entrypoint': ep2,
+                    'result': result2,
+                    'refined': true,
+                  },
+                );
+                if (!_isRunSuccessful(result2)) {
+                  anyFailure = true;
+                }
               }
             }
           }
@@ -885,7 +950,7 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
       final deps = cu.collectTestDeps(testFile: t, pendingFiles: _pendingFiles);
       final files = (deps['files'] as List).cast<Map<String, String>>();
       final entrypoint = deps['entrypoint']?.toString();
-      final result = await _inner.execJavaFilesInDocker(files: files, entrypoint: entrypoint);
+      final result = await _execJavaFilesWithFallback(files: files, entrypoint: entrypoint);
       runReport.add({'test': t['path'], 'entrypoint': entrypoint, 'result': result});
       if (!_isRunSuccessful(result)) {
         anyFailure = true;
@@ -895,7 +960,7 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
           final deps2 = cu.collectTestDeps(testFile: refined, pendingFiles: _pendingFiles);
           final files2 = (deps2['files'] as List).cast<Map<String, String>>();
           final ep2 = deps2['entrypoint']?.toString();
-          final result2 = await _inner.execJavaFilesInDocker(files: files2, entrypoint: ep2);
+          final result2 = await _execJavaFilesWithFallback(files: files2, entrypoint: ep2);
           runReport.add({'test': refined['path'], 'entrypoint': ep2, 'result': result2, 'refined': true});
           if (!_isRunSuccessful(result2)) {
             // still failing — keep it in report
@@ -968,6 +1033,173 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
     final t = s?.toString() ?? '';
     if (t.length <= limit) return t;
     return '${t.substring(0, limit)}...';
+  }
+
+  Future<Map<String, dynamic>> _execJavaInDockerLocal({
+    required String code,
+    String? filename,
+    String? entrypoint,
+    String? classpath,
+    List<String>? compileArgs,
+    List<String>? runArgs,
+    String? image,
+    String? containerName,
+    String? extraArgs,
+    String workdir = '/work',
+    int timeoutMs = 15000,
+    int? cpus,
+    String? memory,
+    String cleanup = 'always',
+  }) async {
+    final url = _settings.mcpServerUrl?.trim();
+    if (!_settings.useMcpServer || url == null || url.isEmpty) {
+      throw StateError('MCP сервер не настроен. Включите useMcpServer и задайте mcpServerUrl в настройках.');
+    }
+
+    final client = McpClient();
+    try {
+      await client.connect(url);
+      try {
+        await client.initialize(timeout: const Duration(seconds: 3));
+      } catch (e) {
+        throw StateError('MCP сервер недоступен или не отвечает: $e');
+      }
+
+      final args = buildDockerExecJavaArgs(
+        code: code,
+        filename: filename,
+        entrypoint: entrypoint,
+        classpath: classpath,
+        compileArgs: compileArgs,
+        runArgs: runArgs,
+        image: image,
+        containerName: containerName,
+        extraArgs: extraArgs,
+        workdir: workdir,
+        timeoutMs: timeoutMs,
+        cpus: cpus,
+        memory: memory,
+        cleanup: cleanup,
+      );
+
+      final resp = await client.toolsCall(
+        'docker_exec_java',
+        args,
+        timeout: Duration(milliseconds: timeoutMs + 2000),
+      );
+      if (resp is Map<String, dynamic>) {
+        return (resp['result'] ?? resp) as Map<String, dynamic>;
+      }
+      return {'result': resp};
+    } finally {
+      await client.close();
+    }
+  }
+
+  Future<Map<String, dynamic>> _execJavaFilesInDockerLocal({
+    required List<Map<String, String>> files,
+    String? entrypoint,
+    String? classpath,
+    List<String>? compileArgs,
+    List<String>? runArgs,
+    String? image,
+    String? containerName,
+    String? extraArgs,
+    String workdir = '/work',
+    int timeoutMs = 15000,
+    int? cpus,
+    String? memory,
+    String cleanup = 'always',
+  }) async {
+    final url = _settings.mcpServerUrl?.trim();
+    if (!_settings.useMcpServer || url == null || url.isEmpty) {
+      throw StateError('MCP сервер не настроен. Включите useMcpServer и задайте mcpServerUrl в настройках.');
+    }
+
+    // Normalize files to {path, content}
+    final normalized = files
+        .map((f) => {
+              'path': (f['path'] ?? f['filename'] ?? '').toString(),
+              'content': (f['content'] ?? '').toString(),
+            })
+        .toList();
+
+    final client = McpClient();
+    try {
+      await client.connect(url);
+      try {
+        await client.initialize(timeout: const Duration(seconds: 3));
+      } catch (e) {
+        throw StateError('MCP сервер недоступен или не отвечает: $e');
+      }
+
+      final args = <String, dynamic>{
+        'files': normalized,
+        if (entrypoint != null && entrypoint.isNotEmpty) 'entrypoint': entrypoint,
+        if (classpath != null && classpath.isNotEmpty) 'classpath': classpath,
+        if (compileArgs != null) 'compile_args': compileArgs,
+        if (runArgs != null) 'run_args': runArgs,
+        if (image != null && image.isNotEmpty) 'image': image,
+        if (containerName != null && containerName.isNotEmpty) 'container_name': containerName,
+        if (extraArgs != null && extraArgs.isNotEmpty) 'extra_args': extraArgs,
+        if (workdir.isNotEmpty) 'workdir': workdir,
+        'timeout_ms': timeoutMs,
+        'cleanup': cleanup,
+        if (cpus != null || (memory != null && memory.isNotEmpty))
+          'limits': {
+            if (cpus != null) 'cpus': cpus,
+            if (memory != null && memory.isNotEmpty) 'memory': memory,
+          },
+      };
+
+      final resp = await client.toolsCall(
+        'docker_exec_java',
+        args,
+        timeout: Duration(milliseconds: timeoutMs + 2000),
+      );
+      if (resp is Map<String, dynamic>) {
+        return (resp['result'] ?? resp) as Map<String, dynamic>;
+      }
+      return {'result': resp};
+    } finally {
+      await client.close();
+    }
+  }
+
+  Future<Map<String, dynamic>> _startLocalJavaDockerLocal({
+    String? containerName,
+    String? image,
+    int? port,
+    String? extraArgs,
+  }) async {
+    final url = _settings.mcpServerUrl?.trim();
+    if (!_settings.useMcpServer || url == null || url.isEmpty) {
+      throw StateError('MCP сервер не настроен. Включите useMcpServer и задайте mcpServerUrl в настройках.');
+    }
+
+    final client = McpClient();
+    try {
+      await client.connect(url);
+      try {
+        await client.initialize(timeout: const Duration(seconds: 3));
+      } catch (e) {
+        throw StateError('MCP сервер недоступен или не отвечает: $e');
+      }
+
+      final args = <String, dynamic>{
+        if (containerName != null && containerName.isNotEmpty) 'container_name': containerName,
+        if (image != null && image.isNotEmpty) 'image': image,
+        if (port != null) 'port': port,
+        if (extraArgs != null && extraArgs.isNotEmpty) 'extra_args': extraArgs,
+      };
+      final resp = await client.toolsCall('docker_start_java', args, timeout: const Duration(seconds: 20));
+      if (resp is Map<String, dynamic>) {
+        return (resp['result'] ?? resp) as Map<String, dynamic>;
+      }
+      return {'result': resp};
+    } finally {
+      await client.close();
+    }
   }
 
   Future<List<Map<String, String>>> _generateJavaTests(List<Map<String, String>> files) async {

@@ -71,6 +71,10 @@
     - [ ] Многофайловый предпросмотр и подтверждение запуска
     - [ ] Уточнение языка (Java only); запрет запуска для иных языков
     - [ ] Фоллбек на одиночный файл для legacy‑ответов
+  - [x] Индикатор статуса MCP в AppBar (CodeOpsScreen)
+    - [x] Постоянная видимость, статусы: MCP off/ready/active; тултип с URL/сообщением
+    - [x] Виджет‑тесты состояний MCP off/ready
+    - [ ] Тест состояния MCP active и таймера сброса активности
   - [ ] Надёжность/ошибки (CodeOps)
     - [ ] Обработка ошибок Docker/сети с дружелюбными сообщениями
     - [ ] Предварительная проверка доступности MCP/Docker перед запуском
@@ -102,6 +106,9 @@
     - [x] Двухфазные подтверждения: двойное `ask_create_tests` с `meta.action = 'create_tests'` и `meta.action = 'run_tests'`; подтверждения отправляются через повторный потоковый вызов `start()`
     - [x] Метаданные тестов в стриме: события `test_generated` содержат `meta.language` и список `meta.tests` для визуализации в UI
     - [x] Нормализация ключей результатов тестов (MCP camelCase ↔ агент snake_case): поддержка `exit_code`/`exitCode`, `stdout`/`stderr`; добавлены юнит‑тесты на camelCase (успех/провал)
+    - [x] События Docker‑старта/результата: `docker_exec_started` и `docker_exec_result`; по одному результату на тест, повтор после рефайна помечается `refined: true`; все события содержат `runId`
+    - [x] Fallback выполнения Docker: при выключенном MCP или пустом `mcpServerUrl` делегирование во внутренний `CodeOpsAgent`; при включённом MCP используется локальный MCP‑клиент; единая точка `_execJavaFilesWithFallback(...)`
+    - [x] Обновление документации: актуализированы `docs/code_ops_builder_agent.md`, `sample_app/README.md`, `README.md` (события Docker и fallback)
 
   ### Вопросы для уточнения (CodeOps)
   - Начать с UI‑тестов `CodeOpsScreen` и небольшого рефакторинга (DI) для мокирования `CodeOpsAgent`?

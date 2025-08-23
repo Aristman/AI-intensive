@@ -26,12 +26,14 @@ This repository contains multiple projects that showcase and integrate AI-assist
 - `sample_app/`
   - Flutter приложение (CodeOpsAgent + чат‑интерфейс), интегрированное с MCP.
   - Умеет запускать Java‑код внутри Docker через MCP (`docker_exec_java`).
-  - Автоопределяет `entrypoint` (FQCN) и корректный путь `filename` по `package` из исходника.
+  - Автоопределяет `entrypoint` (FQCN) и корректный путь `filename` по `package`.
+  - В `CodeOpsScreen` в AppBar есть индикатор статуса MCP: `MCP off`/`MCP ready`/`MCP active`; тултип показывает URL MCP или сообщение о fallback.
   - Подробности в `sample_app/README.md`.
   
   Flutter app (CodeOpsAgent + chat UI) integrated with MCP:
   - Runs Java code in Docker via MCP (`docker_exec_java`).
   - Automatically infers Java `entrypoint` (FQCN) and `filename` path from source `package`.
+  - AppBar in `CodeOpsScreen` contains an MCP status chip: `MCP off`/`MCP ready`/`MCP active`; tooltip shows MCP URL or fallback note.
   - See `sample_app/README.md` for details.
 
 - `issue-monitor/`
@@ -97,10 +99,13 @@ This repository contains multiple projects that showcase and integrate AI-assist
     - Двухфазные подтверждения: событие `ask_create_tests` эмитится дважды с `meta.action = 'create_tests'` и `meta.action = 'run_tests'`; подтверждения отправляются через повторный потоковый вызов `start()`.
     - События `test_generated` содержат `meta.language` и список `meta.tests` вида `{ path, content }` для UI.
     - Нормализация ключей результатов тестов: агент принимает как `exit_code`, так и `exitCode` (а также `stdout`/`stderr`) из MCP и корректно определяет статус прогона.
+    - Новые события запуска тестов: `docker_exec_started` (пакетный старт) и `docker_exec_result` (по одному на тест, включая повтор после рефайна). Во всех событиях присутствует `runId` для корреляции.
+    - Fallback‑поведение: если MCP выключен или `mcpServerUrl` не задан, `CodeOpsBuilderAgent` делегирует запуск Java во внутренний `CodeOpsAgent` (для тестов/моков). При включённом MCP используется локальный MCP‑клиент.
   - Планируется кнопка отмены пайплайна в UI и поддержка отмены в агенте (см. `ROADMAP.md`).
   - Оркестратор хранит и управляет контекстом беседы и состоянием пайплайна (runId, intent, language, entrypoint, files, статус).
   - Тестовые файлы исключаются из основного результата генерации кода; тесты создаются и запускаются отдельно.
-  - Все события стриминга содержат `runId` для корреляции с конкретным запуском пайплайна.
+  - Все события стриминга содержат `runId` для корреляции с конкретным запуском.
+ пайплайна.
 
 ---
 
