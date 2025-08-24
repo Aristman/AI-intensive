@@ -80,7 +80,7 @@ fun Application.registerJobRoutes() {
             // TODO: EXIF нормализация (timestamp, geo) — опционально, на этапе S1 можно пропустить
 
             val jobId = UUID.randomUUID().toString()
-            InMemoryStore.createJob(jobId)
+            InMemoryStore.createJob(jobId, prompt = prompt ?: "", lat = lat, lon = lon, deviceId = deviceId)
             InMemoryStore.enqueueJob(jobId)
             call.respond(HttpStatusCode.OK, CreateJobResponse(jobId = jobId))
         }

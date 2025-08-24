@@ -15,6 +15,7 @@ import ru.marslab.snaptrace.ai.routes.registerFeedRoutes
 import ru.marslab.snaptrace.ai.routes.registerHealthRoutes
 import ru.marslab.snaptrace.ai.routes.registerJobRoutes
 import ru.marslab.snaptrace.ai.util.respondError
+import ru.marslab.snaptrace.ai.clients.ClientsFactory
 
 fun main() {
     embeddedServer(Netty, port = 8080, host = "0.0.0.0") {
@@ -41,6 +42,9 @@ fun Application.serverModule() {
 
     // In-memory storage for MVP skeleton
     InMemoryStore.init()
+    // Configure processors using application.conf (falls back to env inside)
+    val clients = ClientsFactory.fromConfig(environment.config)
+    InMemoryStore.configureProcessors(clients.art, clients.gpt)
     // Start background worker for job processing
     InMemoryStore.startWorker(CoroutineScope(Dispatchers.Default), processingDelayMs = 10L)
     registerHealthRoutes()

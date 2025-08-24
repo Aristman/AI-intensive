@@ -35,10 +35,12 @@ snapTrace {
 }
 ```
 
-## Переменные окружения (план)
-- Yandex:
-  - YANDEX_IAM_TOKEN — IAM токен
-  - YANDEX_FOLDER_ID — каталог
+## Переменные окружения
+- Переключение клиентов Yandex Art/GPT:
+  - SNAPTRACE_USE_REAL: включить реальные клиенты (`true`/`1`/`yes`). По умолчанию — выключено (стабы).
+  - YANDEX_IAM_TOKEN: IAM токен (обязателен при SNAPTRACE_USE_REAL=true)
+  - YANDEX_FOLDER_ID: идентификатор каталога (обязателен при SNAPTRACE_USE_REAL=true)
+  - Если любые из обязательных отсутствуют, автоматически используются стабы.
 - S3 (Yandex Object Storage):
   - YC_S3_ENDPOINT, YC_S3_ACCESS_KEY, YC_S3_SECRET_KEY, YC_S3_BUCKET
 - MCP:
@@ -128,6 +130,30 @@ snap_trace_ai/server/
 - Поддерживаемые типы: `image/jpeg`, `image/png` (иначе 415 Unsupported Media Type)
 - Ограничение размера: `snapTrace.upload.maxBytes` (иначе 400 file_too_large)
 - Обязательные поля: `file`, `prompt` (иначе 400)
+
+### Интеграции — Yandex Art/GPT
+- Пайплайн воркера (`InMemoryStore.startWorker`):
+  1) Art генерирует изображение по `prompt` (асинхронная операция с polling);
+  2) GPT генерирует подпись по URL и `prompt`;
+  3) Создаётся `FeedItem`, задача переходит в `published`.
+- Ошибки на любом шаге приводят к статусу `failed` (покрыто тестами).
+- Клиенты:
+  - Реальные HTTP‑клиенты: `ru.marslab.snaptrace.ai.clients.RealArtClient`, `ru.marslab.snaptrace.ai.clients.RealGptClient` (Ktor 3, JSON, IAM Bearer + `x-folder-id`).
+  - Заглушки: `ArtClientStub`, `GptClientStub`.
+- Выбор клиентов осуществляется через `ClientsFactory.fromEnv()`/`fromConfig()` в `Application.serverModule()`:
+  - `SNAPTRACE_USE_REAL=true|1|yes` — включает реальные клиенты при наличии `YANDEX_IAM_TOKEN` и `YANDEX_FOLDER_ID`.
+  - Иначе автоматически используются стабы.
+- Конфигурация (application.conf):
+  - `snapTrace.yc.gpt.*`: `endpoint`, `model`, `temperature`, `maxTokens`, `systemText`;
+  - `snapTrace.yc.art.*`: `endpoint`, `poll.operationsEndpoint`, `model`, `seed`, `aspect.widthRatio`, `aspect.heightRatio`, `poll.intervalMs`, `poll.timeoutMs`;
+  - `snapTrace.httpClient.timeoutMs` — общий таймаут HTTP‑клиента.
+- Поведение:
+  - Yandex Art — старт асинхронной генерации, далее polling операций до `done` или истечения `pollTimeoutMs`; при успехе возвращается `data:image/jpeg;base64,...` URL.
+  - YandexGPT — системный текст включён в первое `user`‑сообщение, ответ берётся из первой `alternative.message.text`.
+- Тестируемость:
+  - В `RealArtClient`/`RealGptClient` поддержана инъекция внешнего `HttpClient`.
+  - Юнит‑тесты используют `Ktor MockEngine`: позитивные и негативные сценарии (пустые альтернативы/текст у GPT; timeout/`done` без изображения у Art).
+  - См. тесты: `src/test/kotlin/ru/marslab/snaptrace/ai/RealGptClientTest.kt`, `src/test/kotlin/ru/marslab/snaptrace/ai/RealArtClientTest.kt`.
 
 ## Тестирование
 ```bash

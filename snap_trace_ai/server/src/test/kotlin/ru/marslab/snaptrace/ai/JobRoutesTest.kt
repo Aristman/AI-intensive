@@ -8,6 +8,11 @@ import io.ktor.http.content.*
 import io.ktor.server.config.*
 import io.ktor.server.testing.*
 import kotlinx.coroutines.delay
+import ru.marslab.snaptrace.ai.clients.ArtClient
+import ru.marslab.snaptrace.ai.clients.ArtResult
+import ru.marslab.snaptrace.ai.clients.GptClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -155,5 +160,56 @@ class JobRoutesTest {
         }
         println("job_status_transitions_to_published: status=$status after $attempts attempts")
         assertEquals("published", status)
+    }
+
+    @Test
+    fun job_fails_when_art_client_throws() = testApplication {
+        application { serverModule() }
+        // Reconfigure processors: failing Art, simple GPT
+        InMemoryStore.configureProcessors(
+            art = object : ArtClient {
+                override suspend fun generate(prompt: String): ArtResult {
+                    throw RuntimeException("art down")
+                }
+            },
+            gpt = object : GptClient {
+                override suspend fun caption(imageUrl: String, prompt: String): String = "n/a"
+            }
+        )
+        // Restart worker to eliminate race with pre-started stub processors
+        InMemoryStore.stopWorker()
+        InMemoryStore.startWorker(CoroutineScope(Dispatchers.Default), processingDelayMs = 5L)
+
+        val mp = MultiPartFormDataContent(
+            formData {
+                append("prompt", "should fail")
+                append("file", ByteArray(64), Headers.build {
+                    append(HttpHeaders.ContentType, ContentType.Image.JPEG.toString())
+                    append(HttpHeaders.ContentDisposition, "filename=\"bad.jpg\"")
+                })
+            }
+        )
+        val createResp = client.post("/v1/jobs") {
+            header(HttpHeaders.ContentType, mp.contentType.toString())
+            setBody(mp)
+        }
+        assertEquals(HttpStatusCode.OK, createResp.status)
+        val body = createResp.bodyAsText()
+        val jobId = Regex(""""jobId":"([a-f0-9\-]+)"""").find(body)?.groupValues?.get(1)
+        assertTrue(jobId != null)
+
+        var status: String? = null
+        var attempts = 0
+        while (attempts < 50) {
+            val sResp = client.get("/v1/jobs/$jobId")
+            assertEquals(HttpStatusCode.OK, sResp.status)
+            val sBody = sResp.bodyAsText()
+            status = Regex(""""status":"(\w+)"""").find(sBody)?.groupValues?.get(1)
+            if (status == "failed") break
+            delay(20)
+            attempts++
+        }
+        println("job_fails_when_art_client_throws: status=$status after $attempts attempts")
+        assertEquals("failed", status)
     }
 }
