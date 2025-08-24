@@ -1,0 +1,152 @@
+{
+  "notes": "Примеры JSON-RPC 2.0 сообщений для MCP сервера Snap Trace AI",
+  "initialize": {
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "apiKey": "<MCP_API_KEY>",
+        "client": {
+          "name": "snap-trace-ai-server",
+          "version": "0.1.0"
+        }
+      }
+    },
+    "response_example": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "serverVersion": "0.1.0",
+        "tools": [
+          { "name": "tg_send_message" },
+          { "name": "tg_send_photo" },
+          { "name": "s3_put" },
+          { "name": "s3_get" }
+        ]
+      }
+    }
+  },
+  "tools_list": {
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "tools/list",
+      "params": {}
+    },
+    "response_example": {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "result": [
+        {
+          "name": "tg_send_message",
+          "paramsSchema": {
+            "type": "object",
+            "properties": {
+              "chat_id": { "type": "string" },
+              "text": { "type": "string" },
+              "parse_mode": { "type": "string" }
+            },
+            "required": ["chat_id", "text"]
+          }
+        },
+        {
+          "name": "tg_send_photo",
+          "paramsSchema": {
+            "type": "object",
+            "properties": {
+              "chat_id": { "type": "string" },
+              "photo": { "type": "string", "description": "URL или data:base64" },
+              "caption": { "type": "string" },
+              "parse_mode": { "type": "string" }
+            },
+            "required": ["chat_id", "photo"]
+          }
+        },
+        {
+          "name": "s3_put",
+          "paramsSchema": {
+            "type": "object",
+            "properties": {
+              "bucket": { "type": "string" },
+              "key": { "type": "string" },
+              "content_base64": { "type": "string" },
+              "content_type": { "type": "string" },
+              "acl": { "type": "string" }
+            },
+            "required": ["key", "content_base64", "content_type"]
+          }
+        }
+      ]
+    }
+  },
+  "tools_call": {
+    "tg_send_photo": {
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+          "name": "tg_send_photo",
+          "params": {
+            "chat_id": "<TELEGRAM_CHAT_ID>",
+            "photo": "https://storage.yandexcloud.net/<bucket>/media/2025/08/24/example.jpg",
+            "caption": "Пример публикации из Snap Trace AI",
+            "parse_mode": "HTML"
+          },
+          "clientRequestId": "abc-123"
+        }
+      },
+      "response_example": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "message_id": 12345,
+          "date": 1692800000,
+          "photo": [
+            { "file_id": "AgACAgIAAxkBA...", "width": 640, "height": 360 }
+          ]
+        }
+      }
+    },
+    "s3_put": {
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "tools/call",
+        "params": {
+          "name": "s3_put",
+          "params": {
+            "bucket": "<YC_S3_BUCKET>",
+            "key": "media/2025/08/24/example.jpg",
+            "content_base64": "<BASE64_CONTENT>",
+            "content_type": "image/jpeg",
+            "acl": "public-read"
+          }
+        }
+      },
+      "response_example": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "url": "https://storage.yandexcloud.net/<YC_S3_BUCKET>/media/2025/08/24/example.jpg",
+          "etag": "\"b1946ac92492d2347c6235b4d2611184\""
+        }
+      }
+    }
+  },
+  "error_example": {
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "error": {
+        "code": -32000,
+        "message": "Validation failed",
+        "data": {
+          "field": "key",
+          "reason": "must not be empty"
+        }
+      }
+    }
+  }
+}

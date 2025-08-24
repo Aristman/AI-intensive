@@ -1,0 +1,201 @@
+openapi: 3.0.3
+info:
+  title: Snap Trace AI Server API
+  version: 0.1.0
+  description: |
+    Оркестратор на Kotlin. Принимает фото+промпт, запускает обработку (Yandex Art + YandexGPT),
+    публикует через MCP (Telegram, S3), отдает ленту результатов.
+servers:
+  - url: https://api.snap-trace.ai
+    description: Production
+  - url: https://stage.snap-trace.ai
+    description: Stage
+  - url: http://localhost:8080
+    description: Local dev
+paths:
+  /v1/jobs:
+    post:
+      summary: Создать задачу обработки (фото+промпт)
+      operationId: createJob
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Изображение (jpeg/png), максимум 15 МБ
+                prompt:
+                  type: string
+                  description: Текстовый промпт к изображению
+                lat:
+                  type: number
+                  format: float
+                  nullable: true
+                lon:
+                  type: number
+                  format: float
+                  nullable: true
+                deviceId:
+                  type: string
+                  nullable: true
+              required:
+                - file
+                - prompt
+      responses:
+        '200':
+          description: Задача поставлена в очередь
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateJobResponse'
+        '400':
+          description: Неверные параметры или формат файла
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/jobs/{jobId}:
+    get:
+      summary: Получить статус задачи обработки
+      operationId: getJob
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Текущий статус задачи
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatusResponse'
+        '404':
+          description: Задача не найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/feed:
+    get:
+      summary: Получить ленту результатов
+      operationId: getFeed
+      parameters:
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+      responses:
+        '200':
+          description: Лента карточек
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedResponse'
+  /health:
+    get:
+      summary: Healthcheck
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+components:
+  schemas:
+    CreateJobResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+          example: "f3b1e0a9-7e3d-4f62-8f8b-1a2b3c4d5e6f"
+        status:
+          type: string
+          enum: [queued]
+          example: queued
+    JobStatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [queued, processing, published, failed]
+          example: processing
+        error:
+          type: string
+          nullable: true
+        result:
+          $ref: '#/components/schemas/FeedItem'
+    FeedResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedItem'
+        nextCursor:
+          type: string
+          nullable: true
+    FeedItem:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "a1b2c3d4"
+        imageUrl:
+          type: string
+          format: uri
+          example: "https://storage.yandexcloud.net/my-bucket/media/2025/08/24/uuid.jpg"
+        text:
+          type: string
+          example: "Закат над морем, тёплые тона и мягкие волны"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2025-08-24T08:15:30Z"
+        location:
+          $ref: '#/components/schemas/GeoLocation'
+    GeoLocation:
+      type: object
+      properties:
+        lat:
+          type: number
+          format: float
+          example: 59.9386
+        lon:
+          type: number
+          format: float
+          example: 30.3141
+        placeName:
+          type: string
+          nullable: true
+          example: "Saint Petersburg, RU"
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: string
+          example: "bad_request"
+        message:
+          type: string
+          example: "Unsupported media type"
+security:
+  - {}

@@ -62,11 +62,10 @@ class YandexGptUseCase implements LlmUseCase {
     final headers = <String, String>{
       'Content-Type': 'application/json',
       if (_iamToken.isNotEmpty) ...{
-        'Authorization': 'Bearer $_iamToken',
+        'Authorization': 'Bearer $_iamToken'
       } else ...{
         // Временный fallback на Api-Key (менее предпочтительно)
-        'Authorization': 'Api-Key $_apiKey',
-        'x-folder-id': _folderId,
+        'Authorization': 'Api-Key $_apiKey'
       }
     };
 
