@@ -113,6 +113,83 @@ void main() {
       expect(find.textContaining('Репозиторий: aristman/AI-intensive'), findsOneWidget);
     });
 
+    testWidgets('shows detailed info for get_repo', (tester) async {
+      // Arrange
+      const settings = AppSettings(
+        useMcpServer: true,
+        mcpServerUrl: 'ws://fake',
+        enabledMCPProviders: {MCPProvider.github},
+      );
+
+      final fakeClient = FakeMcpClient(
+        tools: {'get_repo'},
+        handlers: {
+          'get_repo': (args) => {
+                'full_name': '${args['owner']}/${args['repo']}',
+                'description': 'Test repository full details',
+                'html_url': 'https://github.com/${args['owner']}/${args['repo']}',
+                'owner': {'login': args['owner']},
+                'default_branch': 'main',
+                'language': 'Dart',
+                'license': {'name': 'MIT'},
+                'private': false,
+                'archived': false,
+                'visibility': 'public',
+                'stargazers_count': 123,
+                'forks_count': 45,
+                'watchers_count': 67,
+                'open_issues_count': 8,
+                'size': 9999,
+                'topics': ['flutter', 'ai'],
+                'homepage': 'https://ai-intensive.example.com',
+                'created_at': '2020-01-01T00:00:00Z',
+                'updated_at': '2025-08-24T22:00:00Z',
+                'pushed_at': '2025-08-24T22:30:00Z',
+              },
+        },
+      );
+
+      final widget = MaterialApp(
+        home: Scaffold(
+          body: GitHubAgentScreen(
+            initialSettings: settings,
+            agentFactory: (s, _) => FakeAgent(s, '{"tool":"get_repo","args":{"owner":"aristman","repo":"AI-intensive"}}'),
+            mcpClientFactory: () => fakeClient,
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(widget);
+      await tester.pumpAndSettle();
+
+      // Act
+      await tester.enterText(find.byKey(const Key('github_query_field')), 'repo info full');
+      await tester.tap(find.byKey(const Key('github_send_btn')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
+
+      // Assert: проверяем ключевые поля
+      expect(find.textContaining('Репозиторий: aristman/AI-intensive'), findsOneWidget);
+      expect(find.textContaining('URL: https://github.com/aristman/AI-intensive'), findsOneWidget);
+      expect(find.textContaining('Владелец: aristman'), findsOneWidget);
+      expect(find.textContaining('Ветвь по умолчанию: main'), findsOneWidget);
+      expect(find.textContaining('Язык: Dart'), findsOneWidget);
+      expect(find.textContaining('Лицензия: MIT'), findsOneWidget);
+      expect(find.textContaining('Приватный: нет'), findsOneWidget);
+      expect(find.textContaining('Видимость: public'), findsOneWidget);
+      expect(find.textContaining('Звезды: 123'), findsOneWidget);
+      expect(find.textContaining('Форки: 45'), findsOneWidget);
+      expect(find.textContaining('Вочеры: 67'), findsOneWidget);
+      expect(find.textContaining('Открытых issues: 8'), findsOneWidget);
+      expect(find.textContaining('Размер: 9999'), findsOneWidget);
+      expect(find.textContaining('Топики: flutter, ai'), findsOneWidget);
+      expect(find.textContaining('Домашняя страница: https://ai-intensive.example.com'), findsOneWidget);
+      expect(find.textContaining('Создан: 2020-01-01T00:00:00Z'), findsOneWidget);
+      expect(find.textContaining('Обновлён: 2025-08-24T22:00:00Z'), findsOneWidget);
+      expect(find.textContaining('Последний push: 2025-08-24T22:30:00Z'), findsOneWidget);
+    });
+
     testWidgets('does not use deprecated short summary for create_release', (tester) async {
       // Arrange
       const settings = AppSettings(

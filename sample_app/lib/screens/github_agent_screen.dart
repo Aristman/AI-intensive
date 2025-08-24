@@ -495,9 +495,55 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
   String _summarizeToolResult(String tool, dynamic result) {
     try {
       if (tool == 'get_repo' && result is Map<String, dynamic>) {
-        final full = result['full_name'] ?? '';
-        final desc = result['description'] ?? '';
-        return 'Репозиторий: $full\n${desc.toString()}';
+        String s(Object? v) => v == null ? '' : v.toString();
+        String yn(bool? b) => b == null ? '' : (b ? 'да' : 'нет');
+
+        final full = s((result['full_name'] ?? result['name']) ?? '');
+        final desc = s(result['description']);
+        final url = s(result['html_url'] ?? result['url']);
+        final owner = (result['owner'] is Map) ? s(result['owner']['login']) : '';
+        final defaultBranch = s(result['default_branch']);
+        final language = s(result['language']);
+        final license = (result['license'] is Map) ? s(result['license']['name']) : s(result['license']);
+        final isPrivate = result['private'] == true;
+        final archived = result['archived'] == true;
+        final visibility = s(result['visibility']);
+        final stars = s(result['stargazers_count']);
+        final forks = s(result['forks_count']);
+        final watchers = s(result['watchers_count']);
+        final openIssues = s(result['open_issues_count'] ?? result['open_issues']);
+        final size = s(result['size']);
+        final topics = (result['topics'] is List)
+            ? (result['topics'] as List).whereType<Object>().map((e) => e.toString()).join(', ')
+            : '';
+        final homepage = s(result['homepage']);
+        final createdAt = s(result['created_at']);
+        final updatedAt = s(result['updated_at']);
+        final pushedAt = s(result['pushed_at']);
+
+        final lines = <String>[
+          'Репозиторий: $full',
+          if (desc.isNotEmpty) 'Описание: $desc',
+          if (url.isNotEmpty) 'URL: $url',
+          if (owner.isNotEmpty) 'Владелец: $owner',
+          if (defaultBranch.isNotEmpty) 'Ветвь по умолчанию: $defaultBranch',
+          if (language.isNotEmpty) 'Язык: $language',
+          if (license.isNotEmpty) 'Лицензия: $license',
+          'Приватный: ${yn(isPrivate)}',
+          if (visibility.isNotEmpty) 'Видимость: $visibility',
+          if (archived) 'Архивирован: да',
+          if (stars.isNotEmpty) 'Звезды: $stars',
+          if (forks.isNotEmpty) 'Форки: $forks',
+          if (watchers.isNotEmpty) 'Вочеры: $watchers',
+          if (openIssues.isNotEmpty) 'Открытых issues: $openIssues',
+          if (size.isNotEmpty) 'Размер: $size',
+          if (topics.isNotEmpty) 'Топики: $topics',
+          if (homepage.isNotEmpty) 'Домашняя страница: $homepage',
+          if (createdAt.isNotEmpty) 'Создан: $createdAt',
+          if (updatedAt.isNotEmpty) 'Обновлён: $updatedAt',
+          if (pushedAt.isNotEmpty) 'Последний push: $pushedAt',
+        ];
+        return lines.join('\n');
       }
       if (tool == 'list_issues') {
         final list = (result is List)
