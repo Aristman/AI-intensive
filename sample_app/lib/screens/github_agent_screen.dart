@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:developer' as dev;
 import 'package:flutter/material.dart';
 import 'package:sample_app/agents/reasoning_agent.dart';
 import 'package:sample_app/models/app_settings.dart';
@@ -7,6 +9,9 @@ import 'package:sample_app/screens/settings_screen.dart';
 import 'package:sample_app/services/settings_service.dart';
 import 'package:sample_app/services/conversation_storage_service.dart';
 import 'package:sample_app/widgets/safe_send_text_field.dart';
+import 'package:sample_app/utils/json_utils.dart';
+import 'package:sample_app/services/mcp_client.dart';
+import 'package:sample_app/services/github_mcp_service.dart';
 
 /// Строит дополнительный системный промпт для GitHub‑агента (вариант A — через ReasoningAgent).
 /// Промпт динамически включает owner/repo и перечисляет инструменты MCP GitHub
@@ -36,13 +41,28 @@ String buildGithubAgentExtraPrompt({
       '- Если owner/repo не указаны пользователем, используй заданный выше контекст (если он есть), иначе попроси уточнить.\n'
       '- Не раскрывай технические детали реализации MCP и токены. Отвечай кратко по делу.';
 
+  final protocol =
+      'Протокол вызова инструментов (ОБЯЗАТЕЛЬНО):\n'
+      '- Когда принимаешь решение ВЫПОЛНИТЬ инструмент, выведи ОДНУ строку со СТРОГО валидным JSON вида:\n'
+      '  {"tool":"<имя_инструмента>", "args": { ...обязательные_и_опциональные_аргументы... }}\n'
+      '- Не добавляй никаких пояснений вокруг JSON, не пиши фразы вроде "Использую инструмент".\n'
+      '- Если данных недостаточно — не выводи JSON и задай уточняющие вопросы.\n'
+      '- Примеры:\n'
+      '  {"tool":"create_issue","args":{"owner":"$owner","repo":"$repo","title":"Bug: ....","body":"..."}}\n'
+      '  {"tool":"get_repo","args":{"owner":"$owner","repo":"$repo"}}\n'
+      'После исполнения результата агент отобразит итог в интерфейсе.';
+
   return 'Ты — GitHub‑агент. Помогаешь работать с GitHub через инструменты MCP.'
-      '$repoLine\n\n$toolsBlock\n\n$policy';
+      '$repoLine\n\n$toolsBlock\n\n$policy\n\n$protocol';
 }
 
 class GitHubAgentScreen extends StatefulWidget {
   final AppSettings? initialSettings; // для тестов/инъекции
-  const GitHubAgentScreen({super.key, this.initialSettings});
+  // Фабрика для инъекции кастомного ReasoningAgent в тестах
+  final ReasoningAgent Function(AppSettings settings, String extraPrompt)? agentFactory;
+  // Фабрика для инъекции MCP клиента (для тестов)
+  final McpClient Function()? mcpClientFactory;
+  const GitHubAgentScreen({super.key, this.initialSettings, this.agentFactory, this.mcpClientFactory});
 
   @override
   State<GitHubAgentScreen> createState() => _GitHubAgentScreenState();
@@ -64,6 +84,9 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
   bool _sending = false;
   Timer? _mcpIndicatorTimer;
   bool _mcpUsed = false;
+  // Кэш доступных MCP-инструментов для текущего URL
+  Set<String>? _mcpToolNames;
+  String? _mcpToolsForUrl;
 
   @override
   void initState() {
@@ -102,7 +125,11 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
       owner: _ownerCtrl.text.trim(),
       repo: _repoCtrl.text.trim(),
     );
-    _agent = ReasoningAgent(baseSettings: _settings, extraSystemPrompt: extra);
+    if (widget.agentFactory != null) {
+      _agent = widget.agentFactory!(_settings!, extra);
+    } else {
+      _agent = ReasoningAgent(baseSettings: _settings, extraSystemPrompt: extra);
+    }
     _messages.clear();
 
     // Загружаем сохранённую историю для текущего репозитория и импортируем в агента
@@ -139,6 +166,33 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
     return _mcpReady && _ownerCtrl.text.trim().isNotEmpty && _repoCtrl.text.trim().isNotEmpty && !_sending;
   }
 
+  Future<Set<String>> _getMcpTools() async {
+    final url = _settings?.mcpServerUrl?.trim();
+    if (url == null || url.isEmpty) return <String>{};
+    if (_mcpToolNames != null && _mcpToolsForUrl == url) return _mcpToolNames!;
+    final client = (widget.mcpClientFactory ?? () => McpClient())();
+    try {
+      await client.connect(url);
+      await client.initialize(timeout: const Duration(seconds: 5));
+      final tl = await client.toolsList(timeout: const Duration(seconds: 5));
+      final tools = <String>{};
+      final arr = (tl['tools'] as List?) ?? const [];
+      for (final t in arr) {
+        final name = (t is Map && t['name'] is String) ? t['name'] as String : null;
+        if (name != null && name.trim().isNotEmpty) tools.add(name.trim());
+      }
+      _mcpToolNames = tools;
+      _mcpToolsForUrl = url;
+      dev.log('MCP tools/list cached: ${tools.join(', ')}', name: 'GitHubAgent');
+      return tools;
+    } catch (e, st) {
+      dev.log('Failed to fetch tools/list: $e', name: 'GitHubAgent', error: e, stackTrace: st);
+      return _mcpToolNames ?? <String>{};
+    } finally {
+      await client.close();
+    }
+  }
+
   Future<void> _openSettings() async {
     if (_settings == null) return;
     final ns = await Navigator.push<AppSettings>(
@@ -162,6 +216,8 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
     final q = text.trim();
     if (q.isEmpty || !_canSendQuery || _agent == null) return;
 
+    dev.log('Send request: "$q" for ${_ownerCtrl.text.trim()}/${_repoCtrl.text.trim()}', name: 'GitHubAgent');
+
     setState(() {
       _messages.add(Message(text: q, isUser: true));
       _queryCtrl.clear();
@@ -175,6 +231,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
       // Не переинициализируем агента здесь, чтобы не очищать текущий UI-список сообщений
       final res = await _agent!.ask(q);
       final rr = res['result'] as ReasoningResult;
+      dev.log('Assistant response (isFinal=${rr.isFinal}, mcp_used=${res['mcp_used'] ?? false}): ${rr.text}', name: 'GitHubAgent');
 
       setState(() {
         _messages.add(Message(text: rr.text, isUser: false, isFinal: rr.isFinal));
@@ -194,15 +251,294 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
       // Сохраняем историю диалога после ответа
       final key = _convKey;
       if (key != null) {
+        dev.log('Persist conversation history for key=$key (len=${_agent!.exportHistory().length})', name: 'GitHubAgent');
         await _convStore.save(key, _agent!.exportHistory());
       }
-    } catch (e) {
+
+      // Попробуем распознать и выполнить инструмент из ответа ассистента (например, create_issue)
+      // Запускаем асинхронно, чтобы не блокировать основной поток UI
+      // Ошибки и статусы выводим дополнительными сообщениями в чат
+      dev.log('Start tool detection/execution for assistant text…', name: 'GitHubAgent');
+      unawaited(_maybeExecuteTool(rr.text));
+    } catch (e, st) {
+      dev.log('Ask error: $e', name: 'GitHubAgent', error: e, stackTrace: st);
       setState(() {
         _messages.add(Message(text: 'Ошибка: $e', isUser: false));
-        _sending = false;
-        _mcpUsed = false;
       });
       _scrollToBottom();
+    }
+  }
+
+  Future<void> _maybeExecuteTool(String assistantText) async {
+    try {
+      dev.log('Tool detection on assistantText (first 500 chars): ${assistantText.substring(0, assistantText.length > 500 ? 500 : assistantText.length)}', name: 'GitHubAgent');
+      final data = tryExtractJsonMap(assistantText);
+      if (data == null) {
+        dev.log('No JSON command detected in assistantText', name: 'GitHubAgent');
+        return; // нет структурированной команды
+      }
+      dev.log('Parsed JSON command: ${jsonEncode(data)}', name: 'GitHubAgent');
+
+      // Поддерживаем поля: tool / action / mcp_tool
+      final tool = (data['tool'] ?? data['action'] ?? data['mcp_tool'])?.toString().trim();
+      if (tool == null || tool.isEmpty) return;
+
+      // Аргументы могут лежать в data['args'] или на верхнем уровне
+      Map<String, dynamic> args = {};
+      if (data['args'] is Map<String, dynamic>) {
+        args = Map<String, dynamic>.from(data['args'] as Map);
+      } else {
+        args = Map<String, dynamic>.from(data);
+      }
+
+      // Подстановка owner/repo из UI по умолчанию
+      args['owner'] = (args['owner'] ?? _ownerCtrl.text).toString().trim();
+      args['repo'] = (args['repo'] ?? _repoCtrl.text).toString().trim();
+      dev.log('Tool=$tool args=${jsonEncode(args)}', name: 'GitHubAgent');
+
+      // Ветки по инструментам
+      if (tool == 'create_issue') {
+        final String owner = (args['owner'] ?? '').toString().trim();
+        final String repo = (args['repo'] ?? '').toString().trim();
+        final String title = (args['title'] ?? '').toString().trim();
+        final String body = (args['body'] ?? '').toString();
+
+        if (owner.isEmpty || repo.isEmpty || title.isEmpty) {
+          setState(() {
+            _messages.add(Message(
+              text: 'Не удалось выполнить create_issue: отсутствуют обязательные поля (owner/repo/title).',
+              isUser: false,
+            ));
+          });
+          _scrollToBottom();
+          return;
+        }
+
+        setState(() {
+          _messages.add(Message(text: 'Выполняю create_issue для $owner/$repo…', isUser: false));
+          _mcpUsed = _mcpReady || _mcpUsed;
+        });
+        _scrollToBottom();
+
+        Map<String, dynamic> result;
+        if (_mcpReady) {
+          dev.log('MCP enabled. URL=${_settings!.mcpServerUrl}', name: 'GitHubAgent');
+          final client = (widget.mcpClientFactory ?? () => McpClient())();
+          try {
+            await client.connect(_settings!.mcpServerUrl!.trim());
+            await client.initialize(timeout: const Duration(seconds: 5));
+            final resp = await client.toolsCall('create_issue', {
+              'owner': owner,
+              'repo': repo,
+              'title': title,
+              if (body.isNotEmpty) 'body': body,
+            }, timeout: const Duration(seconds: 12));
+            result = (resp is Map<String, dynamic>)
+                ? (resp['result'] as Map<String, dynamic>? ?? resp)
+                : {'result': resp};
+          } finally {
+            await client.close();
+          }
+        } else {
+          final svc = GithubMcpService();
+          dev.log('MCP disabled. Fallback to GithubMcpService.createIssueFromEnv', name: 'GitHubAgent');
+          result = await svc.createIssueFromEnv(owner, repo, title, body);
+        }
+
+        final issueNumber = result['number'];
+        final issueUrl = result['html_url'] ?? result['url'] ?? '';
+        final okMsg = issueNumber != null
+            ? 'Issue создан: #$issueNumber $issueUrl'
+            : 'Issue создан: $issueUrl';
+        dev.log('create_issue success: $okMsg', name: 'GitHubAgent');
+
+        setState(() {
+          _messages.add(Message(text: okMsg, isUser: false, isFinal: true));
+        });
+        _scrollToBottom();
+
+        if (_agent != null) {
+          final hist = _agent!.exportHistory();
+          hist.add({'role': 'assistant', 'content': okMsg});
+          _agent!.importHistory(hist);
+        }
+        final key = _convKey;
+        if (key != null && _agent != null) {
+          await _convStore.save(key, _agent!.exportHistory());
+        }
+        return;
+      }
+
+      // Generic MCP tool execution for other tools
+      if (_mcpReady) {
+        // Preflight: проверяем наличие инструмента на сервере
+        final available = await _getMcpTools();
+        if (!available.contains(tool)) {
+          // Повторная попытка получить актуальный список (на случай устаревшего кэша)
+          _mcpToolNames = null; // сброс кэша
+          final refreshed = await _getMcpTools();
+          final listStr = refreshed.isNotEmpty ? refreshed.join(', ') : '(пусто)';
+          final msg = 'Инструмент "$tool" недоступен на MCP‑сервере. Доступные инструменты: $listStr.\n' 
+              'Обновите сервер до версии с поддержкой "$tool" или используйте один из доступных инструментов.';
+          dev.log('Tool not available on MCP server: $tool. Available: $listStr', name: 'GitHubAgent');
+          setState(() {
+            _messages.add(Message(text: msg, isUser: false, isFinal: true));
+          });
+          _scrollToBottom();
+          // Сохраняем в историю
+          if (_agent != null) {
+            final hist = _agent!.exportHistory();
+            hist.add({'role': 'assistant', 'content': msg});
+            _agent!.importHistory(hist);
+          }
+          final key = _convKey;
+          if (key != null && _agent != null) {
+            await _convStore.save(key, _agent!.exportHistory());
+          }
+          return;
+        }
+
+        setState(() {
+          _messages.add(Message(text: 'Выполняю $tool…', isUser: false));
+          _mcpUsed = true;
+        });
+        _scrollToBottom();
+
+        final client = (widget.mcpClientFactory ?? () => McpClient())();
+        dynamic resp;
+        try {
+          await client.connect(_settings!.mcpServerUrl!.trim());
+          await client.initialize(timeout: const Duration(seconds: 5));
+          dev.log('Calling MCP tool $tool with args=${jsonEncode(args)}', name: 'GitHubAgent');
+          resp = await client.toolsCall(tool, args, timeout: const Duration(seconds: 12));
+        } finally {
+          await client.close();
+        }
+
+        final normalized = (resp is Map<String, dynamic>) ? (resp['result'] ?? resp) : resp;
+        final summary = _summarizeToolResult(tool, normalized);
+        dev.log('$tool success. Summary: ${summary.length > 500 ? summary.substring(0, 500) + '…' : summary}', name: 'GitHubAgent');
+
+        setState(() {
+          _messages.add(Message(text: summary, isUser: false, isFinal: true));
+        });
+        _scrollToBottom();
+
+        if (_agent != null) {
+          final hist = _agent!.exportHistory();
+          hist.add({'role': 'assistant', 'content': summary});
+          _agent!.importHistory(hist);
+        }
+        final key = _convKey;
+        if (key != null && _agent != null) {
+          await _convStore.save(key, _agent!.exportHistory());
+        }
+      } else {
+        // Если MCP выключен — пока не выполняем другие инструменты
+        setState(() {
+          _messages.add(Message(text: 'MCP отключён — выполнение "$tool" недоступно.', isUser: false));
+        });
+        _scrollToBottom();
+        dev.log('Skip tool $tool: MCP disabled', name: 'GitHubAgent');
+      }
+    } catch (e, st) {
+      // Специальный случай: MCP вернул -32601 (Tool not found)
+      try {
+        if (e is Map && e['code'] == -32601) {
+          final available = await _getMcpTools();
+          final listStr = available.isNotEmpty ? available.join(', ') : '(пусто)';
+          final msg = 'Инструмент недоступен на сервере (MCP -32601). Доступные инструменты: $listStr.';
+          dev.log('MCP -32601 Tool not found. Available: $listStr', name: 'GitHubAgent');
+          setState(() {
+            _messages.add(Message(text: msg, isUser: false, isFinal: true));
+          });
+          _scrollToBottom();
+          if (_agent != null) {
+            final hist = _agent!.exportHistory();
+            hist.add({'role': 'assistant', 'content': msg});
+            _agent!.importHistory(hist);
+          }
+          final key = _convKey;
+          if (key != null && _agent != null) {
+            await _convStore.save(key, _agent!.exportHistory());
+          }
+          return;
+        }
+      } catch (_) {}
+
+      dev.log('Tool execution error: $e', name: 'GitHubAgent', error: e, stackTrace: st);
+      setState(() {
+        _messages.add(Message(text: 'Ошибка выполнения инструмента: $e', isUser: false));
+      });
+      _scrollToBottom();
+    }
+  }
+
+  String _summarizeToolResult(String tool, dynamic result) {
+    try {
+      if (tool == 'get_repo' && result is Map<String, dynamic>) {
+        final full = result['full_name'] ?? '';
+        final desc = result['description'] ?? '';
+        return 'Репозиторий: $full\n${desc.toString()}';
+      }
+      if (tool == 'search_repos') {
+        final list = (result is Map && result['items'] is List)
+            ? List<Map<String, dynamic>>.from(result['items'])
+            : (result is List ? List<Map<String, dynamic>>.from(result) : const <Map<String, dynamic>>[]);
+        final top = list.take(5).toList();
+        if (top.isEmpty) return 'Ничего не найдено.';
+        final lines = <String>[];
+        for (var i = 0; i < top.length; i++) {
+          final item = top[i];
+          lines.add('${i + 1}. ${item['full_name'] ?? item['name'] ?? 'repo'} — ${item['description'] ?? ''}');
+        }
+        return lines.join('\n');
+      }
+      if (tool == 'create_release' && result is Map<String, dynamic>) {
+        final tag = result['tag_name'] ?? '';
+        final url = result['html_url'] ?? result['url'] ?? '';
+        return 'Release создан: $tag $url';
+      }
+      if (tool == 'list_pull_requests') {
+        final list = (result is List)
+            ? List<Map<String, dynamic>>.from(result)
+            : (result is Map && result['items'] is List)
+                ? List<Map<String, dynamic>>.from(result['items'])
+                : const <Map<String, dynamic>>[];
+        if (list.isEmpty) return 'PR не найдены.';
+        final top = list.take(5).toList();
+        final lines = <String>[];
+        for (var i = 0; i < top.length; i++) {
+          final pr = top[i];
+          lines.add('#${pr['number'] ?? '?'} ${pr['title'] ?? ''} (${pr['state'] ?? ''})');
+        }
+        return lines.join('\n');
+      }
+      if (tool == 'get_pull_request' && result is Map<String, dynamic>) {
+        final num = result['number'] ?? '';
+        final title = result['title'] ?? '';
+        final url = result['html_url'] ?? result['url'] ?? '';
+        return 'PR #$num: $title\n$url';
+      }
+      if (tool == 'list_pr_files') {
+        final files = (result is List)
+            ? List<Map<String, dynamic>>.from(result)
+            : const <Map<String, dynamic>>[];
+        if (files.isEmpty) return 'Файлы PR не найдены.';
+        final top = files.take(10).toList();
+        final lines = <String>[];
+        for (final f in top) {
+          lines.add('- ${f['filename'] ?? f['path'] ?? 'file'} (+${f['additions'] ?? 0}/-${f['deletions'] ?? 0})');
+        }
+        return lines.join('\n');
+      }
+    } catch (_) {}
+
+    // Фолбэк: компактный вывод JSON
+    try {
+      return result.toString();
+    } catch (_) {
+      return 'Готово.';
     }
   }
 
@@ -220,6 +556,17 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
+    }
+  }
+
+  Future<void> _clearHistory() async {
+    final key = _convKey;
+    _agent?.clearHistory();
+    setState(() {
+      _messages.clear();
+    });
+    if (key != null) {
+      await _convStore.clear(key);
     }
   }
 
@@ -286,6 +633,13 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
               ),
               const SizedBox(width: 8),
               _mcpBadge(),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                key: const Key('github_clear_history_btn'),
+                onPressed: (_messages.isEmpty && _convKey == null) ? null : _clearHistory,
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Очистить историю'),
+              ),
             ],
           ),
         ),
