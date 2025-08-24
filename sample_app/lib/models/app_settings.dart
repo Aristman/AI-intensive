@@ -16,6 +16,10 @@ class AppSettings {
   final String? githubMcpToken;
   final bool useMcpServer; // использовать ли внешний MCP-сервер
   final String? mcpServerUrl; // адрес WebSocket MCP сервера
+  // Настройки компрессии/сжатия контекста беседы
+  final bool enableContextCompression; // включить ли сжатие истории через LLM
+  final int compressAfterMessages; // порог количества сообщений для запуска сжатия
+  final int compressKeepLastTurns; // сколько последних пар (user+assistant) оставить нетронутыми
 
   const AppSettings({
     this.selectedNetwork = NeuralNetwork.deepseek,
@@ -28,6 +32,9 @@ class AppSettings {
     this.githubMcpToken,
     this.useMcpServer = false,
     this.mcpServerUrl = 'ws://localhost:3001',
+    this.enableContextCompression = true,
+    this.compressAfterMessages = 40,
+    this.compressKeepLastTurns = 6,
   });
 
   // Create a copy with some changed fields
@@ -42,6 +49,9 @@ class AppSettings {
     String? githubMcpToken,
     bool? useMcpServer,
     String? mcpServerUrl,
+    bool? enableContextCompression,
+    int? compressAfterMessages,
+    int? compressKeepLastTurns,
   }) {
     return AppSettings(
       selectedNetwork: selectedNetwork ?? this.selectedNetwork,
@@ -54,6 +64,9 @@ class AppSettings {
       githubMcpToken: githubMcpToken ?? this.githubMcpToken,
       useMcpServer: useMcpServer ?? this.useMcpServer,
       mcpServerUrl: mcpServerUrl ?? this.mcpServerUrl,
+      enableContextCompression: enableContextCompression ?? this.enableContextCompression,
+      compressAfterMessages: compressAfterMessages ?? this.compressAfterMessages,
+      compressKeepLastTurns: compressKeepLastTurns ?? this.compressKeepLastTurns,
     );
   }
 
@@ -70,6 +83,9 @@ class AppSettings {
       'enabledMCPProviders': enabledMCPProviders.map((e) => e.toString().split('.').last).toList(),
       'useMcpServer': useMcpServer,
       'mcpServerUrl': mcpServerUrl,
+      'enableContextCompression': enableContextCompression,
+      'compressAfterMessages': compressAfterMessages,
+      'compressKeepLastTurns': compressKeepLastTurns,
     };
   }
 
@@ -98,6 +114,9 @@ class AppSettings {
           .toSet(),
       useMcpServer: (json['useMcpServer'] as bool?) ?? false,
       mcpServerUrl: (json['mcpServerUrl'] as String?) ?? 'ws://localhost:3001',
+      enableContextCompression: (json['enableContextCompression'] as bool?) ?? true,
+      compressAfterMessages: (json['compressAfterMessages'] as int?) ?? 40,
+      compressKeepLastTurns: (json['compressKeepLastTurns'] as int?) ?? 6,
     );
   }
 

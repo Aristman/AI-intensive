@@ -5,6 +5,7 @@ import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/models/message.dart';
 import 'package:sample_app/screens/settings_screen.dart';
 import 'package:sample_app/services/settings_service.dart';
+import 'package:sample_app/services/conversation_storage_service.dart';
 import 'package:sample_app/widgets/safe_send_text_field.dart';
 
 /// Строит дополнительный системный промпт для GitHub‑агента (вариант A — через ReasoningAgent).
@@ -54,6 +55,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
   final _scrollController = ScrollController();
 
   final _settingsService = SettingsService();
+  final _convStore = ConversationStorageService();
   AppSettings? _settings;
   bool _loadingSettings = true;
 
@@ -94,7 +96,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
     _initAgent();
   }
 
-  void _initAgent() {
+  Future<void> _initAgent() async {
     if (_settings == null) return;
     final extra = buildGithubAgentExtraPrompt(
       owner: _ownerCtrl.text.trim(),
@@ -102,6 +104,20 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
     );
     _agent = ReasoningAgent(baseSettings: _settings, extraSystemPrompt: extra);
     _messages.clear();
+
+    // Загружаем сохранённую историю для текущего репозитория и импортируем в агента
+    final key = _convKey;
+    if (key != null) {
+      final stored = await _convStore.load(key);
+      if (stored.isNotEmpty) {
+        _agent!.importHistory(stored);
+        // Отрисуем историю в UI
+        for (final m in stored) {
+          _messages.add(Message(text: m['content'] ?? '', isUser: (m['role'] == 'user')));
+        }
+        setState(() {});
+      }
+    }
   }
 
   void _onOwnerRepoChanged() {
@@ -156,8 +172,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
     _scrollToBottom();
 
     try {
-      // Обновляем агент с актуальным extraPrompt на всякий случай
-      _initAgent();
+      // Не переинициализируем агента здесь, чтобы не очищать текущий UI-список сообщений
       final res = await _agent!.ask(q);
       final rr = res['result'] as ReasoningResult;
 
@@ -175,6 +190,12 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
       }
 
       _scrollToBottom();
+
+      // Сохраняем историю диалога после ответа
+      final key = _convKey;
+      if (key != null) {
+        await _convStore.save(key, _agent!.exportHistory());
+      }
     } catch (e) {
       setState(() {
         _messages.add(Message(text: 'Ошибка: $e', isUser: false));
@@ -183,6 +204,13 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
       });
       _scrollToBottom();
     }
+  }
+
+  String? get _convKey {
+    final owner = _ownerCtrl.text.trim();
+    final repo = _repoCtrl.text.trim();
+    if (owner.isEmpty || repo.isEmpty) return null;
+    return 'github:$owner/$repo';
   }
 
   void _scrollToBottom() {
