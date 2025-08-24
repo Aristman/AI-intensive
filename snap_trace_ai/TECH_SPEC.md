@@ -56,8 +56,8 @@
 ## 2. Сервер на Kotlin (оркестратор)
 
 ### 2.1. Технологии
-- Язык: Kotlin 1.9+.
-- Фреймворк: Ktor или Spring Boot (выбор команды).
+- Язык: Kotlin 2.1+.
+- Фреймворк: Ktor.
 - Асинхронность: coroutines.
 - БД: PostgreSQL (таблицы jobs, feed_items, media_objects).
 - Хранилище: Yandex Cloud Object Storage (S3 совместимый).
