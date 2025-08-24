@@ -110,7 +110,7 @@
   - [x] `GET /v1/jobs/{id}` отдаёт актуальный статус
   - [x] Тесты: переходы статусов
 
-- [ ] S3 — Интеграции Yandex Art/GPT
+- [x] S3 — Интеграции Yandex Art/GPT
   - [x] Клиенты с IAM: `YANDEX_IAM_TOKEN`, `YANDEX_FOLDER_ID`
   - [x] Пайплайн: Art → изображение; GPT → подпись (стабы)
   - [x] Таймауты HTTP/poll (конфигурируемые)

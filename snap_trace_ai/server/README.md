@@ -71,6 +71,23 @@ export YANDEX_FOLDER_ID="<your-folder-id>"
 
 Если любая из переменных отсутствует, будут использованы заглушки (`ArtClientStub`, `GptClientStub`).
 
+### Локальный старт и стоп сервера
+
+- Старт (порт по умолчанию 8080):
+  ```powershell
+  ./gradlew -p snap_trace_ai/server run
+  ```
+  Остановить в той же консоли: одновременно нажмите Ctrl+C.
+
+- Если сервер был запущен в фоне и нужно остановить процесс:
+  - Найти и завершить процесс Ktor по сигнатуре `ru.marslab.snaptrace.ai.ApplicationKt` (Windows/PowerShell):
+    ```powershell
+    Get-CimInstance Win32_Process -Filter "Name='java.exe'" \
+      | Where-Object { $_.CommandLine -match 'ru.marslab.snaptrace.ai.ApplicationKt' } \
+      | ForEach-Object { Stop-Process -Id $_.ProcessId }
+    ```
+  - Альтернатива: зная PID, выполнить `taskkill /PID <PID> /F`.
+
 ## Эндпоинты
 - GET `/health` — проверка готовности
 - POST `/v1/jobs` — загрузка `multipart/form-data` (file, prompt, lat?, lon?, deviceId?) → `{ jobId, status: "queued" }`
@@ -145,7 +162,11 @@ snap_trace_ai/server/
 
 ## Разработка
 - Кодировка: UTF-8, Kotlin style
-- Логи: Logback (консоль), план — JSON-структурирование с traceId/jobId
+ - Логи: централизовано через `Logging` (см. `ru/marslab/snaptrace/ai/logging/Logging.kt`).
+   - Уровень из `application.conf` → применяется и к CallLogging, и к root Logback.
+   - CallLogging с MDC `method`/`path`, фильтр `/health`.
+   - `LoggingService` доступен для DI и получения логгеров в коде.
+   - В планах — JSON-структурирование с `traceId`/`jobId`.
 - Ошибки: Ktor StatusPages, унифицированные ответы `ErrorResponse`
 
 ### Загрузка файлов (multipart)

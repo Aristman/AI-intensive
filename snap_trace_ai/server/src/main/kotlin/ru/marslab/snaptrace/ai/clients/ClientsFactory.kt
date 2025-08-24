@@ -1,6 +1,7 @@
 package ru.marslab.snaptrace.ai.clients
 
 import io.ktor.server.config.*
+import ru.marslab.snaptrace.ai.logging.LoggingService
 
 data class AiClients(
     val art: ArtClient,
@@ -92,7 +93,8 @@ object ClientsFactory {
         }
     }
 
-    fun fromConfig(config: ApplicationConfig, env: Map<String, String> = System.getenv()): AiClients {
+    fun fromConfig(config: ApplicationConfig, logging: LoggingService, env: Map<String, String> = System.getenv()): AiClients {
+        val log = logging.getLogger(ClientsFactory::class.java)
         val iam = env[ENV_IAM]?.takeIf { it.isNotBlank() }
         val folder = env[ENV_FOLDER]?.takeIf { it.isNotBlank() }
         val useRealFlag = env[ENV_USE_REAL]?.lowercase()?.let { it == "1" || it == "true" || it == "yes" } ?: false
@@ -129,14 +131,16 @@ object ClientsFactory {
 
         val canUseReal = useRealFlag && iam != null && folder != null
         return if (canUseReal) {
+            log.info("AI clients: using REAL Yandex clients (flag={}, folderId set={})", useRealFlag, folder != null)
             AiClients(
-                art = RealArtClient(iam!!, folder!!, artCfg),
-                gpt = RealGptClient(iam, folder, gptCfg),
+                art = RealArtClient(iam!!, folder!!, artCfg, logger = logging.getLogger(RealArtClient::class.java)),
+                gpt = RealGptClient(iam, folder, gptCfg, logger = logging.getLogger(RealGptClient::class.java)),
                 useReal = true,
                 iamToken = iam,
                 folderId = folder,
             )
         } else {
+            log.info("AI clients: using STUB clients (flag={}, iam set={}, folder set={})", useRealFlag, iam != null, folder != null)
             AiClients(
                 art = ArtClientStub(),
                 gpt = GptClientStub(),

@@ -19,6 +19,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.delay
 import org.slf4j.LoggerFactory
+import org.slf4j.Logger
 import ru.marslab.snaptrace.ai.metrics.Metrics
 
 class RealGptClient(
@@ -37,9 +38,10 @@ class RealGptClient(
             socketTimeoutMillis = cfg.timeoutMs
         }
     },
+    logger: Logger? = null,
 ) : GptClient {
 
-    private val log = LoggerFactory.getLogger(RealGptClient::class.java)
+    private val log = logger ?: LoggerFactory.getLogger(RealGptClient::class.java)
 
     @Serializable
     private data class CompletionOptions(

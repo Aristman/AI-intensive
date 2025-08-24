@@ -14,12 +14,16 @@ import ru.marslab.snaptrace.ai.clients.ArtClient
 import ru.marslab.snaptrace.ai.clients.ArtClientStub
 import ru.marslab.snaptrace.ai.clients.GptClient
 import ru.marslab.snaptrace.ai.clients.GptClientStub
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
+import ru.marslab.snaptrace.ai.logging.LoggingService
 
 object InMemoryStore {
     private val jobs = ConcurrentHashMap<String, String>() // jobId -> status
     private val feed = ConcurrentHashMap<String, FeedItem>() // id -> item
     private val queue = LinkedBlockingQueue<String>()
     @Volatile private var worker: Job? = null
+    @Volatile private var log: Logger = LoggerFactory.getLogger(InMemoryStore::class.java)
 
     private data class JobMeta(
         val prompt: String,
@@ -33,13 +37,21 @@ object InMemoryStore {
     @Volatile private var gptClient: GptClient = GptClientStub()
 
     fun init() {
-        // no-op; reserved for future warmup
+        log.debug("InMemoryStore initialized")
+    }
+
+    fun configureLogger(logging: LoggingService) {
+        this.log = logging.getLogger(InMemoryStore::class.java)
+        log.debug("Logger configured for InMemoryStore, level={}", logging.level)
     }
 
     fun createJob(jobId: String, prompt: String = "", lat: Double? = null, lon: Double? = null, deviceId: String? = null) {
         jobs[jobId] = "queued"
+        log.info("Job created: jobId={}, hasMeta={}", jobId, (prompt.isNotEmpty() || lat != null || lon != null || deviceId != null))
         if (prompt.isNotEmpty() || lat != null || lon != null || deviceId != null) {
             jobMeta[jobId] = JobMeta(prompt, lat, lon, deviceId)
+            log.debug("Job meta saved: jobId={}, promptLen={}, lat={}, lon={}, deviceId=set?{}",
+                jobId, prompt.length, lat, lon, deviceId != null)
         }
     }
 
@@ -47,12 +59,14 @@ object InMemoryStore {
 
     fun setJobStatus(jobId: String, status: String) {
         jobs[jobId] = status
+        log.debug("Job status set: jobId={}, status={}", jobId, status)
     }
 
     fun publishItem(item: FeedItem) {
         feed[item.id] = item
         // find job and set published if exists
         jobs[item.id]?.let { _ -> jobs[item.id] = "published" }
+        log.info("Feed item published: id={}, textLen={}", item.id, item.text.length)
     }
 
     fun listFeed(limit: Int): List<FeedItem> = feed.values
@@ -61,22 +75,27 @@ object InMemoryStore {
 
     fun enqueueJob(jobId: String) {
         queue.offer(jobId)
+        log.debug("Job enqueued: jobId={}", jobId)
     }
 
     fun startWorker(scope: CoroutineScope, processingDelayMs: Long = 50L) {
         if (worker != null) return
+        log.info("Worker starting with delay={}ms", processingDelayMs)
         worker = scope.launch(Dispatchers.Default) {
             while (isActive) {
                 val jobId = queue.take() // blocking
                 jobs[jobId]?.let {
                     jobs[jobId] = "processing"
+                    log.info("Processing started: jobId={}", jobId)
                     try {
                         // Simulate processing
                         val meta = jobMeta[jobId]
                         val prompt = meta?.prompt ?: ""
+                        log.debug("Stage 1: calling ArtClient.generate jobId={}, promptLen={}", jobId, prompt.length)
                         // Stage 1: Art generates image URL
                         val art = artClient.generate(prompt)
                         delay(processingDelayMs)
+                        log.debug("Stage 2: calling GptClient.caption jobId={}", jobId)
                         // Stage 2: GPT generates caption
                         val caption = gptClient.caption(art.imageUrl, prompt)
                         val now = Instant.now().toString()
@@ -89,8 +108,10 @@ object InMemoryStore {
                         )
                         feed[jobId] = item
                         jobs[jobId] = "published"
+                        log.info("Job published: jobId={}, captionLen={}", jobId, caption.length)
                     } catch (t: Throwable) {
                         jobs[jobId] = "failed"
+                        log.warn("Job failed: jobId={}, reason={}", jobId, t.message)
                     }
                 }
             }
@@ -99,10 +120,12 @@ object InMemoryStore {
     fun stopWorker() {
         worker?.cancel()
         worker = null
+        log.info("Worker stopped")
     }
 
     fun configureProcessors(art: ArtClient, gpt: GptClient) {
         this.artClient = art
         this.gptClient = gpt
+        log.info("Processors configured: art={}, gpt={}", art.javaClass.simpleName, gpt.javaClass.simpleName)
     }
 }
