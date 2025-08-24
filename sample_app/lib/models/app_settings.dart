@@ -20,6 +20,12 @@ class AppSettings {
   final bool enableContextCompression; // включить ли сжатие истории через LLM
   final int compressAfterMessages; // порог количества сообщений для запуска сжатия
   final int compressKeepLastTurns; // сколько последних пар (user+assistant) оставить нетронутыми
+  // Локальные настройки экрана GitHub
+  final int githubReposListLimit; // количество элементов в списке репозиториев
+  final int githubIssuesListLimit; // количество элементов в списке issues
+  final int githubOtherListLimit; // количество элементов в прочих списках (PR, файлы PR и т.п.)
+  final String? githubDefaultOwner; // дефолтный владелец для экрана GitHub
+  final String? githubDefaultRepo; // дефолтный репозиторий для экрана GitHub
 
   const AppSettings({
     this.selectedNetwork = NeuralNetwork.deepseek,
@@ -35,6 +41,11 @@ class AppSettings {
     this.enableContextCompression = true,
     this.compressAfterMessages = 40,
     this.compressKeepLastTurns = 6,
+    this.githubReposListLimit = 5,
+    this.githubIssuesListLimit = 10,
+    this.githubOtherListLimit = 5,
+    this.githubDefaultOwner,
+    this.githubDefaultRepo,
   });
 
   // Create a copy with some changed fields
@@ -52,6 +63,11 @@ class AppSettings {
     bool? enableContextCompression,
     int? compressAfterMessages,
     int? compressKeepLastTurns,
+    int? githubReposListLimit,
+    int? githubIssuesListLimit,
+    int? githubOtherListLimit,
+    String? githubDefaultOwner,
+    String? githubDefaultRepo,
   }) {
     return AppSettings(
       selectedNetwork: selectedNetwork ?? this.selectedNetwork,
@@ -67,6 +83,11 @@ class AppSettings {
       enableContextCompression: enableContextCompression ?? this.enableContextCompression,
       compressAfterMessages: compressAfterMessages ?? this.compressAfterMessages,
       compressKeepLastTurns: compressKeepLastTurns ?? this.compressKeepLastTurns,
+      githubReposListLimit: githubReposListLimit ?? this.githubReposListLimit,
+      githubIssuesListLimit: githubIssuesListLimit ?? this.githubIssuesListLimit,
+      githubOtherListLimit: githubOtherListLimit ?? this.githubOtherListLimit,
+      githubDefaultOwner: githubDefaultOwner ?? this.githubDefaultOwner,
+      githubDefaultRepo: githubDefaultRepo ?? this.githubDefaultRepo,
     );
   }
 
@@ -86,6 +107,11 @@ class AppSettings {
       'enableContextCompression': enableContextCompression,
       'compressAfterMessages': compressAfterMessages,
       'compressKeepLastTurns': compressKeepLastTurns,
+      'githubReposListLimit': githubReposListLimit,
+      'githubIssuesListLimit': githubIssuesListLimit,
+      'githubOtherListLimit': githubOtherListLimit,
+      'githubDefaultOwner': githubDefaultOwner,
+      'githubDefaultRepo': githubDefaultRepo,
     };
   }
 
@@ -117,6 +143,11 @@ class AppSettings {
       enableContextCompression: (json['enableContextCompression'] as bool?) ?? true,
       compressAfterMessages: (json['compressAfterMessages'] as int?) ?? 40,
       compressKeepLastTurns: (json['compressKeepLastTurns'] as int?) ?? 6,
+      githubReposListLimit: (json['githubReposListLimit'] as int?) ?? 5,
+      githubIssuesListLimit: (json['githubIssuesListLimit'] as int?) ?? 10,
+      githubOtherListLimit: (json['githubOtherListLimit'] as int?) ?? 5,
+      githubDefaultOwner: json['githubDefaultOwner'] as String?,
+      githubDefaultRepo: json['githubDefaultRepo'] as String?,
     );
   }
 

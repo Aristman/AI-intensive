@@ -7,6 +7,7 @@
 - [ ] Единый шаблон `.env.example`/`config.properties.sample` и инструкция по секретам
 - [ ] Версионирование релизов (tags, changelog) и релиз артефактов (jar, docker image)
 - [ ] Улучшить документацию: обзор архитектуры (MCP ↔ apps), схемы обмена, частые ошибки
+  - [x] Обновлены README (root, `sample_app/README.md`) и `docs/github_agent_screen_plan.md`: добавлены примеры JSON‑RPC (initialize, tools/list, tools/call), актуализирован список MCP‑инструментов (удалён `list_issues`), описан локальный диалог настроек GitHubAgentScreen и тестовые ключи
  - [x] Унифицированный интерфейс агентов (IAgent, IStatefulAgent, IToolingAgent, DTOs и утилиты),
        добавлены юнит-тесты; документация: `docs/agent_interface.md`
 
@@ -48,6 +49,17 @@
 - [x] Централизация навигации через enum `Screen` (SSOT: иконки, лейблы, пункты нижней навигации и фабрика страниц в `screens.dart`)
 - [x] Централизованный резолвер LLM (`resolveLlmUseCase`) и рефакторинг агентов; добавлены юнит‑тесты; обновлена документация (README/ROADMAP)
  - [ ] Интеграция `McpGithubService` в `GitHubAgentScreen` (создание релиза, управление PR) и покрытие виджет/юнит‑тестами
+   - [x] Убран ввод owner/repo из основного UI; добавлен локальный диалог настроек с валидацией и персистентностью
+   - [x] Ключи для тестов диалога: `github_local_owner_field`, `github_local_repo_field`, `github_local_repos_limit_field`, `github_local_issues_limit_field`, `github_local_other_limit_field`, `github_local_save_btn`; кнопка `github_local_settings_btn`; лейбл контекста `github_repo_context_label`
+   - [x] Поле запроса активно всегда; MCP вызовы берут owner/repo из настроек при отсутствии явного ввода
+   - [x] Промпт `ReasoningAgent.extraSystemPrompt` включает текущие owner/repo и описание доступных MCP инструментов (без `list_issues`)
+   - [x] Виджет‑тесты: открытие/сохранение диалога, применение настроек, влияние лимитов в `_summarizeToolResult`, поведение MCP при отсутствии инструмента (`-32601`)
+   - [x] Документация обновлена: root `README.md` и `sample_app/README.md` — раздел про GitHubAgentScreen, ключи и лимиты
+   - [ ] Интеграционные тесты MCP для `create_issue` (успех и ошибка)
+   - [ ] UX: кликабельные ссылки в итогах (issue/release/PR URL) на экране GitHubAgent
+   - [ ] Verbose‑логирование MCP: настройка в Settings и документация, где смотреть логи (dev.log)
+   - [ ] Улучшения мок‑клиента MCP: кэш `tools/list` по URL, preflight‑проверки доступности инструментов
+   - [ ] Предупреждение в UI при отключённом MCP (tooltip/snackbar) и покрытие тестами
 - [ ] Настроить работу экрана CodeOps с LLM YandexGPT (приоритет: первый)
   - [ ] Интегрировать `YandexGptUseCase` в `CodeOpsAgent`/`CodeOpsBuilderAgent` через интерфейс `LlmUseCase`
   - [ ] Обновить выбор сети в настройках: добавить/актуализировать `NeuralNetwork.yandexgpt` для CodeOps

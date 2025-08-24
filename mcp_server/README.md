@@ -9,7 +9,6 @@ Server Info: name = `mcp-github-telegram-server`
   - `get_repo(owner, repo)` — получить информацию о репозитории GitHub
   - `search_repos(query)` — поиск репозиториев GitHub
   - `create_issue(owner, repo, title, body?)` — создать GitHub Issue
-  - `list_issues(owner, repo, state?, per_page?, page?)` — список issues репозитория. Возвращает только issues (PR исключены). Аргументы по умолчанию: `state = "open"`, `per_page = 5`, `page = 1`.
   - `create_release(owner, repo, tag_name, name?, body?, draft?, prerelease?, target_commitish?)` — создать GitHub релиз
   - `list_pull_requests(owner, repo, state?, per_page?, page?)` — список Pull Requests
   - `get_pull_request(owner, repo, number)` — детали конкретного PR
@@ -116,9 +115,6 @@ npm start
 - `create_issue`
   - Вход: `{ owner: string, repo: string, title: string, body?: string }`
   - Результат: созданный issue
-- `list_issues`
-  - Вход: `{ owner: string, repo: string, state?: string, per_page?: number, page?: number }`
-  - Результат: список issues репозитория
 - `create_release`
   - Вход: `{ owner: string, repo: string, tag_name: string, name?: string, body?: string, draft?: boolean, prerelease?: boolean, target_commitish?: string }`
   - Результат: объект релиза
@@ -191,33 +187,6 @@ npm start
   "result": { "name": "create_issue", "result": { /* объект issue */ } }
 }
 ```
-- Вызов инструмента `list_issues`:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 4,
-  "method": "tools/call",
-  "params": {
-    "name": "list_issues",
-    "arguments": {
-      "owner": "Aristman",
-      "repo": "AI-intensive",
-      "state": "open",
-      "per_page": 5,
-      "page": 1
-    }
-  }
-}
-```
-Ожидаемый ответ:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 4,
-  "result": { "name": "list_issues", "result": [ /* массив issues без PR */ ] }
-}
-```
-
 - Вызов инструмента `create_release`:
 ```json
 {

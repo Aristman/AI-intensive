@@ -111,6 +111,16 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
     // Включаем режим рассуждений на этом экране всегда
     s = s.copyWith(reasoningMode: true);
 
+    // Подставим дефолтные owner/repo из настроек, если они есть
+    final defOwner = s.githubDefaultOwner?.trim();
+    final defRepo = s.githubDefaultRepo?.trim();
+    if (defOwner != null && defOwner.isNotEmpty) {
+      _ownerCtrl.text = defOwner;
+    }
+    if (defRepo != null && defRepo.isNotEmpty) {
+      _repoCtrl.text = defRepo;
+    }
+
     setState(() {
       _settings = s;
       _loadingSettings = false;
@@ -494,6 +504,9 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
 
   String _summarizeToolResult(String tool, dynamic result) {
     try {
+      final reposLimit = _settings?.githubReposListLimit ?? 5;
+      final issuesLimit = _settings?.githubIssuesListLimit ?? 10;
+      final otherLimit = _settings?.githubOtherListLimit ?? 5;
       if (tool == 'get_repo' && result is Map<String, dynamic>) {
         String s(Object? v) => v == null ? '' : v.toString();
         String yn(bool? b) => b == null ? '' : (b ? 'да' : 'нет');
@@ -552,7 +565,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
                 ? List<Map<String, dynamic>>.from(result['items'])
                 : const <Map<String, dynamic>>[];
         if (list.isEmpty) return 'Issues не найдены.';
-        final top = list.take(10).toList();
+        final top = list.take(issuesLimit).toList();
         final lines = <String>[];
         for (var i = 0; i < top.length; i++) {
           final issue = top[i];
@@ -597,7 +610,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
         final list = (result is Map && result['items'] is List)
             ? List<Map<String, dynamic>>.from(result['items'])
             : (result is List ? List<Map<String, dynamic>>.from(result) : const <Map<String, dynamic>>[]);
-        final top = list.take(5).toList();
+        final top = list.take(reposLimit).toList();
         if (top.isEmpty) return 'Ничего не найдено.';
         final lines = <String>[];
         for (var i = 0; i < top.length; i++) {
@@ -613,7 +626,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
                 ? List<Map<String, dynamic>>.from(result['items'])
                 : const <Map<String, dynamic>>[];
         if (list.isEmpty) return 'PR не найдены.';
-        final top = list.take(5).toList();
+        final top = list.take(otherLimit).toList();
         final lines = <String>[];
         for (var i = 0; i < top.length; i++) {
           final pr = top[i];
@@ -632,7 +645,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
             ? List<Map<String, dynamic>>.from(result)
             : const <Map<String, dynamic>>[];
         if (files.isEmpty) return 'Файлы PR не найдены.';
-        final top = files.take(10).toList();
+        final top = files.take(otherLimit).toList();
         final lines = <String>[];
         for (final f in top) {
           lines.add('- ${f['filename'] ?? f['path'] ?? 'file'} (+${f['additions'] ?? 0}/-${f['deletions'] ?? 0})');
@@ -677,6 +690,141 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
     }
   }
 
+  Future<void> _openLocalGithubSettingsDialog() async {
+    if (_settings == null) return;
+    final s = _settings!;
+    final ownerCtrl = TextEditingController(text: s.githubDefaultOwner ?? _ownerCtrl.text.trim());
+    final repoCtrl = TextEditingController(text: s.githubDefaultRepo ?? _repoCtrl.text.trim());
+    final reposLimitCtrl = TextEditingController(text: (s.githubReposListLimit).toString());
+    final issuesLimitCtrl = TextEditingController(text: (s.githubIssuesListLimit).toString());
+    final otherLimitCtrl = TextEditingController(text: (s.githubOtherListLimit).toString());
+
+    String? validatePositiveInt(String? v) {
+      if (v == null || v.trim().isEmpty) return 'Введите число';
+      final n = int.tryParse(v.trim());
+      if (n == null || n <= 0) return 'Введите положительное число';
+      return null;
+    }
+
+    final formKey = GlobalKey<FormState>();
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Настройки GitHub'),
+          content: Form(
+            key: formKey,
+            child: SizedBox(
+              width: 420,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      key: const Key('github_local_owner_field'),
+                      controller: ownerCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Owner',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      key: const Key('github_local_repo_field'),
+                      controller: repoCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Repository',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            key: const Key('github_local_repos_limit_field'),
+                            controller: reposLimitCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Лимит репозиториев',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            validator: validatePositiveInt,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextFormField(
+                            key: const Key('github_local_issues_limit_field'),
+                            controller: issuesLimitCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Лимит issues',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            validator: validatePositiveInt,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      key: const Key('github_local_other_limit_field'),
+                      controller: otherLimitCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Лимит прочих списков (PR, файлы PR)',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      validator: validatePositiveInt,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Отмена'),
+            ),
+            FilledButton.icon(
+              key: const Key('github_local_save_btn'),
+              icon: const Icon(Icons.save),
+              label: const Text('Сохранить'),
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                final next = _settings!.copyWith(
+                  githubDefaultOwner: ownerCtrl.text.trim().isEmpty ? null : ownerCtrl.text.trim(),
+                  githubDefaultRepo: repoCtrl.text.trim().isEmpty ? null : repoCtrl.text.trim(),
+                  githubReposListLimit: int.parse(reposLimitCtrl.text.trim()),
+                  githubIssuesListLimit: int.parse(issuesLimitCtrl.text.trim()),
+                  githubOtherListLimit: int.parse(otherLimitCtrl.text.trim()),
+                );
+                setState(() {
+                  _settings = next;
+                  // Синхронизируем контроллеры, чтобы сработал listener и агент переинициализировался
+                  _ownerCtrl.text = next.githubDefaultOwner ?? '';
+                  _repoCtrl.text = next.githubDefaultRepo ?? '';
+                });
+                // Сохраняем глобальные настройки (без await во избежание лагов в тестах)
+                // ignore: unawaited_futures
+                _settingsService.saveSettings(next);
+                if (context.mounted) Navigator.of(ctx).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _mcpBadge() {
     if (_mcpUsed) {
       return Container(
@@ -714,28 +862,21 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
           child: Row(
             children: [
               Expanded(
-                child: TextField(
-                  key: const Key('github_owner_field'),
-                  controller: _ownerCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Owner',
-                    hintText: 'Напр.: aristman',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: TextField(
-                  key: const Key('github_repo_field'),
-                  controller: _repoCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Repository',
-                    hintText: 'Напр.: AI-intensive',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.folder_open, size: 18),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        _ownerCtrl.text.trim().isEmpty || _repoCtrl.text.trim().isEmpty
+                            ? 'Репозиторий не задан в настройках'
+                            : '${_ownerCtrl.text.trim()}/${_repoCtrl.text.trim()}',
+                        key: const Key('github_repo_context_label'),
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(width: 8),
@@ -746,6 +887,13 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
                 onPressed: (_messages.isEmpty && _convKey == null) ? null : _clearHistory,
                 icon: const Icon(Icons.delete_outline, size: 18),
                 label: const Text('Очистить историю'),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                key: const Key('github_local_settings_btn'),
+                tooltip: 'Локальные настройки GitHub',
+                onPressed: _openLocalGithubSettingsDialog,
+                icon: const Icon(Icons.tune),
               ),
             ],
           ),
