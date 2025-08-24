@@ -25,6 +25,7 @@ fun Application.serverModule() {
                 prettyPrint = false
                 ignoreUnknownKeys = true
                 explicitNulls = false
+                encodeDefaults = true
             }
         )
     }

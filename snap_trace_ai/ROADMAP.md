@@ -96,13 +96,13 @@
   - [x] Эндпоинты‑заглушки: `/health`, `/v1/jobs`, `/v1/jobs/{id}`, `/v1/feed`
   - [x] Билд и тесты зелёные: `.\\gradlew -p snap_trace_ai/server test`
   - [x] Синхронизация DTO с `openapi.yaml` (валидация схем)
-  - [ ] README сервера + диаграмма жизненного цикла job
+  - [x] README сервера + диаграмма жизненного цикла job
 
 - [ ] S1 — Приём файла (multipart) и валидация
-  - [ ] `POST /v1/jobs`: `multipart/form-data` (image/jpeg|png), лимит размера (config)
-  - [ ] Поля: `prompt`, `lat?`, `lon?`, `deviceId?`; ответ `{ jobId, status: queued }`
+  - [x] `POST /v1/jobs`: `multipart/form-data` (image/jpeg|png), лимит размера (config)
+  - [x] Поля: `prompt`, `lat?`, `lon?`, `deviceId?`; ответ `{ jobId, status: queued }`
   - [ ] EXIF нормализация (ts, geo — опц.)
-  - [ ] Тесты: happy/edge; ошибки 400/415
+  - [x] Тесты: happy/edge; ошибки 400/415
 
 - [ ] S2 — Очередь и статусы
   - [ ] Модель: queued → processing → published|failed
