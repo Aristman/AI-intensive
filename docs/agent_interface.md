@@ -36,6 +36,8 @@
   - `streaming: bool`
   - `reasoning: bool`
   - `tools: Set<String>` — имена инструментов (e.g. `docker_exec_java`)
+  - `systemPrompt?: String` — базовый системный промпт агента (если используется)
+  - `responseRules?: List<String>` — краткие правила/гайдлайны формирования ответа (форматирование, стиль)
 
 - __AgentEvent__
   - `type: 'token' | 'response' | 'tool_call' | 'error' | 'debug'`

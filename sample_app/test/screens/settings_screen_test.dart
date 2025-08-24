@@ -65,7 +65,7 @@ void main() {
 
       // Assert
       expect(find.text('Настройки'), findsOneWidget);
-      expect(find.byIcon(Icons.arrow_back), findsOneWidget);
+      expect(find.text('Отменить'), findsOneWidget);
       expect(find.byType(DropdownButtonFormField<NeuralNetwork>), findsOneWidget);
       expect(find.text('DeepSeek'), findsOneWidget);
     });

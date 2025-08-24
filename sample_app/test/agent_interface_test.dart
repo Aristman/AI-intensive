@@ -30,7 +30,7 @@ void main() {
   });
 
   group('AgentCapabilities', () {
-    test('Capabilities store flags and tools', () {
+    test('Capabilities store flags, tools and have safe defaults for new fields', () {
       final caps = AgentCapabilities(
         stateful: true,
         streaming: false,
@@ -41,6 +41,22 @@ void main() {
       expect(caps.streaming, isFalse);
       expect(caps.reasoning, isTrue);
       expect(caps.tools, contains('docker_exec_java'));
+      expect(caps.systemPrompt, isNull);
+      expect(caps.responseRules, isEmpty);
+    });
+
+    test('Capabilities accept explicit systemPrompt and responseRules', () {
+      final caps = AgentCapabilities(
+        stateful: false,
+        streaming: true,
+        reasoning: false,
+        tools: const {},
+        systemPrompt: 'You are helpful.',
+        responseRules: const ['Use Markdown', 'Ask clarifying questions if needed'],
+      );
+      expect(caps.systemPrompt, 'You are helpful.');
+      expect(caps.responseRules, contains('Use Markdown'));
+      expect(caps.responseRules.length, 2);
     });
   });
 

@@ -15,6 +15,37 @@ For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
 
+## YandexGPT интеграция: краткий порядок подключения
+
+1) Получите `FOLDER_ID` в Yandex Cloud.
+2) Создайте сервисный аккаунт и выдайте роль `ai.languageModels.user`.
+3) Получите IAM токен на бэкенде для сервисного аккаунта.
+4) Вызов API:
+   - POST `https://llm.api.cloud.yandex.net/foundationModels/v1/completion`
+   - Headers: `Authorization: Bearer <IAM_TOKEN>`, `x-folder-id: <FOLDER_ID>`, `Content-Type: application/json`
+   - Body: `modelUri: "gpt://<FOLDER_ID>/yandexgpt(-lite)/latest"`, `completionOptions`, `messages: [{ role, text }]`
+5) Безопасность: храните IAM токен на сервере и вызывайте API через ваш бэкенд‑прокси.
+6) Временный fallback: `Authorization: Api-Key <YANDEX_API_KEY>` + `x-folder-id` поддержан в
+   `lib/data/llm/yandexgpt_usecase.dart`.
+
+Переменные окружения (`assets/.env`):
+- `YANDEX_IAM_TOKEN=`   # предпочтительно
+- `YANDEX_API_KEY=`     # временный fallback
+- `YANDEX_FOLDER_ID=`
+- `YANDEX_GPT_BASE_URL=`   # опционально (override эндпоинта)
+- `YANDEX_MODEL_URI=`      # опционально (например: `gpt://<folder>/yandexgpt-lite/latest`)
+
+См. реализацию: `sample_app/lib/data/llm/yandexgpt_usecase.dart`.
+
+### Совместимость CodeOps/CodeOpsBuilderAgent с YandexGPT
+
+- Некоторые модели YandexGPT могут игнорировать `system` и возвращать нестрогий JSON. В `yandexgpt_usecase.dart` системные инструкции встраиваются в первое `user`‑сообщение для повышения дисциплины формата.
+- При отсутствии валидного JSON оркестратор `CodeOpsBuilderAgent` применяет fallback:
+  - для кода: извлекает fenced‑блок (```java ... ```) и формирует минимальный JSON с `files`, определяя путь и entrypoint (Java) из кода;
+  - для тестов: извлекает один/несколько тестовых классов из fenced‑блоков, корректно строит пути из `package` и имён публичных классов.
+- Реализация и утилиты: `sample_app/lib/agents/code_ops_builder_agent.dart`, `sample_app/lib/utils/code_utils.dart`.
+- Тесты: `sample_app/test/code_ops_builder_agent_yandex_fallback_test.dart` (проверка генерации кода/тестов и запуска JUnit с fallback).
+
 ## MCP GitHub интеграция
 
 Примечание: cейчас MCP сервер расположен на верхнем уровне проекта в папке `mcp_server/` (раньше был в `sample_app/mcp_server/`).
@@ -90,6 +121,13 @@ samples, guidance on mobile development, and a full API reference.
 3) Укажите `MCP WebSocket URL`: `ws://localhost:3001`.
 4) Нажмите «Проверить MCP» — должно показать успешную инициализацию.
 
+### Индикатор использования MCP (AppBar)
+- В `CodeOpsScreen` постоянно отображается чип статуса MCP в `AppBar`.
+- Состояния:
+  - `MCP off` (серый) — MCP выключен или URL не задан. В тултипе: сообщение о том, что будет использован локальный fallback.
+  - `MCP ready` (синий) — MCP включён и URL задан, но сейчас нет активного вызова. В тултипе: URL MCP‑сервера.
+  - `MCP active` (зелёный) — идёт активный вызов MCP (например, запуск кода/тестов). Тултип: URL MCP‑сервера. Флаг активности сбрасывается автоматически через короткий таймер после завершения операции.
+
 ### Как пользоваться вкладкой CodeOps
 1) Перейдите на вкладку `CodeOps` в нижней навигации.
 2) Сформулируйте задачу, например: «Сгенерируй Java консольное Hello World».
@@ -100,6 +138,34 @@ samples, guidance on mobile development, and a full API reference.
    - покажет сводку и превью всех файлов; спросит: «Запустить локально?»
 4) Ответьте «Да/Yes» для запуска. Агент вызовет `docker_exec_java` на MCP‑сервере, передаст один или несколько файлов (и опционально entrypoint), дождётся выполнения и отобразит результат: компиляция/запуск, коды возврата, stdout/stderr.
 5) Можно вставить свой код вручную — если агент распознает код (включая блоки ```java ... ```), он также предложит запуск. Для многофайлового кейса пришлите JSON в формате `files`.
+
+### Оркестратор CodeOpsBuilderAgent: генерация → тесты → запуск
+
+`CodeOpsBuilderAgent` надстраивается над `CodeOpsAgent` и реализует управляемый поток разработки:
+
+- __Фаза 1: Генерация кода__
+  - Классификация интента.
+  - Генерация многофайлового ответа (JSON по схеме) и публикация события `code_generated` без тестовых файлов.
+  - Событие `ask_create_tests` с `meta.action = 'create_tests'` — запрос на создание тестов.
+
+- __Фаза 2: Генерация тестов__ (по подтверждению)
+  - Создание JUnit4‑тестов для Java.
+  - Событие `test_generated` с `meta.language` и списком `tests`.
+  - Второе `ask_create_tests` с `meta.action = 'run_tests'` — запрос на запуск тестов.
+
+- __Фаза 3: Запуск тестов__ (по подтверждению)
+  - Эмитится `docker_exec_started` (пакетный старт), затем для каждого теста — `docker_exec_result` с `meta.result` (полный JSON результата) и, при повторном запуске после рефайна, `refined: true`.
+  - По завершении — `pipeline_complete` с суммарным отчётом.
+
+- __Корреляция и формат__
+  - Все события содержат `runId` для связи с конкретным запуском.
+  - Агент нормализует ключи результата тестов: поддерживает `exit_code`/`exitCode`, `stdout`/`stderr`.
+
+- __Fallback поведение__
+  - Если `useMcpServer` выключен или `mcpServerUrl` пуст, оркестратор делегирует запуск Java во внутренний `CodeOpsAgent` (удобно для локальных тестов/моков).
+  - При включённом MCP используется локальный MCP‑клиент для вызовов `docker_exec_java`/`docker_start_java`.
+
+Подробнее о событиях и метаданных: `docs/code_ops_builder_agent.md`.
 
 ### Режимы запуска на карточке файла (CodeOps)
 На превью каждого Java-файла отображаются кнопки запуска:
