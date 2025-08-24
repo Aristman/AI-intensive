@@ -56,6 +56,7 @@ class RetryMetricsTest {
         )
         val client = RealGptClient(
             iamToken = "token",
+            apiKey = "",
             folderId = "folder",
             cfg = cfg,
             client = http,
@@ -92,6 +93,7 @@ class RetryMetricsTest {
         )
         val client = RealGptClient(
             iamToken = "token",
+            apiKey = "",
             folderId = "folder",
             cfg = cfg,
             client = http,
@@ -150,7 +152,13 @@ class RetryMetricsTest {
             retryBaseDelayMs = 1,
             retryMaxDelayMs = 4,
         )
-        val client = RealArtClient("token", "folder", cfg, http)
+        val client = RealArtClient(
+            iamToken = "token",
+            apiKey = "",
+            folderId = "folder",
+            cfg = cfg,
+            client = http,
+        )
         val res = client.generate("prompt")
         assertEquals("data:image/jpeg;base64,QUJD", res.imageUrl)
         val s = Metrics.snapshot()
@@ -210,7 +218,13 @@ class RetryMetricsTest {
             retryBaseDelayMs = 1,
             retryMaxDelayMs = 2,
         )
-        val client = RealArtClient("token", "folder", cfg, http)
+        val client = RealArtClient(
+            iamToken = "token",
+            apiKey = "",
+            folderId = "folder",
+            cfg = cfg,
+            client = http,
+        )
         val res = client.generate("prompt")
         assertEquals("data:image/jpeg;base64,QUJD", res.imageUrl)
         val s = Metrics.snapshot()

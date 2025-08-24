@@ -1,5 +1,6 @@
 package ru.marslab.snaptrace.ai.clients
 
+import io.github.cdimascio.dotenv.Dotenv
 import io.ktor.server.config.*
 import ru.marslab.snaptrace.ai.logging.LoggingService
 
@@ -8,6 +9,7 @@ data class AiClients(
     val gpt: GptClient,
     val useReal: Boolean,
     val iamToken: String?,
+    val apiKey: String,
     val folderId: String?,
 )
 
@@ -40,14 +42,42 @@ data class ArtConfig(
 
 object ClientsFactory {
     private const val ENV_IAM = "YANDEX_IAM_TOKEN"
+    private const val ENV_API_KEY = "YANDEX_API_KEY"
     private const val ENV_FOLDER = "YANDEX_FOLDER_ID"
     private const val ENV_USE_REAL = "SNAPTRACE_USE_REAL"
 
-    fun fromEnv(env: Map<String, String> = System.getenv()): AiClients {
+    /**
+     * Loads environment variables by merging System.getenv() with values from a local .env file (if present).
+     * Values from .env override System environment variables.
+     */
+    private fun loadEnvWithDotenv(): Map<String, String> {
+        val merged = System.getenv().toMutableMap()
+        // Try load from current working directory
+        runCatching {
+            val dot1 = Dotenv.configure()
+                .ignoreIfMalformed()
+                .ignoreIfMissing()
+                .load()
+            dot1.entries().forEach { e -> merged[e.key] = e.value }
+        }
+        // Try load from server module directory (works when started from repo root)
+        runCatching {
+            val dot2 = Dotenv.configure()
+                .directory("snap_trace_ai/server")
+                .ignoreIfMalformed()
+                .ignoreIfMissing()
+                .load()
+            dot2.entries().forEach { e -> merged[e.key] = e.value }
+        }
+        return merged
+    }
+
+    fun fromEnv(env: Map<String, String> = loadEnvWithDotenv()): AiClients {
         val iam = env[ENV_IAM]?.takeIf { it.isNotBlank() }
+        val apiKey = env[ENV_API_KEY]?.takeIf { it.isNotBlank() }.orEmpty()
         val folder = env[ENV_FOLDER]?.takeIf { it.isNotBlank() }
         val useRealFlag = env[ENV_USE_REAL]?.lowercase()?.let { it == "1" || it == "true" || it == "yes" } ?: false
-        val canUseReal = useRealFlag && iam != null && folder != null
+        val canUseReal = useRealFlag && folder != null && (iam != null || apiKey.isNotBlank())
         return if (canUseReal) {
             // Defaults if config isn't available
             val gptCfg = GptConfig(
@@ -76,10 +106,11 @@ object ClientsFactory {
                 retryMaxDelayMs = 2000,
             )
             AiClients(
-                art = RealArtClient(iam!!, folder!!, artCfg),
-                gpt = RealGptClient(iam, folder, gptCfg),
+                art = RealArtClient(iamToken = iam.orEmpty(), apiKey = apiKey, folderId = folder!!, cfg = artCfg),
+                gpt = RealGptClient(iamToken = iam.orEmpty(), apiKey = apiKey, folderId = folder!!, cfg = gptCfg),
                 useReal = true,
                 iamToken = iam,
+                apiKey = apiKey,
                 folderId = folder,
             )
         } else {
@@ -88,14 +119,18 @@ object ClientsFactory {
                 gpt = GptClientStub(),
                 useReal = false,
                 iamToken = iam,
+                apiKey = apiKey,
                 folderId = folder,
             )
         }
     }
 
-    fun fromConfig(config: ApplicationConfig, logging: LoggingService, env: Map<String, String> = System.getenv()): AiClients {
+    fun fromConfig(config: ApplicationConfig, logging: LoggingService, env: Map<String, String> = loadEnvWithDotenv()): AiClients {
         val log = logging.getLogger(ClientsFactory::class.java)
-        val iam = env[ENV_IAM]?.takeIf { it.isNotBlank() }
+        // Avoid leaking secrets into logs; log only keys
+        runCatching { log.info("env keys={}", env.keys.joinToString(",")) }
+        val iam = env[ENV_IAM]?.takeIf { it.isNotBlank() }.orEmpty()
+        val apiKey = env[ENV_API_KEY]?.takeIf { it.isNotBlank() }.orEmpty()
         val folder = env[ENV_FOLDER]?.takeIf { it.isNotBlank() }
         val useRealFlag = env[ENV_USE_REAL]?.lowercase()?.let { it == "1" || it == "true" || it == "yes" } ?: false
         fun get(path: String, def: String) = config.propertyOrNull(path)?.getString() ?: def
@@ -129,23 +164,37 @@ object ClientsFactory {
             retryMaxDelayMs = getLong("snapTrace.httpClient.retry.maxDelayMs", 2000),
         )
 
-        val canUseReal = useRealFlag && iam != null && folder != null
+        val canUseReal = useRealFlag && folder != null && (iam != null || apiKey.isNotBlank())
         return if (canUseReal) {
-            log.info("AI clients: using REAL Yandex clients (flag={}, folderId set={})", useRealFlag, folder != null)
+            log.info("AI clients: using REAL Yandex clients (flag={}, folderId set={})", useRealFlag, folder)
             AiClients(
-                art = RealArtClient(iam!!, folder!!, artCfg, logger = logging.getLogger(RealArtClient::class.java)),
-                gpt = RealGptClient(iam, folder, gptCfg, logger = logging.getLogger(RealGptClient::class.java)),
+                art = RealArtClient(
+                    iamToken = iam.orEmpty(),
+                    apiKey = apiKey,
+                    folderId = folder!!,
+                    cfg = artCfg,
+                    logger = logging.getLogger(RealArtClient::class.java)
+                ),
+                gpt = RealGptClient(
+                    iamToken = iam.orEmpty(),
+                    apiKey = apiKey,
+                    folderId = folder!!,
+                    cfg = gptCfg,
+                    logger = logging.getLogger(RealGptClient::class.java)
+                ),
                 useReal = true,
                 iamToken = iam,
+                apiKey = apiKey,
                 folderId = folder,
             )
         } else {
-            log.info("AI clients: using STUB clients (flag={}, iam set={}, folder set={})", useRealFlag, iam != null, folder != null)
+            log.info("AI clients: using STUB clients (flag={}, iam set={}, folder set={})", useRealFlag, iam, folder)
             AiClients(
                 art = ArtClientStub(),
                 gpt = GptClientStub(),
                 useReal = false,
                 iamToken = iam,
+                apiKey = apiKey,
                 folderId = folder,
             )
         }

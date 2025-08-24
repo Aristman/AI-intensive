@@ -4,6 +4,7 @@ import ru.marslab.snaptrace.ai.model.FeedItem
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -19,6 +20,7 @@ import org.slf4j.LoggerFactory
 import ru.marslab.snaptrace.ai.logging.LoggingService
 
 object InMemoryStore {
+    
     private val jobs = ConcurrentHashMap<String, String>() // jobId -> status
     private val feed = ConcurrentHashMap<String, FeedItem>() // id -> item
     private val queue = LinkedBlockingQueue<String>()
@@ -32,6 +34,12 @@ object InMemoryStore {
         val deviceId: String?
     )
     private val jobMeta = ConcurrentHashMap<String, JobMeta>()
+
+    private data class JobRuntime(
+        val art: ArtClient,
+        val gpt: GptClient
+    )
+    private val jobRuntime = ConcurrentHashMap<String, JobRuntime>()
 
     @Volatile private var artClient: ArtClient = ArtClientStub()
     @Volatile private var gptClient: GptClient = GptClientStub()
@@ -74,12 +82,14 @@ object InMemoryStore {
         .take(limit)
 
     fun enqueueJob(jobId: String) {
+        // Snapshot current processors for this job to avoid race with reconfiguration
+        jobRuntime[jobId] = JobRuntime(artClient, gptClient)
         queue.offer(jobId)
         log.debug("Job enqueued: jobId={}", jobId)
     }
 
     fun startWorker(scope: CoroutineScope, processingDelayMs: Long = 50L) {
-        if (worker != null) return
+        if (worker?.isActive == true) return
         log.info("Worker starting with delay={}ms", processingDelayMs)
         worker = scope.launch(Dispatchers.Default) {
             while (isActive) {
@@ -87,17 +97,19 @@ object InMemoryStore {
                 jobs[jobId]?.let {
                     jobs[jobId] = "processing"
                     log.info("Processing started: jobId={}", jobId)
+                    var requeued = false
                     try {
                         // Simulate processing
                         val meta = jobMeta[jobId]
                         val prompt = meta?.prompt ?: ""
                         log.debug("Stage 1: calling ArtClient.generate jobId={}, promptLen={}", jobId, prompt.length)
                         // Stage 1: Art generates image URL
-                        val art = artClient.generate(prompt)
+                        val rt = jobRuntime[jobId] ?: JobRuntime(artClient, gptClient)
+                        val art = rt.art.generate(prompt)
                         delay(processingDelayMs)
                         log.debug("Stage 2: calling GptClient.caption jobId={}", jobId)
                         // Stage 2: GPT generates caption
-                        val caption = gptClient.caption(art.imageUrl, prompt)
+                        val caption = rt.gpt.caption(art.imageUrl, prompt)
                         val now = Instant.now().toString()
                         val item = FeedItem(
                             id = jobId,
@@ -109,9 +121,26 @@ object InMemoryStore {
                         feed[jobId] = item
                         jobs[jobId] = "published"
                         log.info("Job published: jobId={}, captionLen={}", jobId, caption.length)
+                    } catch (ce: CancellationException) {
+                        // Distinguish between worker cancellation vs. inner timeouts (which are also CancellationException)
+                        if (!isActive) {
+                            // Worker itself was cancelled — don't fail the job; re-queue
+                            jobs[jobId] = "queued"
+                            log.info("Worker cancelled during processing; re-queue jobId={}", jobId)
+                            queue.offer(jobId)
+                            requeued = true
+                        } else {
+                            // Timeout or child cancellation inside processing — treat as failure
+                            jobs[jobId] = "failed"
+                            log.warn("Job failed (cancellation/timeout): jobId={}, reason=", jobId, ce)
+                        }
                     } catch (t: Throwable) {
                         jobs[jobId] = "failed"
-                        log.warn("Job failed: jobId={}, reason={}", jobId, t.message)
+                        log.warn("Job failed: jobId={}, reason=", jobId, t)
+                    } finally {
+                        if (!requeued) {
+                            jobRuntime.remove(jobId)
+                        }
                     }
                 }
             }

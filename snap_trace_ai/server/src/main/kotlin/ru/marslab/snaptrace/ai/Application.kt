@@ -51,8 +51,11 @@ fun Application.serverModule() {
     // Configure processors using application.conf (falls back to env inside)
     val clients = ClientsFactory.fromConfig(environment.config, logging)
     InMemoryStore.configureProcessors(clients.art, clients.gpt)
-    // Start background worker for job processing
-    InMemoryStore.startWorker(CoroutineScope(Dispatchers.Default), processingDelayMs = 10L)
+    // Start background worker for job processing if enabled
+    val autostart = environment.config.propertyOrNull("snapTrace.worker.autostart")?.getString()?.toBoolean() ?: true
+    if (autostart) {
+        InMemoryStore.startWorker(CoroutineScope(Dispatchers.Default), processingDelayMs = 10L)
+    }
     registerHealthRoutes()
     registerJobRoutes()
     registerFeedRoutes()

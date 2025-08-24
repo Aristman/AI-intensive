@@ -24,6 +24,7 @@ import ru.marslab.snaptrace.ai.metrics.Metrics
 
 class RealGptClient(
     private val iamToken: String,
+    private val apiKey: String,
     private val folderId: String,
     private val cfg: GptConfig,
     private val client: HttpClient = HttpClient(CIO) {
@@ -72,6 +73,7 @@ class RealGptClient(
         data class Result(
             val alternatives: List<Alternative> = emptyList()
         )
+
         @Serializable
         data class Alternative(
             val message: Message? = null,
@@ -115,7 +117,11 @@ class RealGptClient(
                 val httpResp = client.post(cfg.endpoint) {
                     contentType(ContentType.Application.Json)
                     headers {
-                        append("Authorization", "Bearer $iamToken")
+                        if (iamToken.isNotEmpty()) {
+                            append("Authorization", "Bearer $iamToken")
+                        } else {
+                            append("Authorization", "Api-Key $apiKey")
+                        }
                         append("x-folder-id", folderId)
                     }
                     setBody(req)
@@ -172,8 +178,11 @@ class RealGptClient(
                 // Retry on 429 Too Many Requests
                 try {
                     e.response.status.value == 429
-                } catch (_: Throwable) { false }
+                } catch (_: Throwable) {
+                    false
+                }
             }
+
             else -> false
         }
     }

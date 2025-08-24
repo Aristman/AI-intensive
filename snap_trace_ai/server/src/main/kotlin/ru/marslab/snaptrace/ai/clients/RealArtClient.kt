@@ -25,6 +25,7 @@ import ru.marslab.snaptrace.ai.metrics.Metrics
 
 class RealArtClient(
     private val iamToken: String,
+    private val apiKey: String,
     private val folderId: String,
     private val cfg: ArtConfig,
     private val client: HttpClient = HttpClient(CIO) {
@@ -103,7 +104,11 @@ class RealArtClient(
                 val httpResp = client.post(cfg.endpoint) {
                     contentType(ContentType.Application.Json)
                     headers {
-                        append("Authorization", "Bearer $iamToken")
+                        if (iamToken.isNotEmpty()) {
+                            append("Authorization", "Bearer $iamToken")
+                        } else {
+                            append("Authorization", "Api-Key $apiKey")
+                        }
                         append("x-folder-id", folderId)
                     }
                     setBody(req)

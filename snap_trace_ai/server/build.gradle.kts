@@ -29,6 +29,9 @@ dependencies {
 
     implementation("ch.qos.logback:logback-classic:$logbackVersion")
 
+    // Load environment variables from .env
+    implementation("io.github.cdimascio:dotenv-kotlin:6.4.1")
+
     testImplementation(kotlin("test"))
     testImplementation("io.ktor:ktor-server-test-host-jvm:$ktorVersion")
     testImplementation("io.ktor:ktor-client-mock-jvm:$ktorVersion")

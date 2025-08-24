@@ -38,6 +38,7 @@ class RealGptClientTest {
         )
         val client = RealGptClient(
             iamToken = "token",
+            apiKey = "",
             folderId = "folder",
             cfg = cfg,
             client = http,
@@ -69,6 +70,7 @@ class RealGptClientTest {
         )
         val client = RealGptClient(
             iamToken = "token",
+            apiKey = "",
             folderId = "folder",
             cfg = cfg,
             client = http,
@@ -100,6 +102,7 @@ class RealGptClientTest {
         )
         val client = RealGptClient(
             iamToken = "token",
+            apiKey = "",
             folderId = "folder",
             cfg = cfg,
             client = http,
@@ -131,6 +134,7 @@ class RealGptClientTest {
         )
         val client = RealGptClient(
             iamToken = "token",
+            apiKey = "",
             folderId = "folder",
             cfg = cfg,
             client = http,

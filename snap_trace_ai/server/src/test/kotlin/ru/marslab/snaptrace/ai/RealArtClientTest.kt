@@ -59,6 +59,7 @@ class RealArtClientTest {
         )
         val client = RealArtClient(
             iamToken = "token",
+            apiKey = "",
             folderId = "folder",
             cfg = cfg,
             client = http,
@@ -110,6 +111,7 @@ class RealArtClientTest {
             )
             val client = RealArtClient(
                 iamToken = "token",
+                apiKey = "",
                 folderId = "folder",
                 cfg = cfg,
                 client = http,
@@ -163,6 +165,7 @@ class RealArtClientTest {
             )
             val client = RealArtClient(
                 iamToken = "token",
+                apiKey = "",
                 folderId = "folder",
                 cfg = cfg,
                 client = http,
