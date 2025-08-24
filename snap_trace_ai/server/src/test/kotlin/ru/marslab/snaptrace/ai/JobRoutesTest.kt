@@ -7,6 +7,7 @@ import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.server.config.*
 import io.ktor.server.testing.*
+import kotlinx.coroutines.delay
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -116,5 +117,43 @@ class JobRoutesTest {
         val body = response.bodyAsText()
         println("create_job_too_large: status=${response.status} body=${body}")
         assertEquals(HttpStatusCode.BadRequest, response.status)
+    }
+
+    @Test
+    fun job_status_transitions_to_published() = testApplication {
+        application { serverModule() }
+        // Create job
+        val mp = MultiPartFormDataContent(
+            formData {
+                append("prompt", "s2 test")
+                append("file", ByteArray(128), Headers.build {
+                    append(HttpHeaders.ContentType, ContentType.Image.JPEG.toString())
+                    append(HttpHeaders.ContentDisposition, "filename=\"s2.jpg\"")
+                })
+            }
+        )
+        val createResp = client.post("/v1/jobs") {
+            header(HttpHeaders.ContentType, mp.contentType.toString())
+            setBody(mp)
+        }
+        assertEquals(HttpStatusCode.OK, createResp.status)
+        val body = createResp.bodyAsText()
+        val jobId = Regex(""""jobId":"([a-f0-9\-]+)"""").find(body)?.groupValues?.get(1)
+        assertTrue(jobId != null, "jobId should be present")
+
+        // Poll status until published with timeout
+        var status: String? = null
+        var attempts = 0
+        while (attempts < 50) { // up to ~1s with 20ms sleeps
+            val sResp = client.get("/v1/jobs/$jobId")
+            assertEquals(HttpStatusCode.OK, sResp.status)
+            val sBody = sResp.bodyAsText()
+            status = Regex(""""status":"(\w+)"""").find(sBody)?.groupValues?.get(1)
+            if (status == "published") break
+            delay(20)
+            attempts++
+        }
+        println("job_status_transitions_to_published: status=$status after $attempts attempts")
+        assertEquals("published", status)
     }
 }

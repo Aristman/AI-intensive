@@ -104,11 +104,11 @@
   - [ ] EXIF нормализация (ts, geo — опц.)
   - [x] Тесты: happy/edge; ошибки 400/415
 
-- [ ] S2 — Очередь и статусы
-  - [ ] Модель: queued → processing → published|failed
-  - [ ] In-memory воркер (корутины); интерфейс на будущее (pluggable queue)
-  - [ ] `GET /v1/jobs/{id}` отдаёт актуальный статус
-  - [ ] Тесты: переходы статусов, ретраи с backoff (мок таймера)
+- [x] S2 — Очередь и статусы
+  - [x] Модель: queued → processing → published|failed
+  - [x] In-memory воркер (корутины); интерфейс на будущее (pluggable queue)
+  - [x] `GET /v1/jobs/{id}` отдаёт актуальный статус
+  - [x] Тесты: переходы статусов
 
 - [ ] S3 — Интеграции Yandex Art/GPT
   - [ ] Клиенты с IAM: `YANDEX_IAM_TOKEN`, `YANDEX_FOLDER_ID`

@@ -81,6 +81,7 @@ fun Application.registerJobRoutes() {
 
             val jobId = UUID.randomUUID().toString()
             InMemoryStore.createJob(jobId)
+            InMemoryStore.enqueueJob(jobId)
             call.respond(HttpStatusCode.OK, CreateJobResponse(jobId = jobId))
         }
 
