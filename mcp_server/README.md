@@ -10,6 +10,10 @@ Server Info: name = `mcp-github-telegram-server`
   - `search_repos(query)` — поиск репозиториев GitHub
   - `create_issue(owner, repo, title, body?)` — создать GitHub Issue
   - `list_issues(owner, repo, state?, per_page?, page?)` — список issues репозитория. Возвращает только issues (PR исключены). Аргументы по умолчанию: `state = "open"`, `per_page = 5`, `page = 1`.
+  - `create_release(owner, repo, tag_name, name?, body?, draft?, prerelease?, target_commitish?)` — создать GitHub релиз
+  - `list_pull_requests(owner, repo, state?, per_page?, page?)` — список Pull Requests
+  - `get_pull_request(owner, repo, number)` — детали конкретного PR
+  - `list_pr_files(owner, repo, number, per_page?, page?)` — файлы, изменённые в PR
   - `tg_send_message(chat_id?, text, parse_mode?, disable_web_page_preview?)` — отправить текстовое сообщение в Telegram.
   - `tg_send_photo(chat_id?, photo, caption?, parse_mode?)` — отправить фото в Telegram.
   - `tg_get_updates(offset?, timeout?, allowed_updates?)` — получить обновления (long polling) в Telegram.
@@ -115,6 +119,20 @@ npm start
 - `list_issues`
   - Вход: `{ owner: string, repo: string, state?: string, per_page?: number, page?: number }`
   - Результат: список issues репозитория
+- `create_release`
+  - Вход: `{ owner: string, repo: string, tag_name: string, name?: string, body?: string, draft?: boolean, prerelease?: boolean, target_commitish?: string }`
+  - Результат: объект релиза
+- `list_pull_requests`
+  - Вход: `{ owner: string, repo: string, state?: string, per_page?: number, page?: number }`
+  - Значения по умолчанию: `state = "open"`, `per_page = 10`, `page = 1`
+  - Результат: массив PR
+- `get_pull_request`
+  - Вход: `{ owner: string, repo: string, number: number }`
+  - Результат: объект PR
+- `list_pr_files`
+  - Вход: `{ owner: string, repo: string, number: number, per_page?: number, page?: number }`
+  - Значения по умолчанию: `per_page = 100`, `page = 1`
+  - Результат: массив файлов PR
 - `tg_send_message`
   - Вход: `{ chat_id?: string, text: string, parse_mode?: string, disable_web_page_preview?: boolean }`
   - Результат: отправленное сообщение
@@ -197,6 +215,115 @@ npm start
   "jsonrpc": "2.0",
   "id": 4,
   "result": { "name": "list_issues", "result": [ /* массив issues без PR */ ] }
+}
+```
+
+- Вызов инструмента `create_release`:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "tools/call",
+  "params": {
+    "name": "create_release",
+    "arguments": {
+      "owner": "Aristman",
+      "repo": "AI-intensive",
+      "tag_name": "v1.0.0",
+      "name": "Release v1.0.0",
+      "body": "Notes...",
+      "draft": false,
+      "prerelease": false,
+      "target_commitish": "main"
+    }
+  }
+}
+```
+Ожидаемый ответ:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "result": { "name": "create_release", "result": { /* объект релиза */ } }
+}
+```
+
+- Вызов инструмента `list_pull_requests`:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "tools/call",
+  "params": {
+    "name": "list_pull_requests",
+    "arguments": {
+      "owner": "Aristman",
+      "repo": "AI-intensive",
+      "state": "open",
+      "per_page": 5,
+      "page": 1
+    }
+  }
+}
+```
+Ожидаемый ответ:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "result": { "name": "list_pull_requests", "result": [ /* массив PR */ ] }
+}
+```
+
+- Вызов инструмента `get_pull_request`:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "tools/call",
+  "params": {
+    "name": "get_pull_request",
+    "arguments": {
+      "owner": "Aristman",
+      "repo": "AI-intensive",
+      "number": 123
+    }
+  }
+}
+```
+Ожидаемый ответ:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "result": { "name": "get_pull_request", "result": { /* объект PR */ } }
+}
+```
+
+- Вызов инструмента `list_pr_files`:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "method": "tools/call",
+  "params": {
+    "name": "list_pr_files",
+    "arguments": {
+      "owner": "Aristman",
+      "repo": "AI-intensive",
+      "number": 123,
+      "per_page": 100,
+      "page": 1
+    }
+  }
+}
+```
+Ожидаемый ответ:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "result": { "name": "list_pr_files", "result": [ /* массив файлов PR */ ] }
 }
 ```
 

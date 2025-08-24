@@ -10,14 +10,14 @@ This repository contains multiple projects that showcase and integrate AI-assist
 
 - `mcp_server/`
   - Node.js MCP server (WebSocket JSON‑RPC) with tools:
-    - Repos: `get_repo`, `search_repos`, `create_issue`
+    - Repos: `get_repo`, `search_repos`, `create_issue`, Releases/PR: `create_release`, `list_pull_requests`, `get_pull_request`, `list_pr_files`
     - Docker/Java: `docker_exec_java`
     - Telegram: `tg_send_message`, `tg_send_photo`, `tg_get_updates`
     - Composite: `create_issue_and_notify`
   - See `mcp_server/README.md` for detailed setup and usage.
   
   MCP‑сервер на Node.js (WebSocket JSON‑RPC) с инструментами:
-  - Репозитории: `get_repo`, `search_repos`, `create_issue`
+  - Репозитории: `get_repo`, `search_repos`, `create_issue`; Релизы/PR: `create_release`, `list_pull_requests`, `get_pull_request`, `list_pr_files`
   - Docker/Java: `docker_exec_java`
   - Telegram: `tg_send_message`, `tg_send_photo`, `tg_get_updates`
   - Составной: `create_issue_and_notify`

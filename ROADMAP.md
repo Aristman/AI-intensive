@@ -16,7 +16,9 @@
   - Включено структурированное JSON‑логирование (с `traceId`, `durationMs`, типами событий)
   - Реализованы корректные коды ошибок JSON‑RPC: `-32700`, `-32600`, `-32601`, `-32602`, `-32603` + серверные `-3200x`
   - Расширена диагностика GitHub/Telegram API и Docker (`ghRequest`, `tgRequest`, `docker_*`) с кодами `-32010/-32011/-32020/-32021`
-- [ ] Rate limiting и простая аутентификация (например, `X-API-Key` через ревёрс-прокси)
+ - [x] Документация новых GitHub инструментов (релизы и PR) в `mcp_server/README.md` с JSON-RPC примерами
+ - [ ] Unit-тесты для GitHub инструментов: `create_release`, `list_pull_requests`, `get_pull_request`, `list_pr_files` (моки GitHub API)
+ - [ ] Rate limiting и простая аутентификация (например, `X-API-Key` через ревёрс-прокси)
 - [ ] Интеграционные тесты инструментов (`get_repo`, `search_repos`, `create_issue`) с моками GitHub API
 - [ ] Безопасность: валидация входных параметров, защита от слишком частых запросов
 
@@ -45,6 +47,7 @@
 ## sample_app/
 - [x] Централизация навигации через enum `Screen` (SSOT: иконки, лейблы, пункты нижней навигации и фабрика страниц в `screens.dart`)
 - [x] Централизованный резолвер LLM (`resolveLlmUseCase`) и рефакторинг агентов; добавлены юнит‑тесты; обновлена документация (README/ROADMAP)
+ - [ ] Интеграция `McpGithubService` в `GitHubAgentScreen` (создание релиза, управление PR) и покрытие виджет/юнит‑тестами
 - [ ] Настроить работу экрана CodeOps с LLM YandexGPT (приоритет: первый)
   - [ ] Интегрировать `YandexGptUseCase` в `CodeOpsAgent`/`CodeOpsBuilderAgent` через интерфейс `LlmUseCase`
   - [ ] Обновить выбор сети в настройках: добавить/актуализировать `NeuralNetwork.yandexgpt` для CodeOps

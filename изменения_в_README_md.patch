@@ -1,0 +1,39 @@
+Subject: [PATCH] изменения в README.md
+---
+Index: README.md
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/README.md b/README.md
+--- a/README.md	(revision f27cae18090c7901f154ef0f57f1c6fe9a29af71)
++++ b/README.md	(date 1756034956158)
+@@ -106,6 +106,28 @@
+ 
+ - Совместимость с YandexGPT: для повышения соблюдения строгого JSON в `sample_app/lib/data/llm/yandexgpt_usecase.dart` системные инструкции переносятся в первое `user`‑сообщение. В `sample_app/lib/agents/code_ops_builder_agent.dart` добавлен fallback при отсутствии JSON — извлечение кода и тестов из fenced‑блоков и формирование минимального валидного JSON для продолжения пайплайна. Покрыто тестами: `sample_app/test/code_ops_builder_agent_yandex_fallback_test.dart`. Подробности: раздел «Совместимость с YandexGPT» в `docs/code_ops_builder_agent.md`.
+ 
++### Server: YandexGPT/YandexArt (Ktor HTTP client)
++
++- Реализованы реальные HTTP‑клиенты с IAM‑аутентификацией:
++  - `ru.marslab.snaptrace.ai.clients.RealGptClient`
++  - `ru.marslab.snaptrace.ai.clients.RealArtClient`
++- Инициализация через фабрику: `ClientsFactory.fromConfig(environment.config)` в `snap_trace_ai/server/src/main/kotlin/ru/marslab/snaptrace/ai/Application.kt`.
++- Конфигурация (`snap_trace_ai/server/src/main/resources/application.conf`):
++  - `snapTrace.yc.gpt`: `endpoint`, `model`, `temperature`, `maxTokens`, `systemText`
++  - `snapTrace.yc.art`: `endpoint`, `poll.operationsEndpoint`, `model`, `seed`, `aspect.widthRatio`, `aspect.heightRatio`, `poll.intervalMs`, `poll.timeoutMs`
++  - `snapTrace.httpClient.timeoutMs`
++- Переменные окружения:
++  - `SNAPTRACE_USE_REAL=true|false` — включение реальных клиентов
++  - `YANDEX_IAM_TOKEN`, `YANDEX_FOLDER_ID` — обязательны при `SNAPTRACE_USE_REAL=true`
++- Авторизация: `Authorization: Bearer <IAM>`, заголовок `x-folder-id: <FOLDER_ID>`.
++- Модели: `modelUri` формируется как `gpt://{folderId}/{model}` и `art://{folderId}/{model}`.
++- YandexArt — асинхронная генерация: старт → polling операций до готовности → возврат `data:image/jpeg;base64,...` URL.
++- Тестируемость: в клиентах поддержана инъекция `HttpClient`; юнит‑тесты используют `Ktor MockEngine`:
++  - `snap_trace_ai/server/src/test/kotlin/ru/marslab/snaptrace/ai/RealGptClientTest.kt`
++  - `snap_trace_ai/server/src/test/kotlin/ru/marslab/snaptrace/ai/RealArtClientTest.kt`
++- Сборка/тесты модуля сервера:
++  - `./gradlew -p snap_trace_ai/server build`
++
+ ---
+ 
+ ## Roadmap / Дорожная карта
