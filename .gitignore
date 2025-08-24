@@ -49,3 +49,4 @@ bin/
 # Local env files (secrets)
 .env
 issue-monitor/.env
+/изменения_в_README_md.patch
