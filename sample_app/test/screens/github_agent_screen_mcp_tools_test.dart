@@ -63,6 +63,11 @@ void main() {
   setUpAll(() async {
     SharedPreferences.setMockInitialValues({});
   });
+  setUp(() async {
+    // Сбрасываем мок-хранилище перед каждым тестом, чтобы история диалога
+    // и другие значения не протекали между тестами.
+    SharedPreferences.setMockInitialValues({});
+  });
 
   group('GitHubAgentScreen MCP tools bridge', () {
     testWidgets('executes get_repo via MCP and shows summary', (tester) async {
@@ -100,9 +105,218 @@ void main() {
       await tester.enterText(find.byKey(const Key('github_query_field')), 'repo info');
       await tester.tap(find.byKey(const Key('github_send_btn')));
       await tester.pumpAndSettle();
+      // Дополнительный pump для надёжного ожидания асинхронного выполнения инструмента
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
 
       // Assert: отображён результат краткого саммари
       expect(find.textContaining('Репозиторий: aristman/AI-intensive'), findsOneWidget);
+    });
+
+    testWidgets('does not use deprecated short summary for create_release', (tester) async {
+      // Arrange
+      const settings = AppSettings(
+        useMcpServer: true,
+        mcpServerUrl: 'ws://fake',
+        enabledMCPProviders: {MCPProvider.github},
+      );
+
+      final releaseResult = {
+        'tag_name': 'v9.9.9',
+        'name': 'Release 9.9.9',
+        'html_url': 'https://github.com/aristman/AI-intensive/releases/tag/v9.9.9',
+        'draft': false,
+        'prerelease': false,
+        'id': 999,
+      };
+
+      final fakeClient = FakeMcpClient(
+        tools: {'create_release'},
+        handlers: {
+          'create_release': (args) => releaseResult,
+        },
+      );
+
+      final widget = MaterialApp(
+        home: Scaffold(
+          body: GitHubAgentScreen(
+            initialSettings: settings,
+            agentFactory: (s, _) => FakeAgent(s, '{"tool":"create_release","args":{"owner":"aristman","repo":"AI-intensive","tag_name":"v9.9.9"}}'),
+            mcpClientFactory: () => fakeClient,
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(widget);
+      await tester.pumpAndSettle();
+
+      // Act
+      await tester.enterText(find.byKey(const Key('github_query_field')), 'create release v9.9.9');
+      await tester.tap(find.byKey(const Key('github_send_btn')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
+
+      // Assert: нет короткого англоязычного формата, только детальный
+      expect(find.textContaining('Release создан:'), findsNothing);
+      expect(find.textContaining('Релиз создан: Release 9.9.9'), findsOneWidget);
+    });
+
+    testWidgets('shows friendly validation error when create_release is missing tag_name and does not call MCP', (tester) async {
+      // Arrange
+      const settings = AppSettings(
+        useMcpServer: true,
+        mcpServerUrl: 'ws://fake',
+        enabledMCPProviders: {MCPProvider.github},
+      );
+
+      var called = false;
+      final fakeClient = FakeMcpClient(
+        tools: {'create_release'},
+        handlers: {
+          'create_release': (args) {
+            called = true;
+            return {
+              'tag_name': args['tag_name'] ?? '',
+              'html_url': 'https://example.com',
+            };
+          },
+        },
+      );
+
+      final widget = MaterialApp(
+        home: Scaffold(
+          body: GitHubAgentScreen(
+            initialSettings: settings,
+            // Ответ ассистента без tag_name
+            agentFactory: (s, _) => FakeAgent(s, '{"tool":"create_release","args":{"owner":"aristman","repo":"AI-intensive"}}'),
+            mcpClientFactory: () => fakeClient,
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(widget);
+      await tester.pumpAndSettle();
+
+      // Act
+      await tester.enterText(find.byKey(const Key('github_query_field')), 'create release without tag');
+      await tester.tap(find.byKey(const Key('github_send_btn')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
+
+      // Assert: дружелюбная ошибка валидации и отсутствие запуска MCP
+      expect(
+        find.textContaining('Не удалось выполнить create_release: отсутствуют обязательные поля (owner/repo/tag_name).'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Выполняю create_release…'), findsNothing);
+      expect(called, isFalse);
+    });
+
+    testWidgets('shows detailed summary for create_release with link', (tester) async {
+      // Arrange
+      const settings = AppSettings(
+        useMcpServer: true,
+        mcpServerUrl: 'ws://fake',
+        enabledMCPProviders: {MCPProvider.github},
+      );
+
+      final releaseResult = {
+        'tag_name': 'v1.2.3',
+        'name': 'Release 1.2.3',
+        'html_url': 'https://github.com/aristman/AI-intensive/releases/tag/v1.2.3',
+        'draft': false,
+        'prerelease': true,
+        'id': 123456,
+        'target_commitish': 'main',
+        'created_at': '2025-08-24T20:00:00Z',
+        'published_at': '2025-08-24T20:05:00Z',
+        'body': 'Changelog:\n- Feature A\n- Fix B',
+      };
+
+      final fakeClient = FakeMcpClient(
+        tools: {'create_release'},
+        handlers: {
+          'create_release': (args) => releaseResult,
+        },
+      );
+
+      final widget = MaterialApp(
+        home: Scaffold(
+          body: GitHubAgentScreen(
+            initialSettings: settings,
+            agentFactory: (s, _) => FakeAgent(s, '{"tool":"create_release","args":{"owner":"aristman","repo":"AI-intensive","tag_name":"v1.2.3"}}'),
+            mcpClientFactory: () => fakeClient,
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(widget);
+      await tester.pumpAndSettle();
+
+      // Act
+      await tester.enterText(find.byKey(const Key('github_query_field')), 'create release v1.2.3');
+      await tester.tap(find.byKey(const Key('github_send_btn')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
+
+      // Assert
+      expect(find.textContaining('Релиз создан: Release 1.2.3'), findsOneWidget);
+      expect(find.textContaining('Tag: v1.2.3'), findsOneWidget);
+      expect(find.textContaining('Статус: published, prerelease'), findsOneWidget);
+      expect(find.textContaining('ID: 123456'), findsOneWidget);
+      expect(find.textContaining('Target: main'), findsOneWidget);
+      expect(find.textContaining('Создан: 2025-08-24T20:00:00Z'), findsOneWidget);
+      expect(find.textContaining('Опубликован: 2025-08-24T20:05:00Z'), findsOneWidget);
+      expect(find.textContaining('URL: https://github.com/aristman/AI-intensive/releases/tag/v1.2.3'), findsOneWidget);
+      expect(find.textContaining('Описание:'), findsOneWidget);
+      expect(find.textContaining('Feature A'), findsOneWidget);
+      expect(find.textContaining('Fix B'), findsOneWidget);
+    });
+
+    testWidgets('summarizes list_issues into compact lines', (tester) async {
+      // Arrange
+      const settings = AppSettings(
+        useMcpServer: true,
+        mcpServerUrl: 'ws://fake',
+        enabledMCPProviders: {MCPProvider.github},
+      );
+
+      final fakeClient = FakeMcpClient(
+        tools: {'list_issues'},
+        handlers: {
+          'list_issues': (args) => [
+                {'number': 19, 'title': 'Fix bug', 'state': 'open'},
+                {'number': 20, 'title': 'Add feature', 'state': 'closed'},
+              ],
+        },
+      );
+
+      final widget = MaterialApp(
+        home: Scaffold(
+          body: GitHubAgentScreen(
+            initialSettings: settings,
+            agentFactory: (s, _) => FakeAgent(s, '{"tool":"list_issues","args":{"owner":"aristman","repo":"AI-intensive"}}'),
+            mcpClientFactory: () => fakeClient,
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(widget);
+      await tester.pumpAndSettle();
+
+      // Act
+      await tester.enterText(find.byKey(const Key('github_query_field')), 'list issues');
+      await tester.tap(find.byKey(const Key('github_send_btn')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
+
+      // Assert: компактные строки
+      expect(find.textContaining('#19 Fix bug (open)'), findsOneWidget);
+      expect(find.textContaining('#20 Add feature (closed)'), findsOneWidget);
     });
 
     testWidgets('shows friendly error and tools list when tool is not available', (tester) async {
@@ -139,6 +353,8 @@ void main() {
       // Act
       await tester.enterText(find.byKey(const Key('github_query_field')), 'list prs');
       await tester.tap(find.byKey(const Key('github_send_btn')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 50));
       await tester.pumpAndSettle();
 
       // Assert: дружелюбная ошибка и перечень доступных инструментов

@@ -271,7 +271,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
 
   Future<void> _maybeExecuteTool(String assistantText) async {
     try {
-      dev.log('Tool detection on assistantText (first 500 chars): ${assistantText.substring(0, assistantText.length > 500 ? 500 : assistantText.length)}', name: 'GitHubAgent');
+      dev.log('Tool detection on assistantText: ${assistantText.length})', name: 'GitHubAgent');
       final data = tryExtractJsonMap(assistantText);
       if (data == null) {
         dev.log('No JSON command detected in assistantText', name: 'GitHubAgent');
@@ -369,6 +369,24 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
         return;
       }
 
+      // Дополнительная валидация параметров для отдельных инструментов
+      if (tool == 'create_release') {
+        final String owner = (args['owner'] ?? '').toString().trim();
+        final String repo = (args['repo'] ?? '').toString().trim();
+        final String tagName = (args['tag_name'] ?? '').toString().trim();
+
+        if (owner.isEmpty || repo.isEmpty || tagName.isEmpty) {
+          setState(() {
+            _messages.add(Message(
+              text: 'Не удалось выполнить create_release: отсутствуют обязательные поля (owner/repo/tag_name).',
+              isUser: false,
+            ));
+          });
+          _scrollToBottom();
+          return;
+        }
+      }
+
       // Generic MCP tool execution for other tools
       if (_mcpReady) {
         // Preflight: проверяем наличие инструмента на сервере
@@ -417,7 +435,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
 
         final normalized = (resp is Map<String, dynamic>) ? (resp['result'] ?? resp) : resp;
         final summary = _summarizeToolResult(tool, normalized);
-        dev.log('$tool success. Summary: ${summary.length > 500 ? summary.substring(0, 500) + '…' : summary}', name: 'GitHubAgent');
+        dev.log('$tool success. Summary: $summary}', name: 'GitHubAgent');
 
         setState(() {
           _messages.add(Message(text: summary, isUser: false, isFinal: true));
@@ -481,6 +499,54 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
         final desc = result['description'] ?? '';
         return 'Репозиторий: $full\n${desc.toString()}';
       }
+      if (tool == 'list_issues') {
+        final list = (result is List)
+            ? List<Map<String, dynamic>>.from(result)
+            : (result is Map && result['items'] is List)
+                ? List<Map<String, dynamic>>.from(result['items'])
+                : const <Map<String, dynamic>>[];
+        if (list.isEmpty) return 'Issues не найдены.';
+        final top = list.take(10).toList();
+        final lines = <String>[];
+        for (var i = 0; i < top.length; i++) {
+          final issue = top[i];
+          final num = issue['number'] ?? '?';
+          final title = issue['title'] ?? '';
+          final state = issue['state'] ?? '';
+          lines.add('#$num $title (${state.toString()})');
+        }
+        return lines.join('\n');
+      }
+      if (tool == 'create_release' && result is Map<String, dynamic>) {
+        String s(Object? v) => v == null ? '' : v.toString();
+        final tag = s(result['tag_name']);
+        final name = s(result['name']).isEmpty ? tag : s(result['name']);
+        final url = s(result['html_url'].toString().isNotEmpty ? result['html_url'] : (result['url'] ?? ''));
+        final draft = result['draft'] == true;
+        final prerelease = result['prerelease'] == true;
+        final id = s(result['id']);
+        final target = s(result['target_commitish']);
+        final createdAt = s(result['created_at']);
+        final publishedAt = s(result['published_at']);
+        final body = s(result['body']);
+
+        final statusParts = <String>[];
+        statusParts.add(draft ? 'draft' : 'published');
+        if (prerelease) statusParts.add('prerelease');
+
+        final details = <String>[
+          'Релиз создан: $name',
+          if (tag.isNotEmpty) 'Tag: $tag',
+          if (statusParts.isNotEmpty) 'Статус: ${statusParts.join(', ')}',
+          if (id.isNotEmpty) 'ID: $id',
+          if (target.isNotEmpty) 'Target: $target',
+          if (createdAt.isNotEmpty) 'Создан: $createdAt',
+          if (publishedAt.isNotEmpty) 'Опубликован: $publishedAt',
+          if (url.isNotEmpty) 'URL: $url',
+          if (body.isNotEmpty) 'Описание:\n$body',
+        ];
+        return details.join('\n');
+      }
       if (tool == 'search_repos') {
         final list = (result is Map && result['items'] is List)
             ? List<Map<String, dynamic>>.from(result['items'])
@@ -493,11 +559,6 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
           lines.add('${i + 1}. ${item['full_name'] ?? item['name'] ?? 'repo'} — ${item['description'] ?? ''}');
         }
         return lines.join('\n');
-      }
-      if (tool == 'create_release' && result is Map<String, dynamic>) {
-        final tag = result['tag_name'] ?? '';
-        final url = result['html_url'] ?? result['url'] ?? '';
-        return 'Release создан: $tag $url';
       }
       if (tool == 'list_pull_requests') {
         final list = (result is List)
