@@ -17,6 +17,9 @@ data class GptConfig(
     val maxTokens: Int,
     val systemText: String,
     val timeoutMs: Long,
+    val retryMaxAttempts: Int = 3,
+    val retryBaseDelayMs: Long = 200,
+    val retryMaxDelayMs: Long = 2000,
 )
 
 data class ArtConfig(
@@ -29,6 +32,9 @@ data class ArtConfig(
     val pollIntervalMs: Long,
     val pollTimeoutMs: Long,
     val timeoutMs: Long,
+    val retryMaxAttempts: Int = 3,
+    val retryBaseDelayMs: Long = 200,
+    val retryMaxDelayMs: Long = 2000,
 )
 
 object ClientsFactory {
@@ -50,6 +56,9 @@ object ClientsFactory {
                 maxTokens = 2000,
                 systemText = "Сгенерируй лаконичную подпись к изображению на основе подсказки",
                 timeoutMs = 15000,
+                retryMaxAttempts = 3,
+                retryBaseDelayMs = 200,
+                retryMaxDelayMs = 2000,
             )
             val artCfg = ArtConfig(
                 endpoint = "https://llm.api.cloud.yandex.net/foundationModels/v1/imageGenerationAsync",
@@ -61,6 +70,9 @@ object ClientsFactory {
                 pollIntervalMs = 1000,
                 pollTimeoutMs = 60000,
                 timeoutMs = 15000,
+                retryMaxAttempts = 3,
+                retryBaseDelayMs = 200,
+                retryMaxDelayMs = 2000,
             )
             AiClients(
                 art = RealArtClient(iam!!, folder!!, artCfg),
@@ -96,6 +108,9 @@ object ClientsFactory {
             maxTokens = getInt("snapTrace.yc.gpt.maxTokens", 2000),
             systemText = get("snapTrace.yc.gpt.systemText", "Сгенерируй лаконичную подпись к изображению на основе подсказки"),
             timeoutMs = getLong("snapTrace.httpClient.timeoutMs", 15000),
+            retryMaxAttempts = getInt("snapTrace.httpClient.retry.maxAttempts", 3),
+            retryBaseDelayMs = getLong("snapTrace.httpClient.retry.baseDelayMs", 200),
+            retryMaxDelayMs = getLong("snapTrace.httpClient.retry.maxDelayMs", 2000),
         )
         val artCfg = ArtConfig(
             endpoint = get("snapTrace.yc.art.endpoint", "https://llm.api.cloud.yandex.net/foundationModels/v1/imageGenerationAsync"),
@@ -107,6 +122,9 @@ object ClientsFactory {
             pollIntervalMs = getLong("snapTrace.yc.art.poll.intervalMs", 1000),
             pollTimeoutMs = getLong("snapTrace.yc.art.poll.timeoutMs", 60000),
             timeoutMs = getLong("snapTrace.httpClient.timeoutMs", 15000),
+            retryMaxAttempts = getInt("snapTrace.httpClient.retry.maxAttempts", 3),
+            retryBaseDelayMs = getLong("snapTrace.httpClient.retry.baseDelayMs", 200),
+            retryMaxDelayMs = getLong("snapTrace.httpClient.retry.maxDelayMs", 2000),
         )
 
         val canUseReal = useRealFlag && iam != null && folder != null

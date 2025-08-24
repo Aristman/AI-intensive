@@ -114,7 +114,7 @@
   - [x] Клиенты с IAM: `YANDEX_IAM_TOKEN`, `YANDEX_FOLDER_ID`
   - [x] Пайплайн: Art → изображение; GPT → подпись (стабы)
   - [x] Таймауты HTTP/poll (конфигурируемые)
-  - [ ] Ретраи и метрики длительности
+  - [x] Ретраи и метрики длительности
   - [x] Тесты: моки клиентов; интеграционные — за флагом
   - [x] Инъекция `HttpClient` для тестируемости (Ktor MockEngine)
   - [x] Негативные тесты: GPT — пустой result/alternatives/text; Art — timeout, done без image

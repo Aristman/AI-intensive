@@ -49,6 +49,28 @@ snapTrace {
 
 Все секреты должны храниться безопасно (локально через .env/.properties, в проде — Secrets Manager/Lockbox).
 
+### Примеры запуска с переменными окружения
+
+PowerShell (Windows):
+
+```powershell
+$env:SNAPTRACE_USE_REAL = "true"
+$env:YANDEX_IAM_TOKEN = "<your-iam-token>"
+$env:YANDEX_FOLDER_ID = "<your-folder-id>"
+./gradlew -p snap_trace_ai/server run
+```
+
+Bash (macOS/Linux/Git Bash):
+
+```bash
+export SNAPTRACE_USE_REAL=true
+export YANDEX_IAM_TOKEN="<your-iam-token>"
+export YANDEX_FOLDER_ID="<your-folder-id>"
+./gradlew -p snap_trace_ai/server run
+```
+
+Если любая из переменных отсутствует, будут использованы заглушки (`ArtClientStub`, `GptClientStub`).
+
 ## Эндпоинты
 - GET `/health` — проверка готовности
 - POST `/v1/jobs` — загрузка `multipart/form-data` (file, prompt, lat?, lon?, deviceId?) → `{ jobId, status: "queued" }`
@@ -147,6 +169,7 @@ snap_trace_ai/server/
   - `snapTrace.yc.gpt.*`: `endpoint`, `model`, `temperature`, `maxTokens`, `systemText`;
   - `snapTrace.yc.art.*`: `endpoint`, `poll.operationsEndpoint`, `model`, `seed`, `aspect.widthRatio`, `aspect.heightRatio`, `poll.intervalMs`, `poll.timeoutMs`;
   - `snapTrace.httpClient.timeoutMs` — общий таймаут HTTP‑клиента.
+  - `snapTrace.httpClient.retry.maxAttempts|baseDelayMs|maxDelayMs` — параметры ретраев (экспоненциальный backoff).
 - Поведение:
   - Yandex Art — старт асинхронной генерации, далее polling операций до `done` или истечения `pollTimeoutMs`; при успехе возвращается `data:image/jpeg;base64,...` URL.
   - YandexGPT — системный текст включён в первое `user`‑сообщение, ответ берётся из первой `alternative.message.text`.
@@ -154,6 +177,80 @@ snap_trace_ai/server/
   - В `RealArtClient`/`RealGptClient` поддержана инъекция внешнего `HttpClient`.
   - Юнит‑тесты используют `Ktor MockEngine`: позитивные и негативные сценарии (пустые альтернативы/текст у GPT; timeout/`done` без изображения у Art).
   - См. тесты: `src/test/kotlin/ru/marslab/snaptrace/ai/RealGptClientTest.kt`, `src/test/kotlin/ru/marslab/snaptrace/ai/RealArtClientTest.kt`.
+
+##### Ретраи и метрики
+- Что ретраим:
+  - Временные ошибки: таймаут HTTP‑запроса, статусы 5xx и 429 Too Many Requests.
+  - Не ретраим: прочие 4xx (ошибка клиента) — пробрасываются сразу.
+- Политика ретраев: экспоненциальный backoff с ограничением по `maxDelayMs`; количество попыток — `maxAttempts` (включая первую).
+- Метрики (in‑memory, см. `ru.marslab.snaptrace.ai.metrics.Metrics`):
+  - GPT: `gptAttempts`, `gptSuccesses`, `gptTotalDurationMs` (каждая HTTP‑попытка учитывается отдельно).
+  - Art start: `artStartAttempts`, `artStartSuccesses`, `artStartTotalDurationMs`.
+  - Art poll: `artPollAttempts`, `artPollSuccesses`, `artPollTotalDurationMs` (каждый опрос, включая ретраи, учитывается).
+  - Для диагностики доступны `snapshot()` и `reset()` (используются в тестах).
+
+#### Пример application.conf (дополненный)
+
+```hocon
+ktor {
+  deployment {
+    port = 8080
+  }
+}
+
+snapTrace {
+  httpClient {
+    # Общий таймаут HTTP‑клиента для RealGpt/RealArt (мс)
+    timeoutMs = 15000
+    retry {
+      # Ретраи для HTTP вызовов клиентов (экспоненциальный backoff)
+      maxAttempts = 3      # всего попыток, включая первую
+      baseDelayMs = 200    # начальная задержка между повторами
+      maxDelayMs = 2000    # максимальная задержка
+    }
+  }
+
+  yc {
+    gpt {
+      endpoint = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+      model = "yandexgpt"
+      temperature = 0.6
+      maxTokens = 2000
+      systemText = "Сгенерируй лаконичную подпись к изображению на основе подсказки"
+    }
+
+    art {
+      endpoint = "https://llm.api.cloud.yandex.net/foundationModels/v1/imageGenerationAsync"
+      poll {
+        operationsEndpoint = "https://llm.api.cloud.yandex.net/operations"
+        intervalMs = 1000
+        timeoutMs = 60000
+      }
+      model = "yandex-art/latest"
+      seed = 1863
+      aspect {
+        widthRatio = 2
+        heightRatio = 1
+      }
+    }
+  }
+
+  upload {
+    # Макс. размер загружаемого файла (байт)
+    maxBytes = 15728640
+  }
+}
+```
+
+#### Значения по умолчанию (если ключ отсутствует)
+- `snapTrace.httpClient.timeoutMs`: 15000
+- GPT: `endpoint` (completion), `model = yandexgpt`, `temperature = 0.6`, `maxTokens = 2000`, `systemText` как в примере выше
+- Art: `endpoint` (imageGenerationAsync), `poll.operationsEndpoint` (operations), `poll.intervalMs = 1000`, `poll.timeoutMs = 60000`, `model = yandex-art/latest`, `seed = 1863`, `aspect` 2x1
+- Ключи считываются в `ClientsFactory.fromConfig()` и применяются при выборе реальных клиентов.
+
+#### Авторизация
+- Заголовки: `Authorization: Bearer <YANDEX_IAM_TOKEN>`, `x-folder-id: <YANDEX_FOLDER_ID>`
+- Используются `RealGptClient` и `RealArtClient` при `SNAPTRACE_USE_REAL=true|1|yes` и наличии обеих переменных окружения.
 
 ## Тестирование
 ```bash

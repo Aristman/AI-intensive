@@ -5,6 +5,9 @@ import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.ClientRequestException
+import io.ktor.client.plugins.ServerResponseException
+import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.request.post
 import io.ktor.client.request.headers
 import io.ktor.client.request.setBody
@@ -14,6 +17,9 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.delay
+import org.slf4j.LoggerFactory
+import ru.marslab.snaptrace.ai.metrics.Metrics
 
 class RealGptClient(
     private val iamToken: String,
@@ -32,6 +38,8 @@ class RealGptClient(
         }
     },
 ) : GptClient {
+
+    private val log = LoggerFactory.getLogger(RealGptClient::class.java)
 
     @Serializable
     private data class CompletionOptions(
@@ -94,16 +102,78 @@ class RealGptClient(
             )
         )
 
-        val resp: GptResponse = client.post(cfg.endpoint) {
-            contentType(ContentType.Application.Json)
-            headers {
-                append("Authorization", "Bearer $iamToken")
-                append("x-folder-id", folderId)
+        val startedAt = System.currentTimeMillis()
+        try {
+            val resp: GptResponse = withRetry(
+                actionName = "gpt.completion",
+                maxAttempts = cfg.retryMaxAttempts,
+                baseDelayMs = cfg.retryBaseDelayMs,
+                maxDelayMs = cfg.retryMaxDelayMs,
+            ) {
+                val httpResp = client.post(cfg.endpoint) {
+                    contentType(ContentType.Application.Json)
+                    headers {
+                        append("Authorization", "Bearer $iamToken")
+                        append("x-folder-id", folderId)
+                    }
+                    setBody(req)
+                }
+                val code = httpResp.status.value
+                when {
+                    code in 200..299 -> httpResp.body<GptResponse>()
+                    code == 429 -> throw ClientRequestException(httpResp, "Too Many Requests")
+                    code in 500..599 -> throw ServerResponseException(httpResp, "Server error ${httpResp.status}")
+                    else -> throw ClientRequestException(httpResp, "HTTP ${httpResp.status}")
+                }
             }
-            setBody(req)
-        }.body()
+            val text = resp.result?.alternatives?.firstOrNull()?.message?.text?.takeIf { !it.isNullOrBlank() }
+            Metrics.recordGpt(System.currentTimeMillis() - startedAt, success = true)
+            return text ?: ""
+        } catch (e: Exception) {
+            Metrics.recordGpt(System.currentTimeMillis() - startedAt, success = false)
+            log.warn("GPT request failed after retries: ${e.message}")
+            throw e
+        }
+    }
 
-        val text = resp.result?.alternatives?.firstOrNull()?.message?.text?.takeIf { !it.isNullOrBlank() }
-        return text ?: ""
+    private suspend fun <T> withRetry(
+        actionName: String,
+        maxAttempts: Int,
+        baseDelayMs: Long,
+        maxDelayMs: Long,
+        block: suspend () -> T,
+    ): T {
+        var attempt = 1
+        var nextDelay = baseDelayMs.coerceAtLeast(0)
+        while (true) {
+            try {
+                return block()
+            } catch (e: Exception) {
+                val retriable = isRetriable(e)
+                if (!retriable || attempt >= maxAttempts) {
+                    log.debug("$actionName attempt=$attempt failed, retriable=$retriable; giving up: ${e.message}")
+                    throw e
+                }
+                log.debug("$actionName attempt=$attempt failed; retrying in ${nextDelay}ms: ${e.message}")
+                delay(nextDelay)
+                attempt += 1
+                nextDelay = (nextDelay * 2).coerceAtMost(maxDelayMs)
+            }
+        }
+    }
+
+    private fun isRetriable(e: Exception): Boolean {
+        return when (e) {
+            is HttpRequestTimeoutException -> true
+            is ServerResponseException -> true // 5xx
+            is ClientRequestException -> {
+                // Retry on 429 Too Many Requests
+                try {
+                    e.response.status.value == 429
+                } catch (_: Throwable) { false }
+            }
+            else -> false
+        }
     }
 }
+
