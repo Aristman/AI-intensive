@@ -35,6 +35,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isCheckingMcp = false;
   final _mcpUrlController = TextEditingController();
   String? _mcpUrlErrorText; // отображение ошибки URL
+  // Список методов MCP и состояния загрузки
+  List<Map<String, dynamic>> _mcpTools = const [];
+  bool _isLoadingMcpTools = false;
+  String? _mcpToolsError;
 
   @override
   void initState() {
@@ -89,6 +93,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _isCheckingMcp = true);
     try {
       await _connectAndInitMcp();
+      await _loadMcpTools();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('MCP сервер доступен и инициализирован'), backgroundColor: Colors.green),
@@ -104,6 +109,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
     } finally {
       if (mounted) setState(() => _isCheckingMcp = false);
+    }
+  }
+
+  Future<void> _loadMcpTools() async {
+    setState(() {
+      _isLoadingMcpTools = true;
+      _mcpToolsError = null;
+      _mcpTools = const [];
+    });
+    try {
+      final resp = await _mcpClient.toolsList();
+      final toolsDyn = resp['tools'];
+      final tools = (toolsDyn is List)
+          ? toolsDyn.map((e) => Map<String, dynamic>.from(e as Map)).toList()
+          : <Map<String, dynamic>>[];
+      setState(() {
+        _mcpTools = tools;
+      });
+    } catch (e) {
+      setState(() {
+        _mcpToolsError = 'Не удалось получить список методов: $e';
+        _mcpTools = const [];
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingMcpTools = false);
+      }
     }
   }
 
@@ -417,6 +449,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                     
+                  ],
+                ),
+              ),
+            ),
+            
+            const SizedBox(height: 16),
+            // MCP Server Card
+            Card(
+              key: const Key('mcp_card'),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'MCP сервер',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      key: const Key('use_mcp_server_checkbox'),
+                      title: const Text('Использовать MCP сервер'),
+                      value: _currentSettings.useMcpServer,
+                      onChanged: (bool? value) {
+                        setState(() {
+                          final use = value ?? false;
+                          _currentSettings = _currentSettings.copyWith(useMcpServer: use);
+                          _mcpUrlErrorText = use && !_isValidWebSocketUrl(_mcpUrlController.text.trim())
+                              ? 'Некорректный WebSocket URL (пример: ws://localhost:3001)'
+                              : null;
+                          if (!use) {
+                            _mcpConnected = false;
+                            _mcpInitialized = false;
+                            _mcpTools = const [];
+                            _mcpToolsError = null;
+                          }
+                        });
+                        widget.onSettingsChanged(_currentSettings);
+                      },
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                    ),
                     if (_currentSettings.useMcpServer) ...[
                       TextField(
                         key: const Key('mcp_url_field'),
@@ -467,25 +544,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 12),
+                      if (_mcpConnected && _mcpInitialized) ...[
+                        Row(
+                          children: const [
+                            Icon(Icons.build, size: 18, color: Colors.blue),
+                            SizedBox(width: 6),
+                            Text('Поддерживаемые методы', style: TextStyle(fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        if (_isLoadingMcpTools)
+                          const Center(child: Padding(padding: EdgeInsets.all(8.0), child: CircularProgressIndicator(strokeWidth: 2)))
+                        else if (_mcpToolsError != null)
+                          Text(_mcpToolsError!, style: const TextStyle(color: Colors.red))
+                        else if (_mcpTools.isEmpty)
+                          const Text('Нет доступных методов')
+                        else
+                          Column(
+                            children: _mcpTools.map((t) {
+                              final name = t['name']?.toString() ?? '';
+                              final desc = t['description']?.toString() ?? '';
+                              return ListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(name),
+                                subtitle: desc.isNotEmpty ? Text(desc) : null,
+                              );
+                            }).toList(),
+                          ),
+                      ],
                     ],
-                    CheckboxListTile(
-                      key: const Key('use_mcp_server_checkbox'),
-                      title: const Text('Использовать MCP сервер'),
-                      value: _currentSettings.useMcpServer,
-                      onChanged: (bool? value) {
-                        setState(() {
-                          final use = value ?? false;
-                          _currentSettings = _currentSettings.copyWith(useMcpServer: use);
-                          // Пересчитать ошибку URL при включении
-                          _mcpUrlErrorText = use && !_isValidWebSocketUrl(_mcpUrlController.text.trim())
-                              ? 'Некорректный WebSocket URL (пример: ws://localhost:3001)'
-                              : null;
-                        });
-                        widget.onSettingsChanged(_currentSettings);
-                      },
-                      controlAffinity: ListTileControlAffinity.leading,
-                      contentPadding: EdgeInsets.zero,
-                    ),
+                    const Divider(),
                     CheckboxListTile(
                       key: const Key('github_mcp_checkbox'),
                       title: const Text('Github MCP'),
@@ -505,9 +595,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         widget.onSettingsChanged(_currentSettings);
                       },
                       controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
                     ),
                     if (_currentSettings.isGithubMcpEnabled || _currentSettings.useMcpServer) ...[
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 8),
                       Container(
                         key: const Key('mcp_info_container'),
                         padding: const EdgeInsets.all(12),
@@ -581,13 +672,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           color: Colors.grey[600],
                         ),
                       ),
-                      // Карточка быстрого создания issue удалена по требованию
                     ],
                   ],
                 ),
               ),
             ),
-            
           ],
         ),
       ),

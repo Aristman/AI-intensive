@@ -42,6 +42,7 @@ extension on ReasoningAgent {
   }
 
   /// Принудительно сжать историю (для вызова из UI/тестов)
+  // ignore: unused_element
   Future<void> compressHistoryNow() async {
     await _maybeCompressHistory(force: true);
   }

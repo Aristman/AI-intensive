@@ -95,6 +95,7 @@ class _MultiAgentsScreenState extends State<MultiAgentsScreen> {
 
   // Отображаем текст как есть: ReasoningAgent уже очищает маркер окончания
 
+  // ignore: unused_element
   Future<void> _openSettings() async {
     final result = await Navigator.push<AppSettings>(
       context,
