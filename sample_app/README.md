@@ -77,19 +77,14 @@ samples, guidance on mobile development, and a full API reference.
 - Задайте URL: `ws://localhost:3001`.
 - Нажмите «Проверить MCP» — должно показать «Подключено и инициализировано».
 
-### 3) Быстрый тест: создание GitHub Issue
-- Блок «Быстрый тест: создать GitHub Issue» отображается, если включён GitHub MCP ИЛИ включён внешний MCP сервер (условие OR).
-- Заполните `owner`, `repo`, `title`, `body` и нажмите «Создать issue».
-- При активном внешнем MCP сервере локальный токен в приложении не требуется. При выключенном — нужен `GITHUB_MCP_TOKEN` (режим прямых REST‑вызовов).
-
-### 4) Основные файлы
+### Основные файлы
 - MCP сервер: `mcp_server/server.js`, конфиг `.env.example`, документация `mcp_server/README.md`.
 - MCP клиент: `lib/services/mcp_client.dart` (подключение, initialize, tools/list, tools/call).
 - Интеграция: `lib/services/mcp_integration_service.dart` (маршрутизация через MCP или прямые REST).
 - Настройки: `lib/models/app_settings.dart` — поля `useMcpServer`, `mcpServerUrl`, `enabledMCPProviders`.
-- UI настроек: `lib/screens/settings_screen.dart` — переключатели, ввод URL, проверка соединения, быстрый тест.
+- UI настроек: `lib/screens/settings_screen.dart` — переключатели, ввод URL, проверка соединения.
 
-### 5) Безопасность
+### 3) Безопасность
 - Токен GitHub (`GITHUB_TOKEN`) хранится только на стороне MCP сервера (`mcp_server/.env`).
 - Приложение при работе через MCP не передаёт токен по сети.
 

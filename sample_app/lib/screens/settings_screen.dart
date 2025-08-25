@@ -28,12 +28,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _jsonSchemaController = TextEditingController();
   final _systemPromptController = TextEditingController();
   bool _isGithubTokenValid = false;
-  // Controllers for quick GitHub Issue creation
-  final _repoOwnerController = TextEditingController();
-  final _repoNameController = TextEditingController();
-  final _issueTitleController = TextEditingController();
-  final _issueBodyController = TextEditingController();
-  bool _isCreatingIssue = false;
   // MCP client and state
   final McpClient _mcpClient = McpClient();
   bool _mcpConnected = false;
@@ -70,79 +64,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {
         _isGithubTokenValid = isValid;
       });
-    }
-  }
-
-  Future<void> _handleCreateIssue() async {
-    final owner = _repoOwnerController.text.trim();
-    final repo = _repoNameController.text.trim();
-    final title = _issueTitleController.text.trim();
-    final body = _issueBodyController.text.trim();
-
-    if (owner.isEmpty || repo.isEmpty || title.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Укажите владельца, репозиторий и заголовок issue'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    setState(() => _isCreatingIssue = true);
-    try {
-      if (_currentSettings.useMcpServer) {
-        // Ensure MCP connected and initialized
-        if (!_mcpConnected) {
-          await _connectAndInitMcp();
-        }
-        final resp = await _mcpClient.toolsCall('create_issue', {
-          'owner': owner,
-          'repo': repo,
-          'title': title,
-          'body': body,
-        });
-        final issue = (resp is Map && resp['result'] is Map)
-            ? Map<String, dynamic>.from(resp['result'] as Map)
-            : <String, dynamic>{};
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Issue создан (MCP): #${issue['number'] ?? '?'}'),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      } else {
-        if (!_isGithubTokenValid) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Сначала добавьте валидный GITHUB_MCP_TOKEN в .env или включите MCP сервер'),
-              backgroundColor: Colors.red,
-            ),
-          );
-          return;
-        }
-        final result = await _githubMcpService.createIssueFromEnv(owner, repo, title, body);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Issue создан: #${result['number']}'),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Ошибка при создании issue: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _isCreatingIssue = false);
     }
   }
 
@@ -190,10 +111,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void dispose() {
     _jsonSchemaController.dispose();
     _systemPromptController.dispose();
-    _repoOwnerController.dispose();
-    _repoNameController.dispose();
-    _issueTitleController.dispose();
-    _issueBodyController.dispose();
     _mcpUrlController.dispose();
     _mcpClient.close();
     super.dispose();
@@ -664,101 +581,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           color: Colors.grey[600],
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      Card(
-                        elevation: 0,
-                        color: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          side: BorderSide(color: Colors.grey[300]!),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Быстрый тест: создать GitHub Issue',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                              const SizedBox(height: 8),
-                              LayoutBuilder(
-                                builder: (context, constraints) {
-                                  final narrow = constraints.maxWidth < 480;
-                                  final children = <Widget>[
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _repoOwnerController,
-                                        decoration: const InputDecoration(
-                                          labelText: 'Владелец (owner)',
-                                          border: OutlineInputBorder(),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _repoNameController,
-                                        decoration: const InputDecoration(
-                                          labelText: 'Репозиторий (repo)',
-                                          border: OutlineInputBorder(),
-                                        ),
-                                      ),
-                                    ),
-                                  ];
-                                  return narrow
-                                      ? Column(
-                                          children: [
-                                            children[0],
-                                            const SizedBox(height: 8),
-                                            children[1],
-                                          ],
-                                        )
-                                      : Row(children: children);
-                                },
-                              ),
-                              const SizedBox(height: 8),
-                              TextField(
-                                controller: _issueTitleController,
-                                decoration: const InputDecoration(
-                                  labelText: 'Заголовок issue',
-                                  border: OutlineInputBorder(),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              TextField(
-                                controller: _issueBodyController,
-                                maxLines: 3,
-                                decoration: const InputDecoration(
-                                  labelText: 'Описание (опционально)',
-                                  border: OutlineInputBorder(),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton.icon(
-                                  onPressed: _isCreatingIssue
-                                      ? null
-                                      : (_currentSettings.useMcpServer
-                                          ? (_mcpUrlErrorText == null ? _handleCreateIssue : null)
-                                          : (_isGithubTokenValid ? _handleCreateIssue : null)),
-                                  icon: _isCreatingIssue
-                                      ? const SizedBox(
-                                          height: 16,
-                                          width: 16,
-                                          child: CircularProgressIndicator(strokeWidth: 2),
-                                        )
-                                      : const Icon(Icons.add_task),
-                                  label: Text(_isCreatingIssue
-                                      ? 'Создание...'
-                                      : 'Создать issue'),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
+                      // Карточка быстрого создания issue удалена по требованию
                     ],
                   ],
                 ),
