@@ -10,14 +10,14 @@ This repository contains multiple projects that showcase and integrate AI-assist
 
 - `mcp_server/`
   - Node.js MCP server (WebSocket JSON‑RPC) with tools:
-    - Repos: `get_repo`, `search_repos`, `create_issue`
+    - Repos: `get_repo`, `search_repos`, `create_issue`, Releases/PR: `create_release`, `list_pull_requests`, `get_pull_request`, `list_pr_files`
     - Docker/Java: `docker_exec_java`
     - Telegram: `tg_send_message`, `tg_send_photo`, `tg_get_updates`
     - Composite: `create_issue_and_notify`
   - See `mcp_server/README.md` for detailed setup and usage.
   
   MCP‑сервер на Node.js (WebSocket JSON‑RPC) с инструментами:
-  - Репозитории: `get_repo`, `search_repos`, `create_issue`
+  - Репозитории: `get_repo`, `search_repos`, `create_issue`; Релизы/PR: `create_release`, `list_pull_requests`, `get_pull_request`, `list_pr_files`
   - Docker/Java: `docker_exec_java`
   - Telegram: `tg_send_message`, `tg_send_photo`, `tg_get_updates`
   - Составной: `create_issue_and_notify`
@@ -29,13 +29,20 @@ This repository contains multiple projects that showcase and integrate AI-assist
   - Автоопределяет `entrypoint` (FQCN) и корректный путь `filename` по `package`.
   - Глобальный AppBar (`HomeScreen`) содержит индикатор статуса MCP: `MCP off`/`MCP ready`/`MCP active`; тултип показывает URL MCP или сообщение о fallback.
   - Навигация построена на enum `Screen` как едином источнике правды (иконки, лейблы, пункты нижней навигации и фабрика страниц) — см. `sample_app/lib/screens/screens.dart`.
+  - Экран GitHubAgentScreen: контекст репозитория (owner/repo) берётся из настроек приложения, поля ввода удалены. На экране есть локальный диалог настроек (owner, repo, лимиты списков: репозитории/issues/прочее). В шапке отображается текущий контекст; вызовы MCP и суммаризация учитывают эти настройки и лимиты. Ключи для тестов:
+    - Кнопки/лейблы: `github_local_settings_btn`, `github_repo_context_label`
+    - Поля диалога: `github_local_owner_field`, `github_local_repo_field`, `github_local_repos_limit_field`, `github_local_issues_limit_field`, `github_local_other_limit_field`
+    - Кнопка сохранения: `github_local_save_btn`
+    - Лимиты применяются в `_summarizeToolResult` для списков репозиториев, issues, PR и файлов.
+    - Покрытие тестами: см. `sample_app/test/screens/github_agent_screen_local_settings_test.dart`, `sample_app/test/screens/github_agent_screen_prompt_test.dart`, `sample_app/test/screens/github_agent_screen_mcp_tools_test.dart`.
   - Подробности в `sample_app/README.md`.
   
-  Flutter app (CodeOpsAgent + chat UI) integrated with MCP:
+  Flutter app (CodeOps Agent + chat UI) integrated with MCP:
   - Runs Java code in Docker via MCP (`docker_exec_java`).
   - Automatically infers Java `entrypoint` (FQCN) and `filename` path from source `package`.
   - Global AppBar (`HomeScreen`) contains an MCP status chip: `MCP off`/`MCP ready`/`MCP active`; tooltip shows MCP URL or fallback note.
   - Navigation is driven by the `Screen` enum as the single source of truth (icons, labels, bottom navigation destinations, and page factory) — see `sample_app/lib/screens/screens.dart`.
+  - GitHubAgentScreen: repository context (owner/repo) is driven by app settings, not text fields. The screen has a local settings dialog to configure owner, repo, and list limits (repos/issues/other). UI shows the current repo context in the header; MCP tool calls and summaries respect these settings and limits. Keys are provided for tests: `github_local_settings_btn`, `github_repo_context_label`, fields like `github_local_owner_field` and `github_local_save_btn`.
   - See `sample_app/README.md` for details.
 
 - `issue-monitor/`

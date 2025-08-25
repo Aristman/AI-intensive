@@ -239,7 +239,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _settingsService.saveSettings(_currentSettings);
     if (mounted) {
       widget.onSettingsChanged(_currentSettings);
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(_currentSettings);
     }
   }
 
@@ -502,6 +502,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     
                     if (_currentSettings.useMcpServer) ...[
                       TextField(
+                        key: const Key('mcp_url_field'),
                         enabled: _currentSettings.useMcpServer,
                         decoration: InputDecoration(
                           labelText: 'MCP WebSocket URL (например, ws://localhost:3001)',
@@ -523,6 +524,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       Row(
                         children: [
                           ElevatedButton.icon(
+                            key: const Key('check_mcp_button'),
                             onPressed: !_currentSettings.useMcpServer || _isCheckingMcp || _mcpUrlErrorText != null
                                 ? null
                                 : _checkMcp,
@@ -550,6 +552,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                     CheckboxListTile(
+                      key: const Key('use_mcp_server_checkbox'),
+                      title: const Text('Использовать MCP сервер'),
+                      value: _currentSettings.useMcpServer,
+                      onChanged: (bool? value) {
+                        setState(() {
+                          final use = value ?? false;
+                          _currentSettings = _currentSettings.copyWith(useMcpServer: use);
+                          // Пересчитать ошибку URL при включении
+                          _mcpUrlErrorText = use && !_isValidWebSocketUrl(_mcpUrlController.text.trim())
+                              ? 'Некорректный WebSocket URL (пример: ws://localhost:3001)'
+                              : null;
+                        });
+                        widget.onSettingsChanged(_currentSettings);
+                      },
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    CheckboxListTile(
+                      key: const Key('github_mcp_checkbox'),
                       title: const Text('Github MCP'),
                       value: _currentSettings.isGithubMcpEnabled,
                       onChanged: (bool? value) {
@@ -571,10 +592,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     if (_currentSettings.isGithubMcpEnabled || _currentSettings.useMcpServer) ...[
                       const SizedBox(height: 16),
                       Container(
+                        key: const Key('mcp_info_container'),
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           color: Colors.grey[100],
-                          borderRadius: BorderRadius.circular(8),
                           border: Border.all(color: Colors.grey[300]!),
                         ),
                         child: Column(

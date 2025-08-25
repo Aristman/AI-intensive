@@ -3,7 +3,12 @@ import 'dart:convert';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-class McpClient {
+/// Минимальный интерфейс клиента MCP для мокирования в тестах.
+abstract class McpApi {
+  Future<dynamic> toolsCall(String name, Map<String, dynamic> args, {Duration? timeout});
+}
+
+class McpClient implements McpApi {
   WebSocketChannel? _channel;
   StreamSubscription? _sub;
   int _idCounter = 1;
@@ -89,6 +94,7 @@ class McpClient {
     return result;
   }
 
+  @override
   Future<dynamic> toolsCall(String name, Map<String, dynamic> args, {Duration? timeout}) async {
     final result = await _send(
       'tools/call',

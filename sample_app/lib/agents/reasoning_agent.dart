@@ -40,6 +40,64 @@ extension on ReasoningAgent {
     }
     return null;
   }
+
+  /// Принудительно сжать историю (для вызова из UI/тестов)
+  Future<void> compressHistoryNow() async {
+    await _maybeCompressHistory(force: true);
+  }
+
+  /// Сжатие истории диалога через LLM: оставляем последние N пар,
+  /// остальное сваливаем в краткую сводку с пометкой.
+  Future<void> _maybeCompressHistory({bool force = false}) async {
+    if (!_settings.enableContextCompression) return;
+    final total = _history.length;
+    if (!force && total <= _settings.compressAfterMessages) return;
+
+    // Не дублировать сжатие, если в начале уже есть сводка
+    if (_history.isNotEmpty && _history.first.content.startsWith('[Сводка контекста]')) {
+      if (!force) return;
+    }
+
+    final keepPairs = _settings.compressKeepLastTurns.clamp(0, 50);
+    final keepMsgs = (keepPairs * 2);
+    if (total <= keepMsgs + 2) return; // нет смысла сжимать
+
+    final toSummarize = _history.sublist(0, total - keepMsgs);
+    final tail = _history.sublist(total - keepMsgs);
+
+    // Готовим сообщения для саммаризации
+    final summarySystem = 'Ты — помощник, который кратко суммирует историю диалога. '
+        'Сделай русскоязычное сжатое резюме предыдущих сообщений в 5–10 маркерах: факты, цели, решения, '
+        'неотвеченные вопросы, важные параметры (например, owner/repo), принятые договорённости. '
+        'Без воды. Не добавляй никаких служебных маркеров вроде END.';
+
+    final summaryMessages = <Map<String, String>>[
+      {'role': 'system', 'content': summarySystem},
+      for (final m in toSummarize) {'role': m.role, 'content': m.content},
+    ];
+
+    String summaryText;
+    try {
+      if (summarizerOverride != null) {
+        summaryText = await summarizerOverride!(
+          [for (final m in toSummarize) {'role': m.role, 'content': m.content}],
+          _settings,
+        );
+      } else {
+        final usecase = resolveLlmUseCase(_settings);
+        summaryText = await usecase.complete(messages: summaryMessages, settings: _settings);
+      }
+    } catch (_) {
+      // В случае ошибки саммаризации — не ломаем поток, просто выходим
+      return;
+    }
+
+    final wrapped = '[Сводка контекста]\n$summaryText'.trim();
+    _history
+      ..clear()
+      ..add(_Msg('assistant', wrapped))
+      ..addAll(tail);
+  }
 }
 
 /// Рассуждающий агент с историей и политикой уточнений.
@@ -54,8 +112,10 @@ class ReasoningAgent {
   AppSettings _settings;
   final String? extraSystemPrompt; // дополнительный системный промпт
   final McpIntegrationService _mcpIntegrationService;
+  // Опциональный переопределяемый саммаризатор для юнит‑тестов (чтобы не дергать внешние API)
+  final Future<String> Function(List<Map<String, String>> messages, AppSettings settings)? summarizerOverride;
 
-  ReasoningAgent({AppSettings? baseSettings, this.extraSystemPrompt})
+  ReasoningAgent({AppSettings? baseSettings, this.extraSystemPrompt, this.summarizerOverride})
       : _settings = (baseSettings ?? const AppSettings()).copyWith(
           reasoningMode: true,
           // формат ответа оставляем согласно настройкам; по умолчанию пусть будет текст
@@ -67,6 +127,27 @@ class ReasoningAgent {
   }
 
   void clearHistory() => _history.clear();
+
+  // Экспорт истории (без системного промпта)
+  List<Map<String, String>> exportHistory() => [
+        for (final m in _history) {'role': m.role, 'content': m.content}
+      ];
+
+  // Импорт истории (обрежем по лимиту historyDepth)
+  void importHistory(List<Map<String, String>> messages) {
+    _history.clear();
+    final limit = _settings.historyDepth.clamp(0, 100);
+    final takeCount = messages.length > limit ? limit : messages.length;
+    final start = messages.length - takeCount;
+    for (int i = start; i < messages.length; i++) {
+      final m = messages[i];
+      final role = m['role'] ?? 'user';
+      final content = m['content'] ?? '';
+      if (content.isNotEmpty) {
+        _history.add(_Msg(role, content));
+      }
+    }
+  }
 
   String _buildSystemContent() {
     final uncertaintyPolicy = 'Политика уточнений (режим рассуждения): Прежде чем выдавать итоговый ответ, '
@@ -106,9 +187,12 @@ class ReasoningAgent {
       };
     }
 
-    // обновляем историю в пределах лимита
+    // обновляем историю
     final limit = _settings.historyDepth.clamp(0, 100);
     _history.add(_Msg('user', userText));
+    // Попробуем сжать историю при необходимости ДО запроса к LLM
+    await _maybeCompressHistory();
+    // после возможного сжатия всё равно соблюдаем общий лимит хранения
     if (_history.length > limit) {
       _history.removeRange(0, _history.length - limit);
     }

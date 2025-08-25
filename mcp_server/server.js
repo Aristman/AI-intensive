@@ -50,7 +50,7 @@ function toJsonRpcError(err) {
   return { code: -32603, message: 'Internal error', data: msg };
 }
 
-export { RpcError, toJsonRpcError, jlog };
+export { RpcError, toJsonRpcError, jlog, handleToolCall };
 
 async function createTempDir(prefix = 'mcp-java-') {
   const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
@@ -159,6 +159,31 @@ async function handleToolCall(name, args) {
       // Filter out PRs
       const issuesOnly = Array.isArray(items) ? items.filter((it) => !it.pull_request) : [];
       return issuesOnly;
+    }
+    case 'create_release': {
+      if (!GITHUB_TOKEN) throw new RpcError(-32001, 'Server misconfiguration', 'GITHUB_TOKEN is not configured on server');
+      const { owner, repo, tag_name, name, body, draft = false, prerelease = false, target_commitish } = args || {};
+      if (!owner || !repo || !tag_name) throw new RpcError(-32602, 'Invalid params', 'owner, repo, tag_name are required');
+      const payload = { tag_name, name, body, draft: Boolean(draft), prerelease: Boolean(prerelease) };
+      if (target_commitish) payload.target_commitish = String(target_commitish);
+      return await ghRequest('POST', `/repos/${owner}/${repo}/releases`, payload);
+    }
+    case 'list_pull_requests': {
+      const { owner, repo, state = 'open', per_page = 10, page = 1 } = args || {};
+      if (!owner || !repo) throw new RpcError(-32602, 'Invalid params', 'owner and repo are required');
+      const qs = new URLSearchParams({ state: String(state), per_page: String(per_page), page: String(page) }).toString();
+      return await ghRequest('GET', `/repos/${owner}/${repo}/pulls?${qs}`);
+    }
+    case 'get_pull_request': {
+      const { owner, repo, number } = args || {};
+      if (!owner || !repo || !Number.isFinite(Number(number))) throw new RpcError(-32602, 'Invalid params', 'owner, repo, number are required');
+      return await ghRequest('GET', `/repos/${owner}/${repo}/pulls/${Number(number)}`);
+    }
+    case 'list_pr_files': {
+      const { owner, repo, number, per_page = 100, page = 1 } = args || {};
+      if (!owner || !repo || !Number.isFinite(Number(number))) throw new RpcError(-32602, 'Invalid params', 'owner, repo, number are required');
+      const qs = new URLSearchParams({ per_page: String(per_page), page: String(page) }).toString();
+      return await ghRequest('GET', `/repos/${owner}/${repo}/pulls/${Number(number)}/files?${qs}`);
     }
     case 'tg_send_message': {
       const { chat_id, text, parse_mode, disable_web_page_preview } = args || {};
@@ -453,6 +478,10 @@ function startServer() {
               { name: 'search_repos', description: 'Search GitHub repos', inputSchema: { query: 'string' } },
               { name: 'create_issue', description: 'Create GitHub issue', inputSchema: { owner: 'string', repo: 'string', title: 'string', body: 'string?' } },
               { name: 'list_issues', description: 'List issues for a repo (no PRs)', inputSchema: { owner: 'string', repo: 'string', state: 'string?', per_page: 'number?', page: 'number?' } },
+              { name: 'create_release', description: 'Create GitHub release', inputSchema: { owner: 'string', repo: 'string', tag_name: 'string', name: 'string?', body: 'string?', draft: 'boolean?', prerelease: 'boolean?', target_commitish: 'string?' } },
+              { name: 'list_pull_requests', description: 'List pull requests for a repo', inputSchema: { owner: 'string', repo: 'string', state: 'string?', per_page: 'number?', page: 'number?' } },
+              { name: 'get_pull_request', description: 'Get a pull request by number', inputSchema: { owner: 'string', repo: 'string', number: 'number' } },
+              { name: 'list_pr_files', description: 'List files of a pull request', inputSchema: { owner: 'string', repo: 'string', number: 'number', per_page: 'number?', page: 'number?' } },
               { name: 'tg_send_message', description: 'Send Telegram text message', inputSchema: { chat_id: 'string?', text: 'string', parse_mode: 'string?', disable_web_page_preview: 'boolean?' } },
               { name: 'tg_send_photo', description: 'Send Telegram photo by URL or file_id', inputSchema: { chat_id: 'string?', photo: 'string', caption: 'string?', parse_mode: 'string?' } },
               { name: 'tg_get_updates', description: 'Get Telegram updates (long polling)', inputSchema: { offset: 'number?', timeout: 'number?', allowed_updates: 'string[]?' } },

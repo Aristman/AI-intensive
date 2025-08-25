@@ -16,6 +16,7 @@ void main() {
           Screen.thinking => const ValueKey('reasoning-42'),
           Screen.multiAgent => const ValueKey('multi-42'),
           Screen.codeOps => const ValueKey('codeops-42'),
+          Screen.github => const ValueKey('github-42'),
         };
 
         await tester.pumpWidget(MaterialApp(home: w));

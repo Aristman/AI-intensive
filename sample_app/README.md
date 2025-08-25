@@ -95,6 +95,31 @@ samples, guidance on mobile development, and a full API reference.
 
 См. также: `mcp_server/README.md` для примеров JSON‑RPC (`get_repo`, `search_repos`, `create_issue`) и Dart‑примера вызова из Flutter.
 
+## GitHubAgentScreen: контекст из настроек и локальный диалог
+
+Экран GitHub‑агента использует контекст репозитория (owner/repo) из настроек приложения и не содержит полей ввода owner/repo в основном UI. Для быстрой настройки доступен локальный диалог.
+
+- Источник настроек: `lib/models/app_settings.dart` + `lib/services/settings_service.dart`
+- Экран: `lib/screens/github_agent_screen.dart`
+- Поведение:
+  - Заголовок экрана показывает текущий контекст `owner/repo` (Key: `github_repo_context_label`).
+  - Кнопка локальных настроек (Key: `github_local_settings_btn`) открывает диалог с полями:
+    - `github_local_owner_field`
+    - `github_local_repo_field`
+    - `github_local_repos_limit_field`
+    - `github_local_issues_limit_field`
+    - `github_local_other_limit_field`
+    - Кнопка «Сохранить»: `github_local_save_btn`
+  - Поле запроса и отправка работают всегда; при вызове MCP недостающие `owner/repo` берутся из настроек.
+  - Лимиты списков применяются в `_summarizeToolResult` к репозиториям, issues, PR и файлам.
+  - `ReasoningAgent` инициализируется с `extraSystemPrompt`, включающим текущие owner/repo и список доступных MCP инструментов.
+
+Тесты и рекомендации:
+- Виджет‑тесты: `test/screens/github_agent_screen_local_settings_test.dart`, `test/screens/github_agent_screen_prompt_test.dart`, `test/screens/github_agent_screen_mcp_tools_test.dart`.
+- Изоляция хранилища: перед каждым тестом сбрасывайте `SharedPreferences.setMockInitialValues({})`, иначе протечёт история диалога.
+- Асинхронность UI: после нажатия «Отправить» добавляйте `await tester.pump(const Duration(milliseconds: 50));` и затем `pumpAndSettle()` для стабильного ожидания MCP.
+- Мок MCP‑клиента: разделяйте `tools/list` и `tools/call`; для отсутствующих handlers возвращайте JSON‑RPC `-32601` ("Tool not found").
+
 ## CodeOpsAgent и запуск Java в Docker
 
 Этот проект содержит специализированного агента для операций с кодом — `CodeOpsAgent` — и экран `CodeOps` с чатом, интегрированным с MCP‑сервером для выполнения Java‑кода в Docker.
