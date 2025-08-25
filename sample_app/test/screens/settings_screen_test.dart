@@ -107,17 +107,34 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: SettingsScreen(
-            initialSettings: initialSettings.copyWith(
-              responseFormat: ResponseFormat.json,
-            ),
+            initialSettings: initialSettings,
             onSettingsChanged: (_) {},
           ),
           navigatorObservers: [mockObserver],
         ),
       );
 
+      // Act - меняем формат на JSON, тапая по текущему значению 'Текст'
+      final listFinder = find.byType(ListView);
+      expect(listFinder, findsOneWidget);
+      // Попробуем проскроллить до заголовка секции, если он есть, иначе просто вниз
+      final header = find.text('Формат ответа');
+      if (header.evaluate().isEmpty) {
+        await tester.fling(listFinder, const Offset(0, -600), 800);
+        await tester.pumpAndSettle();
+      } else {
+        await tester.scrollUntilVisible(header, 300, scrollable: listFinder);
+      }
+      // Открываем дропдаун, нажав на текст текущего значения
+      final currentValue = find.text('Текст');
+      expect(currentValue, findsWidgets);
+      await tester.tap(currentValue.first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('JSON схема').last);
+      await tester.pumpAndSettle();
+
       // Assert - должно быть поле для ввода JSON схемы
-      expect(find.byType(TextField), findsOneWidget);
+      expect(find.byKey(const Key('json_schema_field')), findsOneWidget);
     });
 
     testWidgets('should save custom JSON schema', (WidgetTester tester) async {
@@ -128,17 +145,31 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: SettingsScreen(
-            initialSettings: initialSettings.copyWith(
-              responseFormat: ResponseFormat.json,
-            ),
+            initialSettings: initialSettings,
             onSettingsChanged: (settings) => savedSettings = settings,
           ),
           navigatorObservers: [mockObserver],
         ),
       );
 
-      // Act - вводим JSON схему
-      await tester.enterText(find.byType(TextField), testSchema);
+      // Act - меняем формат на JSON, тапая по текущему значению 'Текст', и вводим схему
+      final listFinder = find.byType(ListView);
+      expect(listFinder, findsOneWidget);
+      final header = find.text('Формат ответа');
+      if (header.evaluate().isEmpty) {
+        await tester.fling(listFinder, const Offset(0, -600), 800);
+        await tester.pumpAndSettle();
+      } else {
+        await tester.scrollUntilVisible(header, 300, scrollable: listFinder);
+      }
+      final currentValue = find.text('Текст');
+      expect(currentValue, findsWidgets);
+      await tester.tap(currentValue.first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('JSON схема').last);
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('json_schema_field')), testSchema);
       await tester.pump();
       
       // Сохраняем настройки

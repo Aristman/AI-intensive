@@ -40,14 +40,17 @@ void main() {
 
       // Assert
       expect(find.text('Настройки'), findsOneWidget);
-      expect(find.byType(BackButton), findsOneWidget);
+      expect(find.text('Отменить'), findsOneWidget);
       expect(find.byType(DropdownButtonFormField<NeuralNetwork>), findsOneWidget);
       expect(find.byType(DropdownButtonFormField<ResponseFormat>), findsOneWidget);
       expect(find.text('DeepSeek'), findsOneWidget);
       expect(find.text('Текст'), findsOneWidget);
       expect(find.text('System prompt'), findsOneWidget);
       expect(find.byKey(const Key('system_prompt_field')), findsOneWidget);
-      expect(find.byType(IconButton), findsNWidgets(2)); // Кнопки назад и сохранить
+      expect(find.byIcon(Icons.save), findsOneWidget); // Кнопка сохранить
+      // Проверим наличие новых контролов LLM
+      expect(find.byKey(const Key('llm_temperature_slider')), findsOneWidget);
+      expect(find.byKey(const Key('llm_max_tokens_field')), findsOneWidget);
     });
 
     testWidgets('should update network selection', (WidgetTester tester) async {
@@ -175,6 +178,140 @@ void main() {
       expect(savedSettings!.systemPrompt, newPrompt);
 
       // Проверяем, что экран закрывается после сохранения
+      verify(() => mockObserver.didPop(any(), any()));
+    });
+
+    testWidgets('should change temperature for DeepSeek via slider and save', (WidgetTester tester) async {
+      // Arrange
+      final mockObserver = MockNavigatorObserver();
+      AppSettings? savedSettings;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsScreen(
+            initialSettings: initialSettings.copyWith(selectedNetwork: NeuralNetwork.deepseek),
+            onSettingsChanged: (settings) => savedSettings = settings,
+          ),
+          navigatorObservers: [mockObserver],
+        ),
+      );
+
+      // Act - меняем значение слайдера температуры
+      final sliderFinder = find.byKey(const Key('llm_temperature_slider'));
+      expect(sliderFinder, findsOneWidget);
+      final slider = tester.widget<Slider>(sliderFinder);
+      slider.onChanged?.call(1.55);
+      await tester.pump();
+
+      // Сохраняем
+      await tester.tap(find.byIcon(Icons.save));
+      await tester.pumpAndSettle();
+
+      // Assert
+      expect(savedSettings, isNotNull);
+      expect(savedSettings!.deepseekTemperature, closeTo(1.55, 0.01));
+      verify(() => mockObserver.didPop(any(), any()));
+    });
+
+    testWidgets('should change temperature for YandexGPT via slider and save', (WidgetTester tester) async {
+      // Arrange
+      final mockObserver = MockNavigatorObserver();
+      AppSettings? savedSettings;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsScreen(
+            initialSettings: initialSettings,
+            onSettingsChanged: (settings) => savedSettings = settings,
+          ),
+          navigatorObservers: [mockObserver],
+        ),
+      );
+
+      // Переключаемся на YandexGPT
+      await tester.tap(find.byType(DropdownButtonFormField<NeuralNetwork>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('YandexGPT').last);
+      await tester.pumpAndSettle();
+
+      // Act - меняем значение слайдера температуры
+      final sliderFinder = find.byKey(const Key('llm_temperature_slider'));
+      expect(sliderFinder, findsOneWidget);
+      final slider = tester.widget<Slider>(sliderFinder);
+      slider.onChanged?.call(0.75);
+      await tester.pump();
+
+      // Сохраняем
+      await tester.tap(find.byIcon(Icons.save));
+      await tester.pumpAndSettle();
+
+      // Assert
+      expect(savedSettings, isNotNull);
+      expect(savedSettings!.yandexTemperature, closeTo(0.75, 0.01));
+      verify(() => mockObserver.didPop(any(), any()));
+    });
+
+    testWidgets('should update max tokens for DeepSeek', (WidgetTester tester) async {
+      // Arrange
+      final mockObserver = MockNavigatorObserver();
+      AppSettings? savedSettings;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsScreen(
+            initialSettings: initialSettings.copyWith(selectedNetwork: NeuralNetwork.deepseek),
+            onSettingsChanged: (settings) => savedSettings = settings,
+          ),
+          navigatorObservers: [mockObserver],
+        ),
+      );
+
+      // Act - вводим значение в поле макс. токенов
+      await tester.enterText(find.byKey(const Key('llm_max_tokens_field')), '2000');
+      await tester.pump();
+
+      // Сохраняем
+      await tester.tap(find.byIcon(Icons.save));
+      await tester.pumpAndSettle();
+
+      // Assert
+      expect(savedSettings, isNotNull);
+      expect(savedSettings!.deepseekMaxTokens, 2000);
+      verify(() => mockObserver.didPop(any(), any()));
+    });
+
+    testWidgets('should update max tokens for YandexGPT', (WidgetTester tester) async {
+      // Arrange
+      final mockObserver = MockNavigatorObserver();
+      AppSettings? savedSettings;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsScreen(
+            initialSettings: initialSettings,
+            onSettingsChanged: (settings) => savedSettings = settings,
+          ),
+          navigatorObservers: [mockObserver],
+        ),
+      );
+
+      // Переключаемся на YandexGPT
+      await tester.tap(find.byType(DropdownButtonFormField<NeuralNetwork>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('YandexGPT').last);
+      await tester.pumpAndSettle();
+
+      // Act - вводим значение в поле макс. токенов
+      await tester.enterText(find.byKey(const Key('llm_max_tokens_field')), '1800');
+      await tester.pump();
+
+      // Сохраняем
+      await tester.tap(find.byIcon(Icons.save));
+      await tester.pumpAndSettle();
+
+      // Assert
+      expect(savedSettings, isNotNull);
+      expect(savedSettings!.yandexMaxTokens, 1800);
       verify(() => mockObserver.didPop(any(), any()));
     });
   });

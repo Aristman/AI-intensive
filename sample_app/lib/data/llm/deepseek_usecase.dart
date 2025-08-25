@@ -18,6 +18,9 @@ class DeepSeekUseCase implements LlmUseCase {
       throw Exception('API ключ DeepSeek не найден. Проверьте assets/.env');
     }
 
+    final double temperature = settings.deepseekTemperature.clamp(0.0, 2.0);
+    final int maxTokens = settings.deepseekMaxTokens > 0 ? settings.deepseekMaxTokens : 1;
+
     final response = await http.post(
       Uri.parse(_apiUrl),
       headers: {
@@ -28,7 +31,8 @@ class DeepSeekUseCase implements LlmUseCase {
         'model': 'deepseek-chat',
         'messages': messages,
         'stream': false,
-        'max_tokens': 1500,
+        'max_tokens': maxTokens,
+        'temperature': temperature,
         // Не задаем response_format принудительно, чтобы позволить уточняющие вопросы
         'response_format': null,
       }),
