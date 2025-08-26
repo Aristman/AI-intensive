@@ -31,7 +31,7 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
   bool _eventsExpanded = false; // панель событий: развернута во время выполнения
   List<Map<String, dynamic>> _patches = const [];
   final _patchService = PatchApplyService();
-  bool _forceLlmApply = false; // применять через LLM-агента
+  // Всегда применяем через LLM-агента в PatchApplyService
   
 
   @override
@@ -172,10 +172,22 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                         final count = await _patchService.applyPatches(
                           _patches,
                           settings: _settings,
-                          allowLlmFallback: true,
-                          forceLlm: _forceLlmApply,
                         );
-                        if (mounted) setState(() {});
+                        if (mounted) {
+                          setState(() {
+                            _events.add(AgentEvent(
+                              id: 'apply_${DateTime.now().millisecondsSinceEpoch}',
+                              runId: 'ui',
+                              stage: AgentStage.code_generated,
+                              severity: AgentSeverity.info,
+                              message: 'Применено файлов: $count (через LLM-агента)',
+                              meta: {
+                                'applied': count,
+                                'patches': _patches.length,
+                              },
+                            ));
+                          });
+                        }
                         if (!mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('Применено файлов: $count')),
@@ -203,17 +215,6 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
             ],
           ),
           const SizedBox(height: 8),
-          Row(
-            children: [
-              Checkbox(
-                value: _forceLlmApply,
-                onChanged: _running
-                    ? null
-                    : (v) => setState(() => _forceLlmApply = v ?? false),
-              ),
-              const Text('Применять через агента'),
-            ],
-          ),
           const SizedBox(height: 16),
           Theme(
             data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
