@@ -151,12 +151,44 @@ class AutoFixAgent implements IAgent {
                 files: targets, issues: issues, settings: effectiveSettings);
             if (suggestions.trim().isNotEmpty) {
               final head = suggestions.split('\n').take(5).join(' | ');
-              print('[AutoFixAgent] LLM suggestions received, length=${suggestions.length}, head="$head"');
+              ctrl.add(AgentEvent(
+                id: 'e2l1',
+                runId: runId,
+                stage: AgentStage.analysis_result,
+                severity: AgentSeverity.info,
+                message: 'LLM ответ получен (length=${suggestions.length})',
+                meta: {
+                  'preview': head,
+                },
+                progress: 0.6,
+              ));
               // Парсинг LLM unified diff по файлам
               final parsed = parseUnifiedDiffByFile(suggestions);
-              print('[AutoFixAgent] parsed file patches: ${parsed.length}');
+              ctrl.add(AgentEvent(
+                id: 'e2l2',
+                runId: runId,
+                stage: AgentStage.analysis_result,
+                severity: AgentSeverity.info,
+                message: 'Распарсено файловых патчей: ${parsed.length}',
+                progress: 0.65,
+              ));
               // Фильтрация по поддерживаемым типам и ограничению по пути
               String _norm(String x) => File(x).absolute.path.replaceAll('\\', '/').toLowerCase();
+              String _sanitizeDiffPath(String p) {
+                var s = p.trim();
+                // убрать окружающие кавычки
+                if (s.length >= 2 && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))) {
+                  s = s.substring(1, s.length - 1);
+                }
+                // снять экранирование подчёркиваний и других тривиальных мест
+                s = s.replaceAll(RegExp(r"\\_"), "_");
+                // убрать пробелы сразу после разделителей пути
+                s = s.replaceAll(RegExp(r"\\\s+"), r"\\");
+                s = s.replaceAll(RegExp(r"/\s+"), "/");
+                // нормализовать повторные разделители
+                s = s.replaceAll(RegExp(r"[\\/]{2,}"), "/");
+                return s;
+              }
               bool isAllowedPath(String p) {
                 if (path.isEmpty) return true;
                 if (mode == 'dir') {
@@ -166,6 +198,7 @@ class AutoFixAgent implements IAgent {
                 }
               }
               String toAbs(String p) {
+                p = _sanitizeDiffPath(p);
                 final hasDrive = RegExp(r'^[A-Za-z]:[\\/]').hasMatch(p);
                 final isUnixAbs = p.startsWith('/');
                 if (hasDrive || isUnixAbs) {
@@ -187,7 +220,19 @@ class AutoFixAgent implements IAgent {
                 final absPath = toAbs(raw);
                 final supported = _isSupported(absPath);
                 final allowed = isAllowedPath(absPath);
-                print('[AutoFixAgent] candidate patch: raw="$raw" abs="$absPath" supported=$supported allowed=$allowed');
+                ctrl.add(AgentEvent(
+                  id: 'e2l2c_${llmPatches.length}',
+                  runId: runId,
+                  stage: AgentStage.analysis_result,
+                  severity: AgentSeverity.debug,
+                  message: 'Кандидат патча',
+                  meta: {
+                    'raw': raw,
+                    'abs': absPath,
+                    'supported': supported,
+                    'allowed': allowed,
+                  },
+                ));
                 if (!supported) continue;
                 if (!allowed) continue;
                 llmPatches.add({
@@ -195,7 +240,17 @@ class AutoFixAgent implements IAgent {
                   'diff': fp.diff,
                 });
               }
-              print('[AutoFixAgent] llmPatches kept: ${llmPatches.length}');
+              ctrl.add(AgentEvent(
+                id: 'e2l3',
+                runId: runId,
+                stage: AgentStage.analysis_result,
+                severity: AgentSeverity.info,
+                message: 'Итого патчей после фильтрации: ${llmPatches.length}',
+                progress: 0.68,
+                meta: {
+                  'kept': llmPatches.length,
+                },
+              ));
             }
           } catch (e) {
             ctrl.add(AgentEvent(
@@ -221,7 +276,6 @@ class AutoFixAgent implements IAgent {
           },
         ));
 
-        print('[AutoFixAgent] pipeline_complete: patches=${llmPatches.length}');
         ctrl.add(AgentEvent(
           id: 'e3',
           runId: runId,

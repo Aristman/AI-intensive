@@ -69,6 +69,17 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
       _running = true;
       _eventsExpanded = true; // разворачиваем во время пайплайна
       _patches = const [];
+      _events.add(AgentEvent(
+        id: 'llm_analysis_start_${DateTime.now().millisecondsSinceEpoch}',
+        runId: 'ui',
+        stage: AgentStage.analysis_started,
+        severity: AgentSeverity.info,
+        message: 'Запрос к LLM: анализ кода',
+        meta: {
+          'path': path,
+          'mode': _mode,
+        },
+      ));
     });
 
     final stream = _agent!.start(AgentRequest(
@@ -101,7 +112,6 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
     }, onError: (e) {
       setState(() {
         _running = false;
-        _eventsExpanded = false; // сворачиваем при ошибке/завершении
         _events.add(AgentEvent(
           id: 'err',
           runId: 'unknown',
@@ -113,7 +123,14 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
     }, onDone: () {
       setState(() {
         _running = false;
-        _eventsExpanded = false; // сворачиваем после завершения
+        // Оставляем панель событий развёрнутой
+        _events.add(AgentEvent(
+          id: 'llm_analysis_done_${DateTime.now().millisecondsSinceEpoch}',
+          runId: 'ui',
+          stage: AgentStage.analysis_result,
+          severity: AgentSeverity.info,
+          message: 'Запрос к LLM: анализ завершён',
+        ));
       });
     });
   }
@@ -169,14 +186,28 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                 onPressed: _patches.isEmpty || _running
                     ? null
                     : () async {
+                        setState(() {
+                          _running = true;
+                          _eventsExpanded = true;
+                          _events.add(AgentEvent(
+                            id: 'llm_apply_start_${DateTime.now().millisecondsSinceEpoch}',
+                            runId: 'ui',
+                            stage: AgentStage.code_generation_started,
+                            severity: AgentSeverity.info,
+                            message: 'Запрос к LLM: применение диффа (старт)',
+                            meta: {'patches': _patches.length},
+                          ));
+                        });
+
                         final count = await _patchService.applyPatches(
                           _patches,
                           settings: _settings,
                         );
                         if (mounted) {
                           setState(() {
+                            _running = false;
                             _events.add(AgentEvent(
-                              id: 'apply_${DateTime.now().millisecondsSinceEpoch}',
+                              id: 'llm_apply_done_${DateTime.now().millisecondsSinceEpoch}',
                               runId: 'ui',
                               stage: AgentStage.code_generated,
                               severity: AgentSeverity.info,
