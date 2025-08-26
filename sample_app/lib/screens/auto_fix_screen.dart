@@ -22,6 +22,7 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
   final _pathCtrl = TextEditingController();
   String _mode = 'file'; // 'file' | 'dir'
   bool _useLlm = false; // М2: включать ли LLM этап
+  bool _includeLlmInApply = false; // включать ли LLM патчи в Apply
 
   IAgent? _agent;
   StreamSubscription<AgentEvent>? _sub;
@@ -76,6 +77,7 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
         'path': path.isEmpty ? '' : path,
         'mode': _mode,
         'useLLM': _useLlm,
+        'includeLLMInApply': _includeLlmInApply,
       },
     ));
 
@@ -160,6 +162,17 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                     key: const Key('autofix_use_llm_switch'),
                     value: _useLlm,
                     onChanged: _running ? null : (v) => setState(() => _useLlm = v),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 8),
+              Row(
+                children: [
+                  const Text('Include LLM patches'),
+                  Checkbox(
+                    key: const Key('autofix_include_llm_checkbox'),
+                    value: _includeLlmInApply,
+                    onChanged: _running ? null : (v) => setState(() => _includeLlmInApply = v ?? false),
                   ),
                 ],
               ),

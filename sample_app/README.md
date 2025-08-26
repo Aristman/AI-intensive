@@ -152,19 +152,32 @@ samples, guidance on mobile development, and a full API reference.
 - Расширенные unit/widget‑тесты (парсинг diff, применение/rollback, edge‑кейсы UI).
 - Пакетный анализ директорий и более широкий список поддерживаемых форматов.
 
-### AutoFix (M2): LLM‑предложения
+### AutoFix (M2): LLM‑предложения и применение LLM‑патчей
 
-В рамках М2 добавлен опциональный LLM‑этап, который формирует предложения по улучшениям без автоматического применения патчей.
+В М2 добавлен опциональный LLM‑этап, который формирует предложения (обычно в формате unified diff). Эти предложения можно просматривать отдельно и, при желании, включать в список применяемых патчей.
 
 Как включить и использовать:
-1) На экране `AutoFix` активируйте переключатель `LLM` (ключ: `autofix_use_llm_switch`).
-2) Запустите анализ как обычно. Если агент сформирует LLM‑запрос, будет сгенерировано событие `analysis_result` с `meta.llm_raw` — это сырой ответ модели (обычно unified diff‑подсказки).
-3) Блок «LLM предложения (предпросмотр)» отобразит содержимое `llm_raw` в виде моноширинного текста (только предпросмотр, без авто‑применения).
+1) На экране `AutoFix` включите переключатель `LLM` (Key: `autofix_use_llm_switch`).
+2) Для применения LLM‑патчей дополнительно включите флажок «Include LLM patches» (Key: `autofix_include_llm_patches_checkbox`).
+3) Запустите анализ. Агент сгенерирует событие `analysis_result` с `meta.llm_raw` (сырой unified diff от модели) и финальное `pipeline_complete` с:
+   - `meta.patches` — базовые фикс‑патчи (и LLM‑патчи при активном «Include LLM patches»);
+   - `meta.llm_patches` — LLM‑патчи всегда отдельно, вне зависимости от включения.
+4) Раздел «LLM предложения (предпросмотр)» показывает `llm_raw`. Предварительный просмотр патчей отображается в общем списке diff.
 
 Технические детали:
-- Агент: `lib/agents/auto_fix/auto_fix_agent.dart` — добавлен необязательный LLM‑хук, контролируемый флагом `useLLM` в `AgentRequest.context`.
-- Экран: `lib/screens/auto_fix_screen.dart` — добавлен переключатель `LLM`, передача `useLLM` в контекст запуска и предпросмотр `meta['llm_raw']`.
-- События: LLM‑результат приходит отдельным `analysis_result`; пайплайн завершается `pipeline_complete` с массивом `patches` для базовых фиксов.
+- Агент: `lib/agents/auto_fix/auto_fix_agent.dart`
+  - Парсит сырой unified diff (LLM) в per‑file патчи через `parseUnifiedDiffByFile` (`lib/utils/unified_diff_utils.dart`).
+  - Фильтрует по поддерживаемым расширениям и выбранному пути/режиму.
+  - В `pipeline_complete` публикует `llm_patches` отдельно и, при включённом флажке, добавляет их к `patches` для применения (`includeLLMInApply` в `AgentRequest.context`).
+- Экран: `lib/screens/auto_fix_screen.dart`
+  - Переключатель `LLM` и флажок «Include LLM patches» управляют контекстом запуска и применением патчей.
+- Применение патчей: `lib/services/patch_apply_service.dart`
+  - Поддерживает патчи вида `{ path, newContent }` и простые full‑file unified diff через `{ path, diff }`.
+  - Для diff‑патчей извлекает `newContent` из простого unified diff и применяет с бэкапом и `rollback`.
+
+Замечания по формату diff:
+- Поддерживается разбор типичных unified diff с заголовками и стандартными hunk‑блоками; сложные контекстные изменения могут быть проигнорированы безопасно.
+- Пути нормализуются для кроссплатформенной фильтрации (Windows/Unix).
 
 ## CodeOpsAgent и запуск Java в Docker
 

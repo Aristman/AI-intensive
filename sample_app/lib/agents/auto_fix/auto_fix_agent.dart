@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:sample_app/agents/agent_interface.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/domain/llm_resolver.dart';
+import 'package:sample_app/utils/unified_diff_utils.dart';
 
 /// AutoFixAgent: анализ и предложение исправлений для файла или директории.
 /// MVP каркас: возвращает заглушки и стримит базовые события пайплайна.
@@ -124,7 +125,7 @@ class AutoFixAgent implements IAgent {
           return;
         }
 
-        // Анализ каждой цели и формирование патчей
+        // Анализ каждой цели и формирование патчей (базовые фиксы)
         for (final file in targets) {
           final res = await _analyzeAndFixFile(file);
           if (res != null) {
@@ -142,14 +143,14 @@ class AutoFixAgent implements IAgent {
 
         // Необязательный LLM-этап (М2): предложения по улучшениям кода/стиля
         final useLlm = (req.context?['useLLM'] as bool?) ?? false;
+        final includeLlmIntoApply = (req.context?['includeLLMInApply'] as bool?) ?? false;
+        List<Map<String, dynamic>> llmPatches = [];
         if (useLlm && targets.isNotEmpty) {
           try {
             final effectiveSettings = _settings ?? const AppSettings();
-            final suggestions = await _requestLlmSuggestions(
-              files: targets,
-              issues: issues,
-              settings: effectiveSettings,
-            );
+            final overrideRaw = req.context?['llm_raw_override'] as String?; // для тестов
+            final suggestions = overrideRaw ?? await _requestLlmSuggestions(
+                files: targets, issues: issues, settings: effectiveSettings);
             if (suggestions.trim().isNotEmpty) {
               ctrl.add(AgentEvent(
                 id: 'e2a',
@@ -161,6 +162,29 @@ class AutoFixAgent implements IAgent {
                   'llm_raw': suggestions,
                 },
               ));
+
+              // Парсинг LLM unified diff по файлам
+              final parsed = parseUnifiedDiffByFile(suggestions);
+              // Фильтрация по поддерживаемым типам и ограничению по пути
+              String _norm(String x) => File(x).absolute.path.replaceAll('\\', '/').toLowerCase();
+              bool isAllowedPath(String p) {
+                if (path.isEmpty) return true;
+                if (mode == 'dir') {
+                  return _norm(p).startsWith(_norm(path));
+                } else {
+                  return _norm(path) == _norm(p);
+                }
+              }
+              for (final fp in parsed) {
+                final pth = fp.path;
+                if (!_isSupported(pth)) continue;
+                if (!isAllowedPath(pth)) continue;
+                llmPatches.add({
+                  'path': pth,
+                  'diff': fp.diff,
+                  // newContent может быть восстановлен PatchApplyService при простом full-file diff
+                });
+              }
             }
           } catch (e) {
             ctrl.add(AgentEvent(
@@ -190,11 +214,16 @@ class AutoFixAgent implements IAgent {
           id: 'e3',
           runId: runId,
           stage: AgentStage.pipeline_complete,
-          message: patches.isEmpty ? 'Готово: изменений нет' : 'Готово: предложено исправлений: ${patches.length}',
+          message: patches.isEmpty && (llmPatches.isEmpty || !includeLlmIntoApply)
+              ? 'Готово: изменений нет'
+              : 'Готово: предложено исправлений: ${patches.length + (includeLlmIntoApply ? llmPatches.length : 0)}',
           progress: 1.0,
           meta: {
-            'patches': patches,
-            'summary': patches.isEmpty ? 'Нет изменений' : 'Предложено ${patches.length} изменений',
+            'patches': includeLlmIntoApply ? [...patches, ...llmPatches] : patches,
+            'llm_patches': llmPatches,
+            'summary': patches.isEmpty && (llmPatches.isEmpty || !includeLlmIntoApply)
+                ? 'Нет изменений'
+                : 'Предложено ${(patches.length + (includeLlmIntoApply ? llmPatches.length : 0))} изменений',
           },
         ));
       } catch (e) {
