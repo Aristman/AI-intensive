@@ -21,6 +21,7 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
 
   final _pathCtrl = TextEditingController();
   String _mode = 'file'; // 'file' | 'dir'
+  bool _useLlm = false; // М2: включать ли LLM этап
 
   IAgent? _agent;
   StreamSubscription<AgentEvent>? _sub;
@@ -28,10 +29,14 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
   bool _running = false;
   List<Map<String, dynamic>> _patches = const [];
   final _patchService = PatchApplyService();
+  String? _llmRaw; // предпросмотр ответа LLM
 
   @override
   void initState() {
     super.initState();
+    _pathCtrl.addListener(() {
+      if (mounted) setState(() {});
+    });
     _load();
   }
 
@@ -60,13 +65,17 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
       _events.clear();
       _running = true;
       _patches = const [];
+      _llmRaw = null;
     });
 
     final stream = _agent!.start(AgentRequest(
       'analyze',
       context: {
-        'path': path.isEmpty ? '(none)' : path,
+        // Передаём пустую строку, если путь не задан, чтобы агент не пытался
+        // анализировать фиктивное значение и мог выдать корректное предупреждение.
+        'path': path.isEmpty ? '' : path,
         'mode': _mode,
+        'useLLM': _useLlm,
       },
     ));
 
@@ -79,10 +88,15 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
     _sub = stream.listen((e) {
       setState(() {
         _events.add(e);
+        // LLM предложения как отдельное событие analysis_result с meta.llm_raw
+        final meta = e.meta ?? const {};
+        if (meta is Map && meta['llm_raw'] is String) {
+          _llmRaw = meta['llm_raw'] as String;
+        }
         if (e.stage == AgentStage.pipeline_complete) {
-          final meta = e.meta;
-          final patches = (meta != null && meta['patches'] is List)
-              ? List<Map<String, dynamic>>.from(meta['patches'] as List)
+          final m = e.meta;
+          final patches = (m != null && m['patches'] is List)
+              ? List<Map<String, dynamic>>.from(m['patches'] as List)
               : <Map<String, dynamic>>[];
           _patches = patches;
         }
@@ -137,6 +151,17 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                 ],
                 selected: {_mode},
                 onSelectionChanged: (s) => setState(() => _mode = s.first),
+              ),
+              const SizedBox(width: 8),
+              Row(
+                children: [
+                  const Text('LLM'),
+                  Switch(
+                    key: const Key('autofix_use_llm_switch'),
+                    value: _useLlm,
+                    onChanged: _running ? null : (v) => setState(() => _useLlm = v),
+                  ),
+                ],
               ),
               const SizedBox(width: 8),
               ElevatedButton.icon(
@@ -230,6 +255,31 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                   child: SingleChildScrollView(
                     child: SelectableText(
                       _patches.first['diff'] ?? '',
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+          if ((_llmRaw ?? '').isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text('LLM предложения (предпросмотр)', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            SizedBox(
+              key: const Key('autofix_llm_container'),
+              height: 180,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  border: Border.all(color: Theme.of(context).dividerColor),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      _llmRaw!,
                       style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
                     ),
                   ),

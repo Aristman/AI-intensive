@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:sample_app/agents/agent_interface.dart';
 import 'package:sample_app/models/app_settings.dart';
+import 'package:sample_app/domain/llm_resolver.dart';
 
 /// AutoFixAgent: анализ и предложение исправлений для файла или директории.
 /// MVP каркас: возвращает заглушки и стримит базовые события пайплайна.
@@ -43,6 +44,19 @@ class AutoFixAgent implements IAgent {
     final ctrl = StreamController<AgentEvent>();
     final runId = DateTime.now().millisecondsSinceEpoch.toString();
 
+    // Сразу сообщим о старте пайплайна, чтобы UI получил мгновенное событие
+    ctrl.add(AgentEvent(
+      id: 's0',
+      runId: runId,
+      stage: AgentStage.pipeline_start,
+      message: 'Запуск AutoFix пайплайна',
+      progress: 0.0,
+      meta: {
+        'path': req.context?['path'] ?? '',
+        'mode': req.context?['mode'] ?? 'file',
+      },
+    ));
+
     Timer.run(() async {
       ctrl.add(AgentEvent(
         id: 'e1',
@@ -77,6 +91,39 @@ class AutoFixAgent implements IAgent {
           }
         }
 
+        // Нет пути или нет поддерживаемых файлов — предупредим и завершим
+        if (path.isEmpty || targets.isEmpty) {
+          ctrl.add(AgentEvent(
+            id: 'e1w',
+            runId: runId,
+            stage: AgentStage.analysis_result,
+            severity: AgentSeverity.warning,
+            message: path.isEmpty
+                ? 'Путь не задан — укажите файл или папку'
+                : 'Не найдено поддерживаемых файлов для анализа',
+            progress: 0.4,
+            meta: {
+              'filesAnalyzed': 0,
+              'path': path,
+              'mode': mode,
+            },
+          ));
+
+          ctrl.add(AgentEvent(
+            id: 'e3',
+            runId: runId,
+            stage: AgentStage.pipeline_complete,
+            message: 'Готово: изменений нет',
+            progress: 1.0,
+            meta: {
+              'patches': <Map<String, dynamic>>[],
+              'summary': 'Нет изменений',
+            },
+          ));
+          await ctrl.close();
+          return;
+        }
+
         // Анализ каждой цели и формирование патчей
         for (final file in targets) {
           final res = await _analyzeAndFixFile(file);
@@ -90,6 +137,40 @@ class AutoFixAgent implements IAgent {
                 'description': 'Нормализация конца файла/хвостовых пробелов',
               });
             }
+          }
+        }
+
+        // Необязательный LLM-этап (М2): предложения по улучшениям кода/стиля
+        final useLlm = (req.context?['useLLM'] as bool?) ?? false;
+        if (useLlm && targets.isNotEmpty) {
+          try {
+            final effectiveSettings = _settings ?? const AppSettings();
+            final suggestions = await _requestLlmSuggestions(
+              files: targets,
+              issues: issues,
+              settings: effectiveSettings,
+            );
+            if (suggestions.trim().isNotEmpty) {
+              ctrl.add(AgentEvent(
+                id: 'e2a',
+                runId: runId,
+                stage: AgentStage.analysis_result,
+                message: 'LLM предложил дополнительные изменения (предпросмотр, без применения)',
+                progress: 0.8,
+                meta: {
+                  'llm_raw': suggestions,
+                },
+              ));
+            }
+          } catch (e) {
+            ctrl.add(AgentEvent(
+              id: 'e2e',
+              runId: runId,
+              stage: AgentStage.analysis_result,
+              severity: AgentSeverity.warning,
+              message: 'LLM предложения недоступны: $e',
+              progress: 0.75,
+            ));
           }
         }
 
@@ -206,4 +287,54 @@ String _makeUnifiedDiff(String path, String oldContent, String newContent) {
     buf.writeln('+$l');
   }
   return buf.toString();
+}
+
+/// Построить промпт для LLM на основе списка файлов и найденных проблем.
+String _buildLlmPrompt({required List<File> files, required List<Map<String, dynamic>> issues, int maxPreviewChars = 4000}) {
+  final buf = StringBuffer();
+  buf.writeln('You are a code maintenance assistant.');
+  buf.writeln('Goal: propose small, safe fixes and improvements for the following files.');
+  buf.writeln('Return unified diffs only, per file, when you propose changes.');
+  buf.writeln('If no changes are needed, state "NO_CHANGES" for that file.');
+  buf.writeln('Focus on formatting, minor style issues, comments clarity, and obvious correctness.');
+  buf.writeln('Avoid large refactors. Keep diffs minimal.');
+  if (issues.isNotEmpty) {
+    buf.writeln('\nKnown issues:');
+    for (final it in issues.take(50)) {
+      buf.writeln('- ${it['type']} in ${it['file']}');
+    }
+  }
+  for (final f in files.take(10)) {
+    try {
+      final content = f.readAsStringSync();
+      final preview = content.length > maxPreviewChars
+          ? content.substring(0, maxPreviewChars)
+          : content;
+      buf.writeln('\n=== FILE: ${f.path} ===');
+      buf.writeln(preview);
+      buf.writeln('=== END FILE ===');
+    } catch (_) {
+      // ignore read error for prompt
+    }
+  }
+  buf.writeln('\nOutput format: For each file that needs changes, output a standard unified diff with headers');
+  buf.writeln('"--- a/<path>" and "+++ b/<path>" and hunks starting with @@.');
+  buf.writeln('For files without changes, output a single line: FILE <path>: NO_CHANGES');
+  return buf.toString();
+}
+
+/// Запросить у LLM предложения по изменениям. Возвращает сырой текст ответа.
+Future<String> _requestLlmSuggestions({
+  required List<File> files,
+  required List<Map<String, dynamic>> issues,
+  required AppSettings settings,
+}) async {
+  final usecase = resolveLlmUseCase(settings);
+  final prompt = _buildLlmPrompt(files: files, issues: issues);
+  final messages = <Map<String, String>>[
+    {'role': 'system', 'content': 'You are a helpful code assistant that returns unified diffs for suggested changes.'},
+    {'role': 'user', 'content': prompt},
+  ];
+  final answer = await usecase.complete(messages: messages, settings: settings);
+  return answer;
 }

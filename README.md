@@ -29,6 +29,7 @@ This repository contains multiple projects that showcase and integrate AI-assist
   - Автоопределяет `entrypoint` (FQCN) и корректный путь `filename` по `package`.
   - Глобальный AppBar (`HomeScreen`) содержит индикатор статуса MCP: `MCP off`/`MCP ready`/`MCP active`; тултип показывает URL MCP или сообщение о fallback.
   - Навигация построена на enum `Screen` как едином источнике правды (иконки, лейблы, пункты нижней навигации и фабрика страниц) — см. `sample_app/lib/screens/screens.dart`.
+  - Экран AutoFix: базовый анализ одиночного файла/папки, генерация предложений фикс‑патчей (MVP). Предпросмотр unified‑diff, применение и откат правок в один клик. Ключевые файлы: `lib/screens/auto_fix_screen.dart`, `lib/agents/auto_fix/auto_fix_agent.dart`, `lib/services/patch_apply_service.dart`.
   - Экран GitHubAgentScreen: контекст репозитория (owner/repo) берётся из настроек приложения, поля ввода удалены. На экране есть локальный диалог настроек (owner, repo, лимиты списков: репозитории/issues/прочее). В шапке отображается текущий контекст; вызовы MCP и суммаризация учитывают эти настройки и лимиты. Ключи для тестов:
     - Кнопки/лейблы: `github_local_settings_btn`, `github_repo_context_label`
     - Поля диалога: `github_local_owner_field`, `github_local_repo_field`, `github_local_repos_limit_field`, `github_local_issues_limit_field`, `github_local_other_limit_field`
@@ -94,6 +95,7 @@ This repository contains multiple projects that showcase and integrate AI-assist
 - MCP tools are documented with JSON‑RPC examples in `mcp_server/README.md`.
 - CodeOpsAgent compresses chat history and integrates MCP calls when enabled.
 - The Java Docker tool compiles and runs code inside container with timeouts and resource limits.
+- AutoFix (MVP): экран `AutoFix` запускает пайплайн анализа через `AutoFixAgent`. События: `pipeline_start` → `analysis_started` → (`analysis_result` предупреждение, если путь пуст/нет файлов) → `pipeline_complete`. Патчи содержат `path`, `diff` (unified) и `newContent`. Применение выполняет `PatchApplyService` с бэкапом и возможностью `rollback`.
 - Централизованный резолвер LLM: `sample_app/lib/domain/llm_resolver.dart`; все агенты используют общий `resolveLlmUseCase(AppSettings)` вместо приватных дубликатов.
 - Новый оркестратор `CodeOpsBuilderAgent` реализует унифицированный интерфейс `IAgent`/`IToolingAgent` и композиционно использует `CodeOpsAgent`.
   На запросы пользователя генерирует классы, спрашивает про создание тестов, запускает JUnit4‑тесты в Docker через MCP, анализирует результаты и при необходимости пытается доработать тесты. См. `sample_app/lib/agents/code_ops_builder_agent.dart`.
