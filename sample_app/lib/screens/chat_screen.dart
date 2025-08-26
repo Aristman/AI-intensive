@@ -70,6 +70,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _openSettings() async {
     final result = await Navigator.push<AppSettings>(
       context,

@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Хранение истории диалога в SharedPreferences
-/// Формат: List<Map<String,String>> с полями {role: 'user'|'assistant', content: '...'}
+/// Формат: `List<Map<String, String>>` с полями `{role: 'user'|'assistant', content: '...'}`
 class ConversationStorageService {
   static String _prefKey(String key) => 'conv_history::$key';
 

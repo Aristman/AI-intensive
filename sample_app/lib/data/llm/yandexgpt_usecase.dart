@@ -49,12 +49,16 @@ class YandexGptUseCase implements LlmUseCase {
         }
     ];
 
+    // Настройки генерации
+    final double temperature = settings.yandexTemperature.clamp(0.0, 1.0);
+    final int maxTokens = settings.yandexMaxTokens > 0 ? settings.yandexMaxTokens : 1;
+
     final body = jsonEncode({
       'modelUri': _modelUri,
       'completionOptions': {
         'stream': false,
-        'temperature': 0.3,
-        'maxTokens': 1500,
+        'temperature': temperature,
+        'maxTokens': maxTokens,
       },
       'messages': ycMessages,
     });

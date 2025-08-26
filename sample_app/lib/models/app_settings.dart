@@ -12,6 +12,11 @@ class AppSettings {
   final String systemPrompt;
   final int historyDepth; // количество последних сообщений, передаваемых в контекст
   final bool reasoningMode; // режим рассуждения
+  // Параметры LLM (раздельно по провайдерам)
+  final double yandexTemperature; // 0..1
+  final int yandexMaxTokens;
+  final double deepseekTemperature; // 0..2
+  final int deepseekMaxTokens;
   final Set<MCPProvider> enabledMCPProviders;
   final String? githubMcpToken;
   final bool useMcpServer; // использовать ли внешний MCP-сервер
@@ -34,6 +39,10 @@ class AppSettings {
     this.systemPrompt = 'You are a helpful assistant.',
     this.historyDepth = 20,
     this.reasoningMode = false,
+    this.yandexTemperature = 0.3,
+    this.yandexMaxTokens = 1500,
+    this.deepseekTemperature = 1.0,
+    this.deepseekMaxTokens = 1500,
     this.enabledMCPProviders = const {},
     this.githubMcpToken,
     this.useMcpServer = false,
@@ -56,6 +65,10 @@ class AppSettings {
     String? systemPrompt,
     int? historyDepth,
     bool? reasoningMode,
+    double? yandexTemperature,
+    int? yandexMaxTokens,
+    double? deepseekTemperature,
+    int? deepseekMaxTokens,
     Set<MCPProvider>? enabledMCPProviders,
     String? githubMcpToken,
     bool? useMcpServer,
@@ -76,6 +89,10 @@ class AppSettings {
       systemPrompt: systemPrompt ?? this.systemPrompt,
       historyDepth: historyDepth ?? this.historyDepth,
       reasoningMode: reasoningMode ?? this.reasoningMode,
+      yandexTemperature: yandexTemperature ?? this.yandexTemperature,
+      yandexMaxTokens: yandexMaxTokens ?? this.yandexMaxTokens,
+      deepseekTemperature: deepseekTemperature ?? this.deepseekTemperature,
+      deepseekMaxTokens: deepseekMaxTokens ?? this.deepseekMaxTokens,
       enabledMCPProviders: enabledMCPProviders ?? this.enabledMCPProviders,
       githubMcpToken: githubMcpToken ?? this.githubMcpToken,
       useMcpServer: useMcpServer ?? this.useMcpServer,
@@ -100,6 +117,10 @@ class AppSettings {
       'systemPrompt': systemPrompt,
       'historyDepth': historyDepth,
       'reasoningMode': reasoningMode,
+      'yandexTemperature': yandexTemperature,
+      'yandexMaxTokens': yandexMaxTokens,
+      'deepseekTemperature': deepseekTemperature,
+      'deepseekMaxTokens': deepseekMaxTokens,
       'githubMcpToken': githubMcpToken,
       'enabledMCPProviders': enabledMCPProviders.map((e) => e.toString().split('.').last).toList(),
       'useMcpServer': useMcpServer,
@@ -130,6 +151,10 @@ class AppSettings {
       systemPrompt: (json['systemPrompt'] as String?) ?? 'You are a helpful assistant.',
       historyDepth: (json['historyDepth'] as int?) ?? 20,
       reasoningMode: (json['reasoningMode'] as bool?) ?? false,
+      yandexTemperature: ((json['yandexTemperature'] as num?) ?? 0.3).toDouble(),
+      yandexMaxTokens: (json['yandexMaxTokens'] as int?) ?? 1500,
+      deepseekTemperature: ((json['deepseekTemperature'] as num?) ?? 1.0).toDouble(),
+      deepseekMaxTokens: (json['deepseekMaxTokens'] as int?) ?? 1500,
       githubMcpToken: json['githubMcpToken'] as String?,
       enabledMCPProviders: ((json['enabledMCPProviders'] as List?) ?? const <dynamic>[]) 
           .map((e) => e.toString())

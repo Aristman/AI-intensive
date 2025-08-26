@@ -51,6 +51,7 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
     _loadSettings();
   }
 
+  // ignore: unused_element
   Widget _mcpStatusChip() {
     final mcpConfigured = _settings.useMcpServer && (_settings.mcpServerUrl?.trim().isNotEmpty ?? false);
     Color bg;
@@ -111,6 +112,7 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
     );
   }
 
+  // ignore: unused_element
   Future<void> _openSettings() async {
     await Navigator.push<AppSettings>(
       context,
