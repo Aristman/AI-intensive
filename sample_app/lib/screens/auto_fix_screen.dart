@@ -5,6 +5,7 @@ import 'package:sample_app/agents/agent_interface.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/settings_service.dart';
 import 'package:sample_app/agents/auto_fix/auto_fix_agent.dart';
+import 'package:sample_app/services/patch_apply_service.dart';
 
 class AutoFixScreen extends StatefulWidget {
   const AutoFixScreen({super.key});
@@ -25,6 +26,8 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
   StreamSubscription<AgentEvent>? _sub;
   final List<AgentEvent> _events = [];
   bool _running = false;
+  List<Map<String, dynamic>> _patches = const [];
+  final _patchService = PatchApplyService();
 
   @override
   void initState() {
@@ -56,6 +59,7 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
     setState(() {
       _events.clear();
       _running = true;
+      _patches = const [];
     });
 
     final stream = _agent!.start(AgentRequest(
@@ -75,6 +79,13 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
     _sub = stream.listen((e) {
       setState(() {
         _events.add(e);
+        if (e.stage == AgentStage.pipeline_complete) {
+          final meta = e.meta;
+          final patches = (meta != null && meta['patches'] is List)
+              ? List<Map<String, dynamic>>.from(meta['patches'] as List)
+              : <Map<String, dynamic>>[];
+          _patches = patches;
+        }
       });
     }, onError: (e) {
       setState(() {
@@ -137,6 +148,43 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
             ],
           ),
           const SizedBox(height: 16),
+          // Кнопки применения и отката
+          Row(
+            children: [
+              ElevatedButton.icon(
+                key: const Key('autofix_apply_btn'),
+                onPressed: _patches.isEmpty || _running
+                    ? null
+                    : () async {
+                        final count = await _patchService.applyPatches(_patches);
+                        if (mounted) setState(() {});
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Применено файлов: $count')),
+                        );
+                      },
+                icon: const Icon(Icons.playlist_add_check),
+                label: const Text('Apply'),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                key: const Key('autofix_rollback_btn'),
+                onPressed: !_patchService.canRollback || _running
+                    ? null
+                    : () async {
+                        final count = await _patchService.rollbackLast();
+                        if (mounted) setState(() {});
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Откат файлов: $count')),
+                        );
+                      },
+                icon: const Icon(Icons.undo),
+                label: const Text('Rollback'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
           Text('События', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           Expanded(
@@ -164,6 +212,31 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
               ),
             ),
           ),
+          const SizedBox(height: 16),
+          if (_patches.isNotEmpty) ...[
+            Text('Предпросмотр диффа (1 из ${_patches.length})', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            SizedBox(
+              key: const Key('autofix_diff_container'),
+              height: 220,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  border: Border.all(color: Theme.of(context).dividerColor),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      _patches.first['diff'] ?? '',
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
