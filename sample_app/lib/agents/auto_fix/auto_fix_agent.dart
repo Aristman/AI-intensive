@@ -141,28 +141,15 @@ class AutoFixAgent implements IAgent {
           }
         }
 
-        // Необязательный LLM-этап (М2): предложения по улучшениям кода/стиля
-        final useLlm = (req.context?['useLLM'] as bool?) ?? false;
-        final includeLlmIntoApply = (req.context?['includeLLMInApply'] as bool?) ?? false;
+        // LLM-этап: всегда формируем итоговый diff из LLM
         List<Map<String, dynamic>> llmPatches = [];
-        if (useLlm && targets.isNotEmpty) {
+        if (targets.isNotEmpty) {
           try {
             final effectiveSettings = _settings ?? const AppSettings();
             final overrideRaw = req.context?['llm_raw_override'] as String?; // для тестов
             final suggestions = overrideRaw ?? await _requestLlmSuggestions(
                 files: targets, issues: issues, settings: effectiveSettings);
             if (suggestions.trim().isNotEmpty) {
-              ctrl.add(AgentEvent(
-                id: 'e2a',
-                runId: runId,
-                stage: AgentStage.analysis_result,
-                message: 'LLM предложил дополнительные изменения (предпросмотр, без применения)',
-                progress: 0.8,
-                meta: {
-                  'llm_raw': suggestions,
-                },
-              ));
-
               // Парсинг LLM unified diff по файлам
               final parsed = parseUnifiedDiffByFile(suggestions);
               // Фильтрация по поддерживаемым типам и ограничению по пути
@@ -182,7 +169,6 @@ class AutoFixAgent implements IAgent {
                 llmPatches.add({
                   'path': pth,
                   'diff': fp.diff,
-                  // newContent может быть восстановлен PatchApplyService при простом full-file diff
                 });
               }
             }
@@ -192,7 +178,7 @@ class AutoFixAgent implements IAgent {
               runId: runId,
               stage: AgentStage.analysis_result,
               severity: AgentSeverity.warning,
-              message: 'LLM предложения недоступны: $e',
+              message: 'LLM недоступен: $e',
               progress: 0.75,
             ));
           }
@@ -214,16 +200,11 @@ class AutoFixAgent implements IAgent {
           id: 'e3',
           runId: runId,
           stage: AgentStage.pipeline_complete,
-          message: patches.isEmpty && (llmPatches.isEmpty || !includeLlmIntoApply)
-              ? 'Готово: изменений нет'
-              : 'Готово: предложено исправлений: ${patches.length + (includeLlmIntoApply ? llmPatches.length : 0)}',
+          message: llmPatches.isEmpty ? 'Готово: изменений нет' : 'Готово: предложено исправлений: ${llmPatches.length}',
           progress: 1.0,
           meta: {
-            'patches': includeLlmIntoApply ? [...patches, ...llmPatches] : patches,
-            'llm_patches': llmPatches,
-            'summary': patches.isEmpty && (llmPatches.isEmpty || !includeLlmIntoApply)
-                ? 'Нет изменений'
-                : 'Предложено ${(patches.length + (includeLlmIntoApply ? llmPatches.length : 0))} изменений',
+            'patches': llmPatches, // только LLM-диффы
+            'summary': llmPatches.isEmpty ? 'Нет изменений' : 'Предложено ${llmPatches.length} изменений',
           },
         ));
       } catch (e) {

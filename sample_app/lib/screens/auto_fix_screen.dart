@@ -6,6 +6,7 @@ import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/settings_service.dart';
 import 'package:sample_app/agents/auto_fix/auto_fix_agent.dart';
 import 'package:sample_app/services/patch_apply_service.dart';
+import 'package:sample_app/utils/diff_view_utils.dart';
 
 class AutoFixScreen extends StatefulWidget {
   const AutoFixScreen({super.key});
@@ -21,16 +22,16 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
 
   final _pathCtrl = TextEditingController();
   String _mode = 'file'; // 'file' | 'dir'
-  bool _useLlm = false; // М2: включать ли LLM этап
-  bool _includeLlmInApply = false; // включать ли LLM патчи в Apply
+  
 
   IAgent? _agent;
   StreamSubscription<AgentEvent>? _sub;
   final List<AgentEvent> _events = [];
   bool _running = false;
+  bool _eventsExpanded = false; // панель событий: развернута во время выполнения
   List<Map<String, dynamic>> _patches = const [];
   final _patchService = PatchApplyService();
-  String? _llmRaw; // предпросмотр ответа LLM
+  
 
   @override
   void initState() {
@@ -65,8 +66,8 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
     setState(() {
       _events.clear();
       _running = true;
+      _eventsExpanded = true; // разворачиваем во время пайплайна
       _patches = const [];
-      _llmRaw = null;
     });
 
     final stream = _agent!.start(AgentRequest(
@@ -76,8 +77,6 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
         // анализировать фиктивное значение и мог выдать корректное предупреждение.
         'path': path.isEmpty ? '' : path,
         'mode': _mode,
-        'useLLM': _useLlm,
-        'includeLLMInApply': _includeLlmInApply,
       },
     ));
 
@@ -90,11 +89,6 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
     _sub = stream.listen((e) {
       setState(() {
         _events.add(e);
-        // LLM предложения как отдельное событие analysis_result с meta.llm_raw
-        final meta = e.meta ?? const {};
-        if (meta is Map && meta['llm_raw'] is String) {
-          _llmRaw = meta['llm_raw'] as String;
-        }
         if (e.stage == AgentStage.pipeline_complete) {
           final m = e.meta;
           final patches = (m != null && m['patches'] is List)
@@ -106,6 +100,7 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
     }, onError: (e) {
       setState(() {
         _running = false;
+        _eventsExpanded = false; // сворачиваем при ошибке/завершении
         _events.add(AgentEvent(
           id: 'err',
           runId: 'unknown',
@@ -117,6 +112,7 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
     }, onDone: () {
       setState(() {
         _running = false;
+        _eventsExpanded = false; // сворачиваем после завершения
       });
     });
   }
@@ -153,28 +149,6 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                 ],
                 selected: {_mode},
                 onSelectionChanged: (s) => setState(() => _mode = s.first),
-              ),
-              const SizedBox(width: 8),
-              Row(
-                children: [
-                  const Text('LLM'),
-                  Switch(
-                    key: const Key('autofix_use_llm_switch'),
-                    value: _useLlm,
-                    onChanged: _running ? null : (v) => setState(() => _useLlm = v),
-                  ),
-                ],
-              ),
-              const SizedBox(width: 8),
-              Row(
-                children: [
-                  const Text('Include LLM patches'),
-                  Checkbox(
-                    key: const Key('autofix_include_llm_checkbox'),
-                    value: _includeLlmInApply,
-                    onChanged: _running ? null : (v) => setState(() => _includeLlmInApply = v ?? false),
-                  ),
-                ],
               ),
               const SizedBox(width: 8),
               ElevatedButton.icon(
@@ -223,40 +197,56 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
             ],
           ),
           const SizedBox(height: 16),
-          Text('События', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          Expanded(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                border: Border.all(color: Theme.of(context).dividerColor),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: ListView.builder(
-                key: const Key('autofix_events_list'),
-                itemCount: _events.length,
-                itemBuilder: (context, index) {
-                  final e = _events[index];
-                  return ListTile(
-                    dense: true,
-                    leading: Icon(
-                      e.severity == AgentSeverity.error
-                          ? Icons.error_outline
-                          : (e.severity == AgentSeverity.warning ? Icons.warning_amber_outlined : Icons.info_outline),
+          Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              key: Key('autofix_events_tile_${_eventsExpanded ? 1 : 0}'),
+              initiallyExpanded: _eventsExpanded,
+              onExpansionChanged: (v) => setState(() => _eventsExpanded = v),
+              tilePadding: EdgeInsets.zero,
+              title: Text('События', style: Theme.of(context).textTheme.titleMedium),
+              children: [
+                SizedBox(
+                  height: 200,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Theme.of(context).dividerColor),
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    title: Text('${e.stage.name}: ${e.message}'),
-                    subtitle: e.meta == null ? null : Text(e.meta.toString()),
-                  );
-                },
-              ),
+                    child: ListView.builder(
+                      key: const Key('autofix_events_list'),
+                      itemCount: _events.length,
+                      itemBuilder: (context, index) {
+                        final e = _events[index];
+                        return ListTile(
+                          dense: true,
+                          leading: Icon(
+                            e.severity == AgentSeverity.error
+                                ? Icons.error_outline
+                                : (e.severity == AgentSeverity.warning
+                                    ? Icons.warning_amber_outlined
+                                    : Icons.info_outline),
+                          ),
+                          title: Text('${e.stage.name}: ${e.message}'),
+                          subtitle: e.meta == null ? null : Text(e.meta.toString()),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 16),
           if (_patches.isNotEmpty) ...[
-            Text('Предпросмотр диффа (1 из ${_patches.length})', style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              'Предпросмотр диффа',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 8),
             SizedBox(
               key: const Key('autofix_diff_container'),
-              height: 220,
+              height: 260,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.surface,
@@ -264,44 +254,133 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: SingleChildScrollView(
-                    child: SelectableText(
-                      _patches.first['diff'] ?? '',
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                    ),
+                  padding: const EdgeInsets.all(8.0),
+                  child: _DiffPreview(
+                    diffText: _patches
+                        .map((p) => (p['diff'] as String?) ?? '')
+                        .where((d) => d.isNotEmpty)
+                        .join('\n\n'),
                   ),
                 ),
               ),
             ),
           ],
-          if ((_llmRaw ?? '').isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Text('LLM предложения (предпросмотр)', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            SizedBox(
-              key: const Key('autofix_llm_container'),
-              height: 180,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surface,
-                  border: Border.all(color: Theme.of(context).dividerColor),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: SingleChildScrollView(
-                    child: SelectableText(
-                      _llmRaw!,
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
+          // Убрали отдельный предпросмотр LLM raw: теперь все изменения отображаются в общем предпросмотре
         ],
       ),
+    );
+  }
+}
+
+class _DiffPreview extends StatelessWidget {
+  final String diffText;
+  const _DiffPreview({required this.diffText});
+
+  Color _bgForLine(BuildContext context, String line) {
+    if (line.startsWith('+++') || line.startsWith('---')) {
+      return Theme.of(context).colorScheme.surfaceVariant;
+    }
+    if (line.startsWith('+')) return Colors.green.withOpacity(0.08);
+    if (line.startsWith('-')) return Colors.red.withOpacity(0.08);
+    return Colors.transparent;
+  }
+
+  Color _fgForLine(BuildContext context, String line) {
+    if (line.startsWith('+')) return Colors.green.shade800;
+    if (line.startsWith('-')) return Colors.red.shade800;
+    return Theme.of(context).colorScheme.onSurface;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sections = splitUnifiedDiffIntoSections(diffText);
+    if (sections.isEmpty) {
+      return const Center(child: Text('Нет данных diff'));
+    }
+    return ListView.builder(
+      itemCount: sections.length,
+      itemBuilder: (context, index) {
+        final s = sections[index];
+        final isHunk = s.title.trim().startsWith('@@');
+        final titleWidget = Text(
+          s.title.isEmpty ? (isHunk ? '@@' : 'Header') : s.title,
+          style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600),
+        );
+
+        final content = Container(
+          decoration: BoxDecoration(
+            border: Border(left: BorderSide(color: Theme.of(context).dividerColor)),
+          ),
+          child: ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: s.lines.length,
+            itemBuilder: (context, i) {
+              final line = s.lines[i];
+              return Container(
+                color: _bgForLine(context, line),
+                padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      child: Text(
+                        line.isEmpty ? '' : line[0],
+                        style: TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                          color: _fgForLine(context, line),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        line.length > 1 ? line.substring(1) : '',
+                        style: TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                          color: _fgForLine(context, line),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+
+        if (isHunk) {
+          return Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              initiallyExpanded: index == 0,
+              dense: true,
+              tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+              childrenPadding: const EdgeInsets.only(left: 8, right: 4, bottom: 8),
+              title: titleWidget,
+              children: [content],
+            ),
+          );
+        }
+        // Header section (no collapse)
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: titleWidget,
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 8, right: 4, bottom: 8),
+              child: content,
+            ),
+          ],
+        );
+      },
     );
   }
 }
