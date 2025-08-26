@@ -31,6 +31,7 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
   bool _eventsExpanded = false; // панель событий: развернута во время выполнения
   List<Map<String, dynamic>> _patches = const [];
   final _patchService = PatchApplyService();
+  bool _forceLlmApply = false; // применять через LLM-агента
   
 
   @override
@@ -168,7 +169,12 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                 onPressed: _patches.isEmpty || _running
                     ? null
                     : () async {
-                        final count = await _patchService.applyPatches(_patches);
+                        final count = await _patchService.applyPatches(
+                          _patches,
+                          settings: _settings,
+                          allowLlmFallback: true,
+                          forceLlm: _forceLlmApply,
+                        );
                         if (mounted) setState(() {});
                         if (!mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -194,6 +200,18 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                 icon: const Icon(Icons.undo),
                 label: const Text('Rollback'),
               ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Checkbox(
+                value: _forceLlmApply,
+                onChanged: _running
+                    ? null
+                    : (v) => setState(() => _forceLlmApply = v ?? false),
+              ),
+              const Text('Применять через агента'),
             ],
           ),
           const SizedBox(height: 16),

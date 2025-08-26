@@ -150,8 +150,11 @@ class AutoFixAgent implements IAgent {
             final suggestions = overrideRaw ?? await _requestLlmSuggestions(
                 files: targets, issues: issues, settings: effectiveSettings);
             if (suggestions.trim().isNotEmpty) {
+              final head = suggestions.split('\n').take(5).join(' | ');
+              print('[AutoFixAgent] LLM suggestions received, length=${suggestions.length}, head="$head"');
               // Парсинг LLM unified diff по файлам
               final parsed = parseUnifiedDiffByFile(suggestions);
+              print('[AutoFixAgent] parsed file patches: ${parsed.length}');
               // Фильтрация по поддерживаемым типам и ограничению по пути
               String _norm(String x) => File(x).absolute.path.replaceAll('\\', '/').toLowerCase();
               bool isAllowedPath(String p) {
@@ -162,15 +165,37 @@ class AutoFixAgent implements IAgent {
                   return _norm(path) == _norm(p);
                 }
               }
+              String toAbs(String p) {
+                final hasDrive = RegExp(r'^[A-Za-z]:[\\/]').hasMatch(p);
+                final isUnixAbs = p.startsWith('/');
+                if (hasDrive || isUnixAbs) {
+                  return File(p).absolute.path;
+                }
+                // относительный путь из diff
+                if (mode == 'dir' && path.isNotEmpty) {
+                  return File('$path/${p.replaceAll('\\', '/')}').absolute.path;
+                }
+                if (mode == 'file' && path.isNotEmpty) {
+                  // для одиночного файла привязываем к самому файлу
+                  return File(path).absolute.path;
+                }
+                return File(p).absolute.path;
+              }
+
               for (final fp in parsed) {
-                final pth = fp.path;
-                if (!_isSupported(pth)) continue;
-                if (!isAllowedPath(pth)) continue;
+                final raw = fp.path;
+                final absPath = toAbs(raw);
+                final supported = _isSupported(absPath);
+                final allowed = isAllowedPath(absPath);
+                print('[AutoFixAgent] candidate patch: raw="$raw" abs="$absPath" supported=$supported allowed=$allowed');
+                if (!supported) continue;
+                if (!allowed) continue;
                 llmPatches.add({
-                  'path': pth,
+                  'path': absPath,
                   'diff': fp.diff,
                 });
               }
+              print('[AutoFixAgent] llmPatches kept: ${llmPatches.length}');
             }
           } catch (e) {
             ctrl.add(AgentEvent(
@@ -196,6 +221,7 @@ class AutoFixAgent implements IAgent {
           },
         ));
 
+        print('[AutoFixAgent] pipeline_complete: patches=${llmPatches.length}');
         ctrl.add(AgentEvent(
           id: 'e3',
           runId: runId,
