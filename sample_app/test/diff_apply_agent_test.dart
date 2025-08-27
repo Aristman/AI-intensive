@@ -19,6 +19,23 @@ class _FakeLlm implements LlmUseCase {
 
 void main() {
   group('DiffApplyAgent', () {
+    test('applies full-file unified diff locally without using tokens', () async {
+      final original = 'line1\nline2\n';
+      final newContent = 'alpha\nbeta\n';
+      final diff = '''--- a/file
++++ b/file
+@@ -1,2 +1,2 @@
+-line1
+-line2
++alpha
++beta
+''';
+      final agent = DiffApplyAgent();
+      final result = await agent.apply(original: original, diff: diff, settings: const AppSettings());
+      expect(result.content, newContent);
+      expect(result.tokens, isNull, reason: 'Local application should not consume tokens');
+    });
+
     test('extracts code fence content and returns final file', () async {
       final original = 'a\nb\nc\n';
       final diff = '''--- a/file
