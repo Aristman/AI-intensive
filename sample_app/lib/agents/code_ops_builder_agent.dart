@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as dev;
 import 'dart:math';
 
 import 'package:sample_app/agents/agent_interface.dart';
@@ -798,6 +799,7 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
           final answer = (res['answer']?.toString() ?? '').trim();
           emit(AgentStage.pipeline_complete, answer.isEmpty ? 'Готово' : answer, prog: 1.0, idx: totalSteps, total: totalSteps, meta: {
             'mcp_used': res['mcp_used'] == true,
+            'tokens': res['tokens'],
             'runId': runId,
           });
           final rcDone = _runContexts[runId];
@@ -1214,6 +1216,10 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
       overrideJsonSchema: schema,
     );
     final answer = res['answer']?.toString() ?? '';
+    final tokens = res['tokens'] as Map<String, int>?;
+    if (tokens != null) {
+      dev.log('LLM tokens used in _generateJavaTests: $tokens', name: 'CodeOpsBuilderAgent');
+    }
     final map = tryExtractJsonMap(answer);
     final list = (map != null ? map['tests'] as List? : null) ?? const [];
     final tests = list
@@ -1282,6 +1288,10 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
       overrideJsonSchema: schema,
     );
     final answer = res['answer']?.toString() ?? '';
+    final tokens = res['tokens'] as Map<String, int>?;
+    if (tokens != null) {
+      dev.log('LLM tokens used in _refineTest: $tokens', name: 'CodeOpsBuilderAgent');
+    }
     final map = tryExtractJsonMap(answer);
     if (map == null) return null;
     return {
@@ -1298,6 +1308,10 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
       overrideJsonSchema: schema,
     );
     final answer = res['answer'] as String? ?? '';
+    final tokens = res['tokens'] as Map<String, int>?;
+    if (tokens != null) {
+      dev.log('LLM tokens used in _classifyIntent: $tokens', name: 'CodeOpsBuilderAgent');
+    }
     final m = tryExtractJsonMap(answer);
     if (m != null) return m;
     return {'intent': 'other', 'reason': 'failed_to_parse'};
@@ -1315,6 +1329,10 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
       overrideJsonSchema: codeSchema,
     );
     final answer = res['answer'] as String? ?? '';
+    final tokens = res['tokens'] as Map<String, int>?;
+    if (tokens != null) {
+      dev.log('LLM tokens used in _requestCodeJson: $tokens', name: 'CodeOpsBuilderAgent');
+    }
     final jsonMap = tryExtractJsonMap(answer);
     if (jsonMap == null) {
       // Fallback: build minimal structure from a single fenced code block

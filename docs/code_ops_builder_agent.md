@@ -164,3 +164,14 @@ final r2 = await agent.ask(AgentRequest('да'));
 
 Покрыто тестами:
 - `sample_app/test/code_ops_builder_agent_yandex_fallback_test.dart` — сценарии с Yandex‑стилем ответов (code fences вместо JSON) для генерации кода и тестов, включая запуск JUnit.
+
+## Подсчет токенов
+
+Агент поддерживает отслеживание расходов токенов при работе с LLM:
+
+- **Интерфейс LLM**: Расширен `LlmUseCase` методом `completeWithUsage()`, возвращающим `LlmResponse` с текстом и `usage` (Map с `inputTokens`, `completionTokens`, `totalTokens`).
+- **Сбор токенов**: Все вызовы LLM в агенте (`_classifyIntent`, `_requestCodeJson`, `_generateJavaTests`, `_refineTest`) логируют токены через `dev.log`.
+- **Передача в UI**: Токены передаются в `meta` поля `AgentResponse` и `AgentEvent`, откуда извлекаются в `CodeOpsScreen` для отображения и логирования.
+- **Отображение**: На экране `CodeOpsScreen` показывается текущий расход токенов (input/output/total) в реальном времени при стриминге и после завершения запросов.
+
+Логи токенов доступны в консоли разработчика с префиксом соответствующего агента (`CodeOpsBuilderAgent`, `ReasoningAgent`, `CodeOpsAgent`).

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sample_app/agents/agent_interface.dart';
 import 'package:sample_app/agents/auto_fix/auto_fix_agent.dart';
@@ -22,7 +20,7 @@ void main() {
       final agent = AutoFixAgent(initialSettings: const AppSettings());
       final events = <AgentEvent>[];
       final sub = agent
-          .start(const AgentRequest('analyze', context: {'path': 'x.dart', 'mode': 'file'}))!
+          .start(const AgentRequest('analyze', context: {'path': 'x.dart', 'mode': 'file'}))
           .listen(events.add);
       await sub.asFuture<void>();
       expect(events.map((e) => e.stage), containsAll(<AgentStage>[

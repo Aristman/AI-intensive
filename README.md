@@ -96,6 +96,8 @@ This repository contains multiple projects that showcase and integrate AI-assist
 - CodeOpsAgent compresses chat history and integrates MCP calls when enabled.
 - The Java Docker tool compiles and runs code inside container with timeouts and resource limits.
 - AutoFix (MVP): экран `AutoFix` запускает пайплайн анализа через `AutoFixAgent`. События: `pipeline_start` → `analysis_started` → (`analysis_result` предупреждение, если путь пуст/нет файлов) → `pipeline_complete`. Патчи содержат `path`, `diff` (unified) и `newContent`. Применение выполняет `PatchApplyService` с бэкапом и возможностью `rollback`.
+  - Оптимизация токенов (AutoFix): перед отправкой в LLM применяется стриппинг комментариев, селективные выдержки (head + окна вокруг проблемных строк), бюджетирование токенов и кеширование превью по подписи файла/ключу issues для пропуска неизменившихся файлов.
+  - Индикатор токенов (AutoFix): на экране отображается суммарное использование токенов (вход/выход/итого) и детальный лог событий. Источники: `AgentEvent.meta.tokens` и колбэк `PatchApplyService.onTokensCollected`. Тест: `sample_app/test/screens/auto_fix_token_usage_test.dart`.
 - Централизованный резолвер LLM: `sample_app/lib/domain/llm_resolver.dart`; все агенты используют общий `resolveLlmUseCase(AppSettings)` вместо приватных дубликатов.
 - Новый оркестратор `CodeOpsBuilderAgent` реализует унифицированный интерфейс `IAgent`/`IToolingAgent` и композиционно использует `CodeOpsAgent`.
   На запросы пользователя генерирует классы, спрашивает про создание тестов, запускает JUnit4‑тесты в Docker через MCP, анализирует результаты и при необходимости пытается доработать тесты. См. `sample_app/lib/agents/code_ops_builder_agent.dart`.

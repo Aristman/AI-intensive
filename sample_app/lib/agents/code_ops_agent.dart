@@ -368,7 +368,8 @@ class CodeOpsAgent {
         'messagesCount': messages.length,
         'lastUserPreview': userText.length > 200 ? '${userText.substring(0, 200)}...' : userText,
       });
-      var answer = await usecase.complete(messages: messages, settings: _settings);
+      final llmResponse = await usecase.completeWithUsage(messages: messages, settings: _settings);
+      var answer = llmResponse.text;
 
       // Определяем финальность по маркеру
       var isFinal = answer.contains(stopSequence);
@@ -379,6 +380,7 @@ class CodeOpsAgent {
       _log('LLM Response', {
         'chars': answer.length,
         'isFinal': isFinal,
+        'tokens': llmResponse.usage,
         'preview': answer.length > 200 ? '${answer.substring(0, 200)}...' : answer,
       });
 
@@ -391,6 +393,7 @@ class CodeOpsAgent {
         'answer': answer,
         'isFinal': isFinal,
         'mcp_used': enrichedContext['mcp_used'] ?? false,
+        'tokens': llmResponse.usage,
       };
     } catch (e) {
       return {

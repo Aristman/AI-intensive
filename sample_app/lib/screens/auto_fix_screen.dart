@@ -9,7 +9,10 @@ import 'package:sample_app/services/patch_apply_service.dart';
 import 'package:sample_app/utils/diff_view_utils.dart';
 
 class AutoFixScreen extends StatefulWidget {
-  const AutoFixScreen({super.key});
+  final IAgent? agent; // for testing/injection
+  final PatchApplyService? patchService; // for testing/injection
+
+  const AutoFixScreen({super.key, this.agent, this.patchService});
 
   @override
   State<AutoFixScreen> createState() => _AutoFixScreenState();
@@ -23,23 +26,50 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
   final _pathCtrl = TextEditingController();
   String _mode = 'file'; // 'file' | 'dir'
   
-
   IAgent? _agent;
   StreamSubscription<AgentEvent>? _sub;
   final List<AgentEvent> _events = [];
   bool _running = false;
   bool _eventsExpanded = false; // панель событий: развернута во время выполнения
   List<Map<String, dynamic>> _patches = const [];
-  final _patchService = PatchApplyService();
+  late final PatchApplyService _patchService;
   // Всегда применяем через LLM-агента в PatchApplyService
+  
+  // Token usage tracking
+  Map<String, int> _totalTokens = {'inputTokens': 0, 'completionTokens': 0, 'totalTokens': 0};
+  final List<Map<String, dynamic>> _tokenLog = [];
+  bool _tokensExpanded = false; // панель токенов: развернута для просмотра лога
   
 
   @override
   void initState() {
     super.initState();
+    _patchService = widget.patchService ?? PatchApplyService();
     _pathCtrl.addListener(() {
       if (mounted) setState(() {});
     });
+    
+    // Настраиваем callback для сбора токенов из DiffApplyAgent
+    _patchService.onTokensCollected = (Map<String, int> tokens) {
+      if (mounted) {
+        setState(() {
+          // Add to log
+          _tokenLog.add({
+            'stage': 'diff_apply',
+            'timestamp': DateTime.now().toIso8601String(),
+            'tokens': tokens,
+          });
+          
+          // Update totals
+          _totalTokens = {
+            'inputTokens': (_totalTokens['inputTokens'] ?? 0) + (tokens['inputTokens'] ?? 0),
+            'completionTokens': (_totalTokens['completionTokens'] ?? 0) + (tokens['completionTokens'] ?? 0),
+            'totalTokens': (_totalTokens['totalTokens'] ?? 0) + (tokens['totalTokens'] ?? 0),
+          };
+        });
+      }
+    };
+    
     _load();
   }
 
@@ -48,7 +78,7 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
     if (!mounted) return;
     setState(() {
       _settings = s;
-      _agent = AutoFixAgent(initialSettings: s);
+      _agent = widget.agent ?? AutoFixAgent(initialSettings: s);
       _loading = false;
     });
   }
@@ -69,6 +99,9 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
       _running = true;
       _eventsExpanded = true; // разворачиваем во время пайплайна
       _patches = const [];
+      // Reset token tracking for new analysis
+      _totalTokens = {'inputTokens': 0, 'completionTokens': 0, 'totalTokens': 0};
+      _tokenLog.clear();
       _events.add(AgentEvent(
         id: 'llm_analysis_start_${DateTime.now().millisecondsSinceEpoch}',
         runId: 'ui',
@@ -107,6 +140,26 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
               ? List<Map<String, dynamic>>.from(m['patches'] as List)
               : <Map<String, dynamic>>[];
           _patches = patches;
+        }
+        
+        // Collect tokens from all events
+        final tokens = e.meta?['tokens'] as Map<String, int>?;
+        if (tokens != null) {
+          // Add to log
+          _tokenLog.add({
+            'stage': e.stage.name,
+            'timestamp': DateTime.now().toIso8601String(),
+            'tokens': tokens,
+          });
+          
+          // Update totals
+          setState(() {
+            _totalTokens = {
+              'inputTokens': (_totalTokens['inputTokens'] ?? 0) + (tokens['inputTokens'] ?? 0),
+              'completionTokens': (_totalTokens['completionTokens'] ?? 0) + (tokens['completionTokens'] ?? 0),
+              'totalTokens': (_totalTokens['totalTokens'] ?? 0) + (tokens['totalTokens'] ?? 0),
+            };
+          });
         }
       });
     }, onError: (e) {
@@ -220,9 +273,11 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                           });
                         }
                         if (!mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Применено файлов: $count')),
-                        );
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Применено файлов: $count')),
+                          );
+                        }
                       },
                 icon: const Icon(Icons.playlist_add_check),
                 label: const Text('Apply'),
@@ -236,9 +291,11 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                         final count = await _patchService.rollbackLast();
                         if (mounted) setState(() {});
                         if (!mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Откат файлов: $count')),
-                        );
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Откат файлов: $count')),
+                          );
+                        }
                       },
                 icon: const Icon(Icons.undo),
                 label: const Text('Rollback'),
@@ -246,6 +303,112 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
             ],
           ),
           const SizedBox(height: 8),
+          
+          // Token usage summary
+          if (_totalTokens.values.any((v) => v > 0)) ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.bolt, color: Theme.of(context).colorScheme.primary),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Расход токенов',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onPrimaryContainer,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildTokenStat(
+                        context,
+                        'Вход',
+                        _totalTokens['inputTokens'] ?? 0,
+                        Icons.input,
+                      ),
+                      _buildTokenStat(
+                        context,
+                        'Выход',
+                        _totalTokens['completionTokens'] ?? 0,
+                        Icons.output,
+                      ),
+                      _buildTokenStat(
+                        context,
+                        'Всего',
+                        _totalTokens['totalTokens'] ?? 0,
+                        Icons.functions,
+                        isTotal: true,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+          
+          // Token usage log expansion tile
+          Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              key: Key('autofix_tokens_tile_${_tokensExpanded ? 1 : 0}'),
+              initiallyExpanded: _tokensExpanded,
+              onExpansionChanged: (v) => setState(() => _tokensExpanded = v),
+              tilePadding: EdgeInsets.zero,
+              title: Text('Лог использования токенов', style: Theme.of(context).textTheme.titleMedium),
+              children: [
+                SizedBox(
+                  height: 200,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Theme.of(context).dividerColor),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: _tokenLog.isEmpty
+                        ? const Center(
+                            child: Text('Нет данных об использовании токенов'),
+                          )
+                        : ListView.builder(
+                            key: const Key('autofix_token_log_list'),
+                            itemCount: _tokenLog.length,
+                            itemBuilder: (context, index) {
+                              final logEntry = _tokenLog[index];
+                              final tokens = logEntry['tokens'] as Map<String, int>;
+                              return ListTile(
+                                dense: true,
+                                leading: const Icon(Icons.bolt),
+                                title: Text(logEntry['stage'] as String),
+                                subtitle: Text(
+                                  'Вход: ${tokens['inputTokens'] ?? 0}, '
+                                  'Выход: ${tokens['completionTokens'] ?? 0}, '
+                                  'Всего: ${tokens['totalTokens'] ?? 0}',
+                                ),
+                                trailing: Text(
+                                  DateTime.parse(logEntry['timestamp'] as String)
+                                      .toLocal()
+                                      .toString()
+                                      .substring(11, 19),
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ),
+              ],
+            ),
+          ),
           const SizedBox(height: 16),
           Theme(
             data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
@@ -320,6 +483,28 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
       ),
     );
   }
+
+  Widget _buildTokenStat(BuildContext context, String label, int value, IconData icon, {bool isTotal = false}) {
+    return Column(
+      children: [
+        Icon(icon, color: Theme.of(context).colorScheme.primary),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.onPrimaryContainer,
+          ),
+        ),
+        Text(
+          value.toString(),
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            color: Theme.of(context).colorScheme.onPrimaryContainer,
+            fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _DiffPreview extends StatelessWidget {
@@ -328,10 +513,10 @@ class _DiffPreview extends StatelessWidget {
 
   Color _bgForLine(BuildContext context, String line) {
     if (line.startsWith('+++') || line.startsWith('---')) {
-      return Theme.of(context).colorScheme.surfaceVariant;
+      return Theme.of(context).colorScheme.surfaceContainerHighest;
     }
-    if (line.startsWith('+')) return Colors.green.withOpacity(0.08);
-    if (line.startsWith('-')) return Colors.red.withOpacity(0.08);
+    if (line.startsWith('+')) return Colors.green.withValues(alpha: 0.08);
+    if (line.startsWith('-')) return Colors.red.withValues(alpha: 0.08);
     return Colors.transparent;
   }
 

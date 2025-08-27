@@ -5,6 +5,10 @@ import 'package:sample_app/agents/agent_interface.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/domain/llm_resolver.dart';
 import 'package:sample_app/utils/unified_diff_utils.dart';
+import 'package:sample_app/utils/code_strip.dart';
+import 'package:sample_app/utils/token_estimator.dart';
+import 'package:sample_app/utils/preview_selector.dart';
+import 'package:sample_app/utils/file_preview_cache.dart';
 
 /// AutoFixAgent: анализ и предложение исправлений для файла или директории.
 /// MVP каркас: возвращает заглушки и стримит базовые события пайплайна.
@@ -141,14 +145,70 @@ class AutoFixAgent implements IAgent {
           }
         }
 
-        // LLM-этап: всегда формируем итоговый diff из LLM
+        // Если обнаружены только локально-исправляемые проблемы и уже есть локальные патчи — пропускаем LLM
+        final _localIssueTypes = {'trailing_whitespace', 'missing_final_newline'};
+        final hasOnlyLocalIssues = issues.isEmpty || issues.every((it) => _localIssueTypes.contains(it['type']));
+        if (hasOnlyLocalIssues && patches.isNotEmpty && (req.context?['llm_raw_override'] == null)) {
+          ctrl.add(AgentEvent(
+            id: 'e2skip',
+            runId: runId,
+            stage: AgentStage.analysis_result,
+            severity: AgentSeverity.info,
+            message: 'LLM пропущен: локальные фиксы покрывают найденные проблемы',
+            progress: 0.66,
+            meta: {
+              'localPatches': patches.length,
+            },
+          ));
+
+          ctrl.add(AgentEvent(
+            id: 'e3',
+            runId: runId,
+            stage: AgentStage.pipeline_complete,
+            message: 'Готово: применить локальные исправления: ${patches.length}',
+            progress: 1.0,
+            meta: {
+              'patches': patches,
+              'summary': 'Локальные исправления без LLM: ${patches.length}',
+            },
+          ));
+          await ctrl.close();
+          return;
+        }
+
+        // LLM-этап: формируем итоговый diff из LLM
         List<Map<String, dynamic>> llmPatches = [];
+        Map<String, int>? totalTokens; // Для накопления токенов
+        
         if (targets.isNotEmpty) {
           try {
             final effectiveSettings = _settings ?? const AppSettings();
             final overrideRaw = req.context?['llm_raw_override'] as String?; // для тестов
-            final suggestions = overrideRaw ?? await _requestLlmSuggestions(
-                files: targets, issues: issues, settings: effectiveSettings);
+            
+            final llmResult = overrideRaw != null 
+                ? {'text': overrideRaw, 'usage': null}
+                : await _requestLlmSuggestions(
+                    files: targets, issues: issues, settings: effectiveSettings);
+            
+            final suggestions = llmResult['text'] as String;
+            final usage = llmResult['usage'] as Map<String, int>?;
+            
+            // Передаем информацию о токенах в событие
+            if (usage != null) {
+              totalTokens = usage;
+              ctrl.add(AgentEvent(
+                id: 'e2l0',
+                runId: runId,
+                stage: AgentStage.analysis_result,
+                severity: AgentSeverity.info,
+                message: 'LLM токены использованы: вход ${usage['inputTokens'] ?? 0}, выход ${usage['completionTokens'] ?? 0}',
+                meta: {
+                  'tokens': usage,
+                },
+                progress: 0.5,
+              ));
+            }
+            
             if (suggestions.trim().isNotEmpty) {
               final head = suggestions.split('\n').take(5).join(' | ');
               ctrl.add(AgentEvent(
@@ -285,6 +345,7 @@ class AutoFixAgent implements IAgent {
           meta: {
             'patches': llmPatches, // только LLM-диффы
             'summary': llmPatches.isEmpty ? 'Нет изменений' : 'Предложено ${llmPatches.length} изменений',
+            if (totalTokens != null) 'tokens': totalTokens,
           },
         ));
       } catch (e) {
@@ -380,7 +441,7 @@ String _makeUnifiedDiff(String path, String oldContent, String newContent) {
 }
 
 /// Построить промпт для LLM на основе списка файлов и найденных проблем.
-String _buildLlmPrompt({required List<File> files, required List<Map<String, dynamic>> issues, int maxPreviewChars = 4000}) {
+String _buildLlmPrompt({required List<File> files, required List<Map<String, dynamic>> issues, int maxPreviewChars = 800}) {
   final buf = StringBuffer();
   buf.writeln('You are a code maintenance assistant.');
   buf.writeln('Goal: propose small, safe fixes and improvements for the following files.');
@@ -390,16 +451,17 @@ String _buildLlmPrompt({required List<File> files, required List<Map<String, dyn
   buf.writeln('Avoid large refactors. Keep diffs minimal.');
   if (issues.isNotEmpty) {
     buf.writeln('\nKnown issues:');
-    for (final it in issues.take(50)) {
+    for (final it in issues.take(12)) {
       buf.writeln('- ${it['type']} in ${it['file']}');
     }
   }
-  for (final f in files.take(10)) {
+  for (final f in files.take(3)) {
     try {
       final content = f.readAsStringSync();
-      final preview = content.length > maxPreviewChars
-          ? content.substring(0, maxPreviewChars)
-          : content;
+      final stripped = stripCommentsForPath(f.path, content);
+      final preview = stripped.length > maxPreviewChars
+          ? stripped.substring(0, maxPreviewChars)
+          : stripped;
       buf.writeln('\n=== FILE: ${f.path} ===');
       buf.writeln(preview);
       buf.writeln('=== END FILE ===');
@@ -413,18 +475,111 @@ String _buildLlmPrompt({required List<File> files, required List<Map<String, dyn
   return buf.toString();
 }
 
-/// Запросить у LLM предложения по изменениям. Возвращает сырой текст ответа.
-Future<String> _requestLlmSuggestions({
+/// Запросить у LLM предложения по изменениям. Возвращает сырой текст ответа и информацию о токенах.
+Future<Map<String, dynamic>> _requestLlmSuggestions({
   required List<File> files,
   required List<Map<String, dynamic>> issues,
   required AppSettings settings,
 }) async {
   final usecase = resolveLlmUseCase(settings);
-  final prompt = _buildLlmPrompt(files: files, issues: issues);
+  final prompt = _buildLlmPromptBudgeted(
+    files: files,
+    issues: issues,
+    maxFiles: 3,
+    maxCharsPerFile: 800,
+    tokenBudget: 1500,
+  );
   final messages = <Map<String, String>>[
-    {'role': 'system', 'content': 'You are a helpful code assistant that returns unified diffs for suggested changes.'},
+    {'role': 'system', 'content': 'Return only unified diffs. No explanations. Keep changes minimal and safe.'},
     {'role': 'user', 'content': prompt},
   ];
-  final answer = await usecase.complete(messages: messages, settings: settings);
-  return answer;
+  final response = await usecase.completeWithUsage(messages: messages, settings: settings);
+  return {
+    'text': response.text,
+    'usage': response.usage,
+  };
+}
+
+/// Строит промпт с учётом бюджета токенов. Сначала применяет comment-strip,
+/// затем динамически уменьшает maxCharsPerFile и число файлов, пока не уложится в бюджет.
+String _buildLlmPromptBudgeted({
+  required List<File> files,
+  required List<Map<String, dynamic>> issues,
+  int maxFiles = 3,
+  int maxCharsPerFile = 800,
+  int tokenBudget = 1500,
+}) {
+  // Базовая часть (инструкции + issues)
+  String buildWith(int takeFiles, int takeChars) {
+    final buf = StringBuffer();
+    buf.writeln('You are a code maintenance assistant.');
+    buf.writeln('Goal: propose small, safe fixes and improvements for the following files.');
+    buf.writeln('Return unified diffs only, per file, when you propose changes.');
+    buf.writeln('If no changes are needed, state "NO_CHANGES" for that file.');
+    buf.writeln('Focus on formatting, minor style issues, comments clarity, and obvious correctness.');
+    buf.writeln('Avoid large refactors. Keep diffs minimal.');
+    if (issues.isNotEmpty) {
+      buf.writeln('\nKnown issues:');
+      for (final it in issues.take(12)) {
+        buf.writeln('- ${it['type']} in ${it['file']}');
+      }
+    }
+    for (final f in files.take(takeFiles)) {
+      try {
+        final content = f.readAsStringSync();
+        final fileIssues = issues.where((it) => (it['file'] as String?) == f.path).toList();
+        final mtime = f.statSync().modified.millisecondsSinceEpoch;
+        final signature = FilePreviewCache.makeSignature(content: content, mtimeMs: mtime);
+        final issuesKey = FilePreviewCache.makeIssuesKey(fileIssues);
+
+        // Skip unchanged files with same issues
+        if (FilePreviewCache.instance.shouldOmit(f.path, signature, issuesKey)) {
+          continue;
+        }
+
+        final preview = buildSelectivePreview(
+          path: f.path,
+          content: content,
+          issues: fileIssues,
+          headLines: 40,
+          context: 10,
+          maxChars: takeChars,
+        );
+
+        // Store in cache to allow omission next runs
+        FilePreviewCache.instance.store(f.path, signature, issuesKey, preview);
+        buf.writeln('\n=== FILE: ${f.path} ===');
+        buf.writeln(preview);
+        buf.writeln('=== END FILE ===');
+      } catch (_) {
+        // ignore read error
+      }
+    }
+    buf.writeln('\nOutput format: For each file that needs changes, output a standard unified diff with headers');
+    buf.writeln('"--- a/<path>" and "+++ b/<path>" and hunks starting with @@.');
+    buf.writeln('For files without changes, output a single line: FILE <path>: NO_CHANGES');
+    return buf.toString();
+  }
+
+  var takeFiles = maxFiles;
+  var takeChars = maxCharsPerFile;
+  var prompt = buildWith(takeFiles, takeChars);
+  var tokens = estimateTokensForText(prompt);
+
+  // Итеративно уменьшаем размер, пока не уложимся
+  int guard = 0;
+  while (tokens > tokenBudget && guard < 10) {
+    guard++;
+    if (takeChars > 200) {
+      takeChars = (takeChars / 2).floor();
+      if (takeChars < 200) takeChars = 200;
+    } else if (takeFiles > 1) {
+      takeFiles -= 1;
+    } else {
+      break;
+    }
+    prompt = buildWith(takeFiles, takeChars);
+    tokens = estimateTokensForText(prompt);
+  }
+  return prompt;
 }
