@@ -78,7 +78,7 @@ enum AgentStage {
   pipeline_error,
 }
 
-enum AgentSeverity { info, warning, error }
+enum AgentSeverity { info, warning, error, debug }
 
 /// Streaming event emitted by an agent when using streaming mode.
 class AgentEvent {
