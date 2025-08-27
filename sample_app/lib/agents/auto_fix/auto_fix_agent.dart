@@ -143,12 +143,37 @@ class AutoFixAgent implements IAgent {
 
         // LLM-этап: всегда формируем итоговый diff из LLM
         List<Map<String, dynamic>> llmPatches = [];
+        Map<String, int>? totalTokens; // Для накопления токенов
+        
         if (targets.isNotEmpty) {
           try {
             final effectiveSettings = _settings ?? const AppSettings();
             final overrideRaw = req.context?['llm_raw_override'] as String?; // для тестов
-            final suggestions = overrideRaw ?? await _requestLlmSuggestions(
-                files: targets, issues: issues, settings: effectiveSettings);
+            
+            final llmResult = overrideRaw != null 
+                ? {'text': overrideRaw, 'usage': null}
+                : await _requestLlmSuggestions(
+                    files: targets, issues: issues, settings: effectiveSettings);
+            
+            final suggestions = llmResult['text'] as String;
+            final usage = llmResult['usage'] as Map<String, int>?;
+            
+            // Передаем информацию о токенах в событие
+            if (usage != null) {
+              totalTokens = usage;
+              ctrl.add(AgentEvent(
+                id: 'e2l0',
+                runId: runId,
+                stage: AgentStage.analysis_result,
+                severity: AgentSeverity.info,
+                message: 'LLM токены использованы: вход ${usage['inputTokens'] ?? 0}, выход ${usage['completionTokens'] ?? 0}',
+                meta: {
+                  'tokens': usage,
+                },
+                progress: 0.5,
+              ));
+            }
+            
             if (suggestions.trim().isNotEmpty) {
               final head = suggestions.split('\n').take(5).join(' | ');
               ctrl.add(AgentEvent(
@@ -285,6 +310,7 @@ class AutoFixAgent implements IAgent {
           meta: {
             'patches': llmPatches, // только LLM-диффы
             'summary': llmPatches.isEmpty ? 'Нет изменений' : 'Предложено ${llmPatches.length} изменений',
+            if (totalTokens != null) 'tokens': totalTokens,
           },
         ));
       } catch (e) {
@@ -413,8 +439,8 @@ String _buildLlmPrompt({required List<File> files, required List<Map<String, dyn
   return buf.toString();
 }
 
-/// Запросить у LLM предложения по изменениям. Возвращает сырой текст ответа.
-Future<String> _requestLlmSuggestions({
+/// Запросить у LLM предложения по изменениям. Возвращает сырой текст ответа и информацию о токенах.
+Future<Map<String, dynamic>> _requestLlmSuggestions({
   required List<File> files,
   required List<Map<String, dynamic>> issues,
   required AppSettings settings,
@@ -425,6 +451,9 @@ Future<String> _requestLlmSuggestions({
     {'role': 'system', 'content': 'You are a helpful code assistant that returns unified diffs for suggested changes.'},
     {'role': 'user', 'content': prompt},
   ];
-  final answer = await usecase.complete(messages: messages, settings: settings);
-  return answer;
+  final response = await usecase.completeWithUsage(messages: messages, settings: settings);
+  return {
+    'text': response.text,
+    'usage': response.usage,
+  };
 }

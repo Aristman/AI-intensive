@@ -10,6 +10,11 @@ class _FakeLlm implements LlmUseCase {
   Future<String> complete({required List<Map<String, String>> messages, required AppSettings settings}) async {
     return response;
   }
+
+  @override
+  Future<LlmResponse> completeWithUsage({required List<Map<String, String>> messages, required AppSettings settings}) async {
+    return LlmResponse(text: response, usage: {'inputTokens': 10, 'completionTokens': 5, 'totalTokens': 15});
+  }
 }
 
 void main() {
@@ -25,14 +30,19 @@ void main() {
 ''';
       final llmResp = 'Вот результат:\n```\nx\ny\n```';
       final agent = DiffApplyAgent(useCase: _FakeLlm(llmResp));
-      final out = await agent.apply(original: original, diff: diff, settings: const AppSettings());
-      expect(out, 'x\ny');
+      final result = await agent.apply(original: original, diff: diff, settings: const AppSettings());
+      expect(result.content, 'x\ny');
+      expect(result.tokens, isNotNull);
+      expect(result.tokens!['inputTokens'], 10);
+      expect(result.tokens!['completionTokens'], 5);
+      expect(result.tokens!['totalTokens'], 15);
     });
 
     test('falls back to plain trimmed text if no code fence', () async {
       final agent = DiffApplyAgent(useCase: _FakeLlm('new content\nwith lines'));
-      final out = await agent.apply(original: '', diff: '', settings: const AppSettings());
-      expect(out, 'new content\nwith lines');
+      final result = await agent.apply(original: '', diff: '', settings: const AppSettings());
+      expect(result.content, 'new content\nwith lines');
+      expect(result.tokens, isNotNull);
     });
   });
 }

@@ -7,7 +7,7 @@ import 'package:sample_app/agents/auto_fix/auto_fix_agent.dart';
 
 void main() {
   group('AutoFixAgent LLM patches integration', () {
-    Future<List<AgentEvent>> _collect(Stream<AgentEvent>? s) async {
+    Future<List<AgentEvent>> collectEvents(Stream<AgentEvent>? s) async {
       if (s == null) return [];
       final out = <AgentEvent>[];
       final c = Completer<void>();
@@ -35,7 +35,7 @@ void main() {
           '+void main(){ print(\'hi\'); }\n';
 
       final agent = AutoFixAgent();
-      final events = await _collect(agent.start(AgentRequest('analyze', context: {
+      final events = await collectEvents(agent.start(AgentRequest('analyze', context: {
         'path': file.path,
         'mode': 'file',
         'useLLM': true,
@@ -47,8 +47,8 @@ void main() {
       expect(complete.length, 1);
       final meta = complete.first.meta as Map<String, dynamic>?;
       expect(meta, isNotNull);
-      final patches = (meta!['patches'] as List?) ?? [];
-      final llmPatches = (meta['llm_patches'] as List?) ?? [];
+      final patches = meta!['patches'] ?? [];
+      final llmPatches = meta['llm_patches'] ?? [];
       // базовые фиксы могут быть пустыми, нас интересует, что LLM патчи не включены в patches
       expect(llmPatches.length, 1);
       expect(patches.length, lessThanOrEqualTo(1));
@@ -67,7 +67,7 @@ void main() {
           '+void main(){ print(\'hi\'); }\n';
 
       final agent = AutoFixAgent();
-      final events = await _collect(agent.start(AgentRequest('analyze', context: {
+      final events = await collectEvents(agent.start(AgentRequest('analyze', context: {
         'path': file.path,
         'mode': 'file',
         'useLLM': true,
@@ -79,8 +79,8 @@ void main() {
       expect(complete.length, 1);
       final meta = complete.first.meta as Map<String, dynamic>?;
       expect(meta, isNotNull);
-      final patches = (meta!['patches'] as List?) ?? [];
-      final llmPatches = (meta['llm_patches'] as List?) ?? [];
+      final patches = meta!['patches'] ?? [];
+      final llmPatches = meta['llm_patches'] ?? [];
       expect(llmPatches.length, 1);
       expect(patches.length, greaterThanOrEqualTo(1)); // объединены
     });

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as dev;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
@@ -39,6 +40,9 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
   final List<String> _eventLogs = [];
   bool _awaitTestsConfirm = false;
   String? _awaitAction; // 'create_tests' | 'run_tests'
+
+  // Token usage tracking
+  Map<String, int>? _currentTokens; // Current session tokens
 
   // Pending code to execute
   String? _pendingEntrypoint;
@@ -174,6 +178,13 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
   }
 
   void _handleAgentEvent(AgentEvent e) {
+    // Log tokens if available
+    final tokens = e.meta?['tokens'] as Map<String, int>?;
+    if (tokens != null) {
+      dev.log('Agent event tokens: $tokens (stage: ${e.stage.name})', name: 'CodeOpsScreen');
+      setState(() => _currentTokens = tokens);
+    }
+
     // Log line
     final stage = e.stage.name;
     final sev = e.severity.name;
@@ -278,6 +289,11 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
     if (stream == null) {
       // Fallback: non-streaming ask
       final resp = await _agent.ask(AgentRequest(userText));
+      final tokens = resp.meta?['tokens'] as Map<String, int>?;
+      if (tokens != null) {
+        dev.log('Agent response tokens: $tokens', name: 'CodeOpsScreen');
+        setState(() => _currentTokens = tokens);
+      }
       _appendMessage(Message(text: resp.text, isUser: false));
       setState(() => _isLoading = false);
       return;
@@ -782,6 +798,24 @@ class _CodeOpsScreenState extends State<CodeOpsScreen> {
                 children: [
                   if (_pipelineProgress != null)
                     LinearProgressIndicator(value: _pipelineProgress),
+                  if (_currentTokens != null) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          Text('Input: ${_currentTokens!['inputTokens'] ?? 0}', style: const TextStyle(fontSize: 12)),
+                          Text('Output: ${_currentTokens!['completionTokens'] ?? 0}', style: const TextStyle(fontSize: 12)),
+                          Text('Total: ${_currentTokens!['totalTokens'] ?? 0}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                  ],
                   if (_eventLogs.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Container(

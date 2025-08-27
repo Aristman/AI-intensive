@@ -7,13 +7,15 @@ import 'package:sample_app/agents/auto_fix/diff_apply_agent.dart';
 /// - { 'path': String, 'newContent': String }
 /// - { 'path': String, 'diff': String } — только для простых unified diff по всему файлу
 class PatchApplyService {
+  final List<_BackupEntry> _backups = [];
+  /// Callback для передачи информации о токенах
+  void Function(Map<String, int> tokens)? onTokensCollected;
   Map<String, _BackupEntry>? _lastBackup; // path -> backup
 
   bool get canRollback => _lastBackup != null && _lastBackup!.isNotEmpty;
 
   /// Применяет патчи. Если указан `newContent` — записывает его.
   /// Если указан только `diff` — применяет его через LLM-агента (DiffApplyAgent).
-  /// Возвращает количество применённых файлов.
   Future<int> applyPatches(
     List<Map<String, dynamic>> patches, {
     AppSettings? settings,
@@ -43,10 +45,16 @@ class PatchApplyService {
               final agent = DiffApplyAgent();
               final llmResult = await agent.apply(
                   original: original, diff: diff, settings: settings);
-              if (llmResult != null) {
-                newContent = llmResult;
+              if (llmResult.content != null) {
+                newContent = llmResult.content;
               }
-            } catch (e) {}
+              // Передаем токены через callback
+              if (llmResult.tokens != null && onTokensCollected != null) {
+                onTokensCollected!(llmResult.tokens!);
+              }
+            } catch (e) {
+              // Ignore LLM diff application errors, continue with newContent = null
+            }
           }
         }
         if (newContent == null) continue;

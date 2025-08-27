@@ -1,7 +1,8 @@
 /// Utilities to parse simple unified diffs into per-file patches.
-/// Scope: handles standard headers (--- a/<path>, +++ b/<path>) and groups
+/// Scope: handles standard headers (--- a/{path}, +++ b/{path}) and groups
 /// hunks by file. The body is preserved as-is; application may reconstruct
 /// new content or use a simplified PatchApplyService strategy.
+library unified_diff_utils;
 
 class UnifiedFilePatch {
   final String path;

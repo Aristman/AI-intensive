@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:developer' as dev;
 import 'package:sample_app/agents/agent.dart' show Agent; // for stopSequence
 import 'package:sample_app/domain/llm_resolver.dart';
 import 'package:sample_app/models/app_settings.dart';
@@ -86,10 +88,14 @@ extension on ReasoningAgent {
         );
       } else {
         final usecase = resolveLlmUseCase(_settings);
-        summaryText = await usecase.complete(messages: summaryMessages, settings: _settings);
+        final llmResponse = await usecase.completeWithUsage(messages: summaryMessages, settings: _settings);
+        summaryText = llmResponse.text;
+        if (llmResponse.usage != null) {
+          dev.log('LLM tokens used in compressHistory: ${llmResponse.usage}', name: 'ReasoningAgent');
+        }
       }
     } catch (_) {
-      // В случае ошибки саммаризации — не ломаем поток, просто выходим
+      // Ignore summarization errors to not break the conversation flow
       return;
     }
 
@@ -121,7 +127,9 @@ class ReasoningAgent {
           reasoningMode: true,
           // формат ответа оставляем согласно настройкам; по умолчанию пусть будет текст
         ),
-        _mcpIntegrationService = McpIntegrationService();
+        _mcpIntegrationService = McpIntegrationService() {
+    // Constructor body
+  }
 
   void updateSettings(AppSettings settings) {
     _settings = settings.copyWith(reasoningMode: true);
@@ -129,12 +137,25 @@ class ReasoningAgent {
 
   void clearHistory() => _history.clear();
 
-  // Экспорт истории (без системного промпта)
+  /// Экспорт истории (без системного промпта)
   List<Map<String, String>> exportHistory() => [
         for (final m in _history) {'role': m.role, 'content': m.content}
       ];
 
-  // Импорт истории (обрежем по лимиту historyDepth)
+  void _log(String title, Object data) {
+    try {
+      String text;
+      if (data is String) {
+        text = data;
+      } else {
+        text = const JsonEncoder.withIndent('  ').convert(data);
+      }
+      dev.log(text, name: 'ReasoningAgent/$title');
+    } catch (_) {
+      // ignore logging errors
+    }
+  }
+
   void importHistory(List<Map<String, String>> messages) {
     _history.clear();
     final limit = _settings.historyDepth.clamp(0, 100);
@@ -163,19 +184,17 @@ class ReasoningAgent {
 
     if (_settings.responseFormat == ResponseFormat.json) {
       final schema = _settings.customJsonSchema ?? '{"key":"value"}';
-      final questionsRule = 'If uncertainty > 0.1, ask up to 10 clarifying questions (most important first) and do NOT output the final JSON yet, and do NOT append the stop token. ';
       final endNote = 'Finish your output with the exact token: $stopSequence. NOTE: The stop token is for the agent and will be hidden from the user.';
       return 'You are a helpful assistant that returns data in JSON format. '
           'Before producing the final JSON, evaluate your uncertainty in the completeness and correctness of the required data on a scale from 0 to 1. '
-          '$questionsRule'
           'Once uncertainty ≤ 0.1, return ONLY valid minified JSON strictly matching the following schema: '
           '$schema '
           'Do not add explanations or any text outside JSON. $endNote';
     }
 
     // Для обычного текста используем системный промпт из настроек, добавив политику уточнений и доп. промпт
-    final extras = (extraSystemPrompt != null && extraSystemPrompt!.trim().isNotEmpty)
-        ? '\n\n${extraSystemPrompt!.trim()}'
+    final extras = (extraSystemPrompt != null && extraSystemPrompt!.isNotEmpty)
+        ? '\n\n${extraSystemPrompt!}'
         : '';
     return '${_settings.systemPrompt}\n\n$uncertaintyPolicy$extras';
   }
@@ -212,7 +231,8 @@ class ReasoningAgent {
 
     try {
       final usecase = resolveLlmUseCase(_settings);
-      var answer = await usecase.complete(messages: messages, settings: _settings);
+      final llmResponse = await usecase.completeWithUsage(messages: messages, settings: _settings);
+      var answer = llmResponse.text;
 
       // предварительно определяем финальность по наличию stopSequence
       var hasStop = answer.contains(stopSequence);
@@ -232,12 +252,20 @@ class ReasoningAgent {
         _history.removeRange(0, _history.length - limit);
       }
 
+      _log('LLM Response', {
+        'chars': answer.length,
+        'isFinal': hasStop,
+        'tokens': llmResponse.usage,
+        'preview': answer.length > 200 ? '${answer.substring(0, 200)}...' : answer,
+      });
+
       return {
         'result': ReasoningResult(
           text: answer,
           isFinal: hasStop,
         ),
         'mcp_used': enrichedContext['mcp_used'] ?? false,
+        'tokens': llmResponse.usage,
       };
     } catch (e) {
       // В случае ошибки не меняем историю и возвращаем сообщение ошибки как текст

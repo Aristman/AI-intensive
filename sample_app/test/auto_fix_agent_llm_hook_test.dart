@@ -39,7 +39,7 @@ void main() {
     // Допускаем два исхода: либо пришёл llm_raw, либо warning об отсутствии LLM
     final hasLlmRaw = events.any((e) => (e.meta ?? const {})['llm_raw'] != null);
     final llmWarn = events.where((e) => e.stage == AgentStage.analysis_result && e.severity == AgentSeverity.warning)
-        .any((e) => (e.message ?? '').contains('LLM'));
+        .any((e) => e.message.contains('LLM'));
     expect(hasLlmRaw || llmWarn, true, reason: 'Ожидаем либо llm_raw, либо warning об LLM');
 
     // Есть патчи от базового анализатора

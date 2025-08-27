@@ -2,13 +2,21 @@ import 'package:sample_app/domain/llm_resolver.dart';
 import 'package:sample_app/domain/llm_usecase.dart';
 import 'package:sample_app/models/app_settings.dart';
 
+/// Результат применения диффа с информацией о токенах
+class DiffApplyResult {
+  final String? content;
+  final Map<String, int>? tokens;
+  
+  const DiffApplyResult({this.content, this.tokens});
+}
+
 /// Агент, применяющий unified diff к исходному файлу при помощи LLM.
-/// Возвращает итоговое содержимое файла.
+/// Возвращает итоговое содержимое файла и информацию о токенах.
 class DiffApplyAgent {
   final LlmUseCase? _useCase;
   DiffApplyAgent({LlmUseCase? useCase}) : _useCase = useCase;
 
-  Future<String?> apply({
+  Future<DiffApplyResult> apply({
     required String original,
     required String diff,
     required AppSettings settings,
@@ -34,14 +42,19 @@ class DiffApplyAgent {
       ..writeln(diff)
       ..writeln('```');
 
-    final resp = await uc.complete(messages: [
+    final response = await uc.completeWithUsage(messages: [
       {'role': 'system', 'content': system},
       {'role': 'user', 'content': prompt.toString()},
     ], settings: settings);
 
     // Извлекаем первый безъязыковый блок ```...``` либо первый код-блок вообще.
-    final content = _extractCodeFence(resp) ?? resp.trim();
-    return content.isEmpty ? null : content;
+    final content = _extractCodeFence(response.text) ?? response.text.trim();
+    final resultContent = content.isEmpty ? null : content;
+    
+    return DiffApplyResult(
+      content: resultContent,
+      tokens: response.usage,
+    );
   }
 
   String? _extractCodeFence(String text) {

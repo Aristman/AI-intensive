@@ -32,6 +32,15 @@ class YandexGptUseCase implements LlmUseCase {
     required List<Map<String, String>> messages,
     required AppSettings settings,
   }) async {
+    final response = await completeWithUsage(messages: messages, settings: settings);
+    return response.text;
+  }
+
+  @override
+  Future<LlmResponse> completeWithUsage({
+    required List<Map<String, String>> messages,
+    required AppSettings settings,
+  }) async {
     // Требуем либо IAM токен (предпочтительно), либо Api-Key (временный fallback)
     if (_iamToken.isEmpty && _apiKey.isEmpty) {
       throw Exception('Не найден Yandex IAM токен или API ключ. Укажите YANDEX_IAM_TOKEN (предпочтительно) или YANDEX_API_KEY в assets/.env');
@@ -85,10 +94,21 @@ class YandexGptUseCase implements LlmUseCase {
     }
 
     final Map<String, dynamic> data = jsonDecode(response.body);
-    // Формат: { result: { alternatives: [ { message: { role, text } } ] } }
+    // Формат: { result: { alternatives: [ { message: { role, text } } ], usage: { inputTextTokens, completionTokens, totalTokens } } }
     final text = data['result']?['alternatives']?[0]?['message']?['text'];
     if (text is String && text.isNotEmpty) {
-      return text;
+      // Парсим usage
+      final usageData = data['result']?['usage'];
+      Map<String, int>? usage;
+      if (usageData is Map<String, dynamic>) {
+        usage = {
+          'inputTokens': usageData['inputTextTokens'] as int? ?? 0,
+          'completionTokens': usageData['completionTokens'] as int? ?? 0,
+          'totalTokens': usageData['totalTokens'] as int? ?? 0,
+        };
+      }
+
+      return LlmResponse(text: text, usage: usage);
     }
     throw Exception('Пустой ответ от YandexGPT');
   }
