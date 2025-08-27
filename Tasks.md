@@ -457,3 +457,30 @@
 - Если да, укажете желаемые дефолтные лимиты: max файлов (3/5?) и max символов на файл (800/1200?).
 
 Статус: предложены конкретные изменения в [auto_fix_agent.dart](cci:7://file:///D:/projects/ai_intensive/AI-intensive/sample_app/lib/agents/auto_fix/auto_fix_agent.dart:0:0-0:0) и [diff_apply_agent.dart](cci:7://file:///D:/projects/ai_intensive/AI-intensive/sample_app/lib/agents/auto_fix/diff_apply_agent.dart:0:0-0:0), дающие наибольшую экономию за счёт локального применения диффов, ограничения и сжатия контекста, релевантного отбора и строгого ответа модели.
+
+## Сделанные изменения
+
+## Изменения по оптимизации токенов
+
+- __Стриппинг комментариев per extension__  
+  Перед отправкой в LLM удаляются комментарии для `.dart/.kt/.java/.md`, снижая объём контента ([sample_app/lib/agents/auto_fix/auto_fix_agent.dart](cci:7://file:///D:/projects/ai_intensive/AI-intensive/sample_app/lib/agents/auto_fix/auto_fix_agent.dart:0:0-0:0) + утилиты).
+
+- __Селективные выдержки вместо полного файла__  
+  Отправляем head и окна вокруг проблемных строк (±N), а не весь файл, уменьшая контекст.
+
+- __Бюджетирование токенов__  
+  Предварительная оценка токенов и обрезка файлов/фрагментов по доступному бюджету перед формированием запроса к LLM.
+
+- __Кеширование превью по хэшу__  
+  Повторно используем ранее подготовленные выдержки для неизменившихся файлов и одинаковых наборов issues; пропускаем пересылку без изменений.
+
+- __Условный вызов LLM__  
+  Пропускаем этап LLM, если локальные фиксы покрывают найденные проблемы, чтобы не тратить токены зря (`auto_fix_agent`).
+
+- __LLM как fallback при применении diff__  
+  В [DiffApplyAgent](cci:2://file:///D:/projects/ai_intensive/AI-intensive/sample_app/lib/agents/auto_fix/diff_apply_agent.dart:14:0-133:1)/[PatchApplyService](cci:2://file:///D:/projects/ai_intensive/AI-intensive/sample_app/lib/services/patch_apply_service.dart:8:0-122:1) сначала пробуем локально применить unified diff; обращаемся к LLM только при необходимости.
+
+- __Мониторинг и контроль расхода__  
+  Агрегируем usage по пайплайну и показываем UI‑индикатор (вход/выход/итого) + подробный лог событий для оперативного контроля и оптимизации ([sample_app/lib/screens/auto_fix_screen.dart](cci:7://file:///D:/projects/ai_intensive/AI-intensive/sample_app/lib/screens/auto_fix_screen.dart:0:0-0:0), [sample_app/test/screens/auto_fix_token_usage_test.dart](cci:7://file:///D:/projects/ai_intensive/AI-intensive/sample_app/test/screens/auto_fix_token_usage_test.dart:0:0-0:0)).
+
+Итог: внедрены техники уменьшения входного контекста, умного пропуска обращений к LLM и повторного использования данных, плюс прозрачный мониторинг использования токенов.
