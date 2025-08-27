@@ -9,7 +9,10 @@ import 'package:sample_app/services/patch_apply_service.dart';
 import 'package:sample_app/utils/diff_view_utils.dart';
 
 class AutoFixScreen extends StatefulWidget {
-  const AutoFixScreen({super.key});
+  final IAgent? agent; // for testing/injection
+  final PatchApplyService? patchService; // for testing/injection
+
+  const AutoFixScreen({super.key, this.agent, this.patchService});
 
   @override
   State<AutoFixScreen> createState() => _AutoFixScreenState();
@@ -23,14 +26,13 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
   final _pathCtrl = TextEditingController();
   String _mode = 'file'; // 'file' | 'dir'
   
-
   IAgent? _agent;
   StreamSubscription<AgentEvent>? _sub;
   final List<AgentEvent> _events = [];
   bool _running = false;
   bool _eventsExpanded = false; // панель событий: развернута во время выполнения
   List<Map<String, dynamic>> _patches = const [];
-  final _patchService = PatchApplyService();
+  late final PatchApplyService _patchService;
   // Всегда применяем через LLM-агента в PatchApplyService
   
   // Token usage tracking
@@ -42,6 +44,7 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
   @override
   void initState() {
     super.initState();
+    _patchService = widget.patchService ?? PatchApplyService();
     _pathCtrl.addListener(() {
       if (mounted) setState(() {});
     });
@@ -75,7 +78,7 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
     if (!mounted) return;
     setState(() {
       _settings = s;
-      _agent = AutoFixAgent(initialSettings: s);
+      _agent = widget.agent ?? AutoFixAgent(initialSettings: s);
       _loading = false;
     });
   }

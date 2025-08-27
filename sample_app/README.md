@@ -15,6 +15,7 @@ For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
 
+
 ## YandexGPT интеграция: краткий порядок подключения
 
 1) Получите `FOLDER_ID` в Yandex Cloud.
@@ -280,6 +281,19 @@ samples, guidance on mobile development, and a full API reference.
 - Порт занят: измените порт в MCP‑инструменте или освободите `8080`.
 - Нет доступа к образу: проверьте сеть/прокси, повторите `docker pull` вручную.
 - MCP недоступен: проверьте `ws://localhost:3001`, логи `mcp_server/`.
+
+## Индикатор токенов и логирование (AutoFix)
+
+В экране `AutoFix` добавлена визуализация использования токенов во время работы пайплайна.
+
+- Источники данных:
+  - `AgentEvent.meta.tokens` из агента `lib/agents/auto_fix/auto_fix_agent.dart`.
+  - Колбэк `onTokensCollected` в `lib/services/patch_apply_service.dart` (например, при применении diff через LLM).
+- UI:
+  - Суммарная карточка с входными/выходными и общим числом токенов.
+  - Раскрываемая панель лога с событиями и временными метками.
+- Реализация UI: `lib/screens/auto_fix_screen.dart`.
+- Тесты: `test/screens/auto_fix_token_usage_test.dart` — проверяет отображение суммарных токенов и детализацию лога через фейковый агент.
 
 # Архитектурный анализ Flutter-проекта sample_app
 
