@@ -1,4 +1,3 @@
-```
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:sample_app/screens/home_screen.dart';
