@@ -27,7 +27,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _send() {
     final text = _inputController.text;
-    context.read<ChatState>().sendUserMessage(text);
+    final settings = context.read<SettingsState>();
+    context.read<ChatState>().sendUserMessage(text, settings);
     _inputController.clear();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
