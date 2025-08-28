@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -28,6 +29,9 @@ class YandexGptUseCase implements LlmUseCase {
     double temperature = 0.2,
     int maxTokens = 128,
     http.Client? client,
+    Duration timeout = const Duration(seconds: 20),
+    int retries = 0,
+    Duration retryDelay = const Duration(milliseconds: 200),
   }) async {
     if ((iamToken.isEmpty) && apiKey.isEmpty) {
       throw Exception(
@@ -66,14 +70,28 @@ class YandexGptUseCase implements LlmUseCase {
 
     final cli = client ?? http.Client();
     try {
-      final resp = await cli.post(Uri.parse(endpoint), headers: headers, body: body);
-      if (resp.statusCode != 200) {
-        throw Exception('Ошибка YandexGPT: ${resp.statusCode} ${resp.body}');
+      for (var attempt = 0; attempt <= retries; attempt++) {
+        try {
+          final resp = await cli
+              .post(Uri.parse(endpoint), headers: headers, body: body)
+              .timeout(timeout);
+          if (resp.statusCode != 200) {
+            throw Exception('Ошибка YandexGPT: ${resp.statusCode} ${resp.body}');
+          }
+          final data = jsonDecode(resp.body) as Map<String, dynamic>;
+          final text = data['result']?['alternatives']?[0]?['message']?['text'];
+          if (text is String && text.isNotEmpty) return text;
+          throw Exception('Пустой ответ от YandexGPT');
+        } on TimeoutException catch (_) {
+          if (attempt == retries) rethrow;
+          await Future.delayed(retryDelay);
+        } catch (_) {
+          if (attempt == retries) rethrow;
+          await Future.delayed(retryDelay);
+        }
       }
-      final data = jsonDecode(resp.body) as Map<String, dynamic>;
-      final text = data['result']?['alternatives']?[0]?['message']?['text'];
-      if (text is String && text.isNotEmpty) return text;
-      throw Exception('Пустой ответ от YandexGPT');
+      // Should never reach here; safeguard
+      throw Exception('Не удалось получить ответ от YandexGPT');
     } finally {
       if (client == null) cli.close();
     }

@@ -47,14 +47,41 @@ Flutter приложение-агент для суммаризации с LLM (
 - `CFBundleDisplayName` = "Telegram Summarizer" подтверждён.
 - Исправлены виджет‑тесты (устранён pending Timer при скролле).
 - Персист (SharedPreferences), MCP клиент и YandexGPT — в работе (см. `ROADMAP.md`).
+- В AppBar добавлен индикатор статуса MCP (зелёный/красный) и кнопка «Переподключить».
 
 ## CI
 - Настроен GitHub Actions для анализа и тестов Flutter: `.github/workflows/flutter-ci.yml`.
 
 ## План MVP (функциональность)
 - Чат-UI: AppBar (название, текущая модель; кнопки Очистка/Настройки), лента сообщений, поле ввода и Отправить
+- Индикация MCP: статус соединения и кнопка «Переподключить» в AppBar
 - Рендер `structuredContent` в карточках со сводной информацией (кнопка «Копировать»)
 - Персист контекста/настроек через SharedPreferences
+
+## SimpleAgent (контекст + сжатие)
+Простой агент с сохранением истории сообщений и возможностью её сжатия через LLM.
+
+- Особенности:
+  - Сохраняет историю сообщений в оперативной памяти в формате `[{role, content}]`.
+  - Опциональный системный промпт при создании.
+  - Метод `ask()` добавляет сообщение пользователя, вызывает LLM и добавляет ответ ассистента.
+  - Метод `compressContext()` сжимает историю в одну системную сводку и (опционально) оставляет последнее сообщение пользователя.
+
+- Использование:
+  ```dart
+  import 'package:telegram_summarizer/agents/simple_agent.dart';
+  import 'package:telegram_summarizer/state/settings_state.dart';
+  import 'package:telegram_summarizer/domain/llm_resolver.dart';
+
+  final settings = SettingsState();
+  await settings.load();
+  final llm = resolveLlmUseCase(settings);
+  final agent = SimpleAgent(llm, systemPrompt: 'Вы — полезный ассистент.');
+
+  final reply = await agent.ask('Привет!', settings);
+  // ... при необходимости сжать контекст
+  await agent.compressContext(settings, keepLastUser: true);
+  ```
 
 ## Тесты
 ```bash

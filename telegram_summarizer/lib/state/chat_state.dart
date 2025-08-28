@@ -5,6 +5,7 @@ import 'package:telegram_summarizer/core/models/message.dart';
 import 'package:telegram_summarizer/domain/llm_usecase.dart';
 import 'package:telegram_summarizer/state/settings_state.dart';
 import 'package:telegram_summarizer/data/mcp/mcp_client.dart';
+import 'package:telegram_summarizer/agents/simple_agent.dart';
 import 'package:uuid/uuid.dart';
 
 class ChatState extends ChangeNotifier {
@@ -15,10 +16,38 @@ class ChatState extends ChangeNotifier {
   final List<ChatMessage> _messages = [];
   final LlmUseCase _llm;
   final McpClient? _mcp; // optional MCP client
+  final SimpleAgent _agent;
 
-  ChatState(this._llm, [this._mcp]);
+  ChatState(this._llm, [this._mcp]) : _agent = SimpleAgent(_llm);
 
   List<ChatMessage> get messages => List.unmodifiable(_messages);
+
+  // MCP status helpers
+  bool get hasMcp => _mcp != null;
+  bool get mcpConnected => _mcp?.isConnected ?? false;
+
+  Future<void> connectMcp() async {
+    if (_mcp == null) return;
+    try {
+      await _mcp!.connect();
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  Future<void> disconnectMcp() async {
+    if (_mcp == null) return;
+    await _mcp!.disconnect();
+    notifyListeners();
+  }
+
+  Future<void> reconnectMcp() async {
+    if (_mcp == null) return;
+    await _mcp!.disconnect();
+    try {
+      await _mcp!.connect();
+    } catch (_) {}
+    notifyListeners();
+  }
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -36,6 +65,8 @@ class ChatState extends ChangeNotifier {
         // ignore malformed state
       }
     }
+    // Загрузим историю агента (внутренний контекст)
+    await _agent.load();
     notifyListeners();
   }
 
@@ -62,19 +93,8 @@ class ChatState extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final responseText = await _llm.complete(
-        messages: [
-          for (final m in _messages)
-            {
-              'role': m.author == MessageAuthor.user ? 'user' : 'assistant',
-              'content': m.text,
-            }
-        ],
-        modelUri: settings.llmModel,
-        iamToken: settings.iamToken,
-        apiKey: settings.apiKey,
-        folderId: settings.folderId,
-      );
+      // Ответ получаем через агента; внутренний контекст агент сжимает сам при необходимости
+      final responseText = await _agent.ask(text, settings);
 
       // Create initial LLM message
       var llmMsg = ChatMessage(
@@ -92,6 +112,7 @@ class ChatState extends ChangeNotifier {
         try {
           if (!_mcp!.isConnected) {
             await _mcp!.connect();
+            notifyListeners();
           }
           final summary = await _mcp!.summarize(responseText);
           // Replace last message with structuredContent attached
@@ -141,6 +162,8 @@ class ChatState extends ChangeNotifier {
     _messages.clear();
     SharedPreferences.getInstance()
         .then((p) => p.setString(_kHistoryKey, '[]'));
+    // Очистим и внутренний контекст агента
+    _agent.clear();
     notifyListeners();
   }
 }

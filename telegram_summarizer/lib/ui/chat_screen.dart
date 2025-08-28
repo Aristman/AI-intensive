@@ -60,6 +60,31 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+          // MCP status indicator
+          if (chat.hasMcp)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4.0),
+              child: Tooltip(
+                message: chat.mcpConnected
+                    ? 'MCP подключен (${settings.mcpUrl})'
+                    : 'MCP отключен (${settings.mcpUrl})',
+                child: Icon(
+                  Icons.circle,
+                  size: 14,
+                  color: chat.mcpConnected
+                      ? Colors.green
+                      : Colors.red,
+                ),
+              ),
+            ),
+          if (chat.hasMcp)
+            IconButton(
+              tooltip: 'Переподключить MCP',
+              icon: const Icon(Icons.refresh),
+              onPressed: () async {
+                await context.read<ChatState>().reconnectMcp();
+              },
+            ),
           IconButton(
             tooltip: 'Очистить контекст',
             icon: const Icon(Icons.delete_outline),

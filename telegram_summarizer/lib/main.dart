@@ -4,7 +4,8 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:telegram_summarizer/state/chat_state.dart';
 import 'package:telegram_summarizer/state/settings_state.dart';
 import 'package:telegram_summarizer/ui/chat_screen.dart';
-import 'package:telegram_summarizer/data/llm/yandex_gpt_usecase.dart';
+import 'package:telegram_summarizer/domain/llm_resolver.dart';
+import 'package:telegram_summarizer/data/mcp/mcp_client.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,8 +14,9 @@ Future<void> main() async {
   final settings = SettingsState();
   await settings.load();
 
-  final llm = YandexGptUseCase();
-  final chat = ChatState(llm);
+  final llm = resolveLlmUseCase(settings);
+  final mcp = McpClient(url: settings.mcpUrl);
+  final chat = ChatState(llm, mcp);
   await chat.load();
 
   runApp(MyApp(settings: settings, chat: chat));

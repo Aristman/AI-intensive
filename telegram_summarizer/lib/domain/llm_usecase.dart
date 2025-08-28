@@ -10,5 +10,8 @@ abstract class LlmUseCase {
     double temperature = 0.2,
     int maxTokens = 128,
     http.Client? client,
+    Duration timeout = const Duration(seconds: 20),
+    int retries = 0,
+    Duration retryDelay = const Duration(milliseconds: 200),
   });
 }

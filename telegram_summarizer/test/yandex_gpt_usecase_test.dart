@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -99,5 +100,95 @@ void main() {
       ),
       throwsA(isA<Exception>()),
     );
+  });
+
+  test('YandexGptUseCase times out', () async {
+    final mock = MockClient((request) async {
+      await Future.delayed(const Duration(milliseconds: 150));
+      return http.Response('too late', 200);
+    });
+    final usecase = YandexGptUseCase();
+
+    expect(
+      () => usecase.complete(
+        messages: const [
+          {'role': 'user', 'content': 'Hi'}
+        ],
+        modelUri: 'yandexgpt-lite',
+        iamToken: '',
+        apiKey: 'api',
+        folderId: 'folder',
+        client: mock,
+        timeout: const Duration(milliseconds: 50),
+        retries: 0,
+      ),
+      throwsA(isA<TimeoutException>()),
+    );
+  });
+
+  test('YandexGptUseCase retries then succeeds', () async {
+    int calls = 0;
+    final mock = MockClient((request) async {
+      calls++;
+      if (calls == 1) {
+        return http.Response('fail', 500);
+      }
+      return http.Response(
+        jsonEncode({
+          'result': {
+            'alternatives': [
+              {
+                'message': {'role': 'assistant', 'text': 'OK after retry'}
+              }
+            ]
+          }
+        }),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+
+    final usecase = YandexGptUseCase();
+    final text = await usecase.complete(
+      messages: const [
+        {'role': 'user', 'content': 'Hi'}
+      ],
+      modelUri: 'yandexgpt-lite',
+      iamToken: '',
+      apiKey: 'api',
+      folderId: 'folder',
+      client: mock,
+      retries: 1,
+      retryDelay: const Duration(milliseconds: 10),
+    );
+
+    expect(text, 'OK after retry');
+    expect(calls, 2);
+  });
+
+  test('YandexGptUseCase exhausts retries and throws', () async {
+    int calls = 0;
+    final mock = MockClient((request) async {
+      calls++;
+      return http.Response('fail', 500);
+    });
+    final usecase = YandexGptUseCase();
+
+    await expectLater(
+      () => usecase.complete(
+        messages: const [
+          {'role': 'user', 'content': 'Hi'}
+        ],
+        modelUri: 'yandexgpt-lite',
+        iamToken: '',
+        apiKey: 'api',
+        folderId: 'folder',
+        client: mock,
+        retries: 2,
+        retryDelay: const Duration(milliseconds: 5),
+      ),
+      throwsA(isA<Exception>()),
+    );
+    expect(calls, 3);
   });
 }
