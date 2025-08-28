@@ -51,7 +51,13 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         title: Row(
           children: [
-            const Text('Telegram Summarizer'),
+            const Flexible(
+              child: Text(
+                'Telegram Summarizer',
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
             const SizedBox(width: 12),
             Chip(
               label: Text(settings.llmModel),
@@ -68,7 +74,14 @@ class _ChatScreenState extends State<ChatScreen> {
                 message: chat.mcpConnecting
                     ? 'MCP подключается… (${settings.mcpUrl})'
                     : chat.mcpConnected
-                        ? 'MCP подключен (${settings.mcpUrl})'
+                        ? (() {
+                            final tools = chat.mcpTools;
+                            final base = 'MCP подключен (${settings.mcpUrl})';
+                            if (tools.isNotEmpty) {
+                              return '$base\nИнструменты: ${tools.join(', ')}';
+                            }
+                            return base;
+                          })()
                         : (chat.mcpError != null
                             ? 'Ошибка MCP: ${chat.mcpError}\n(${settings.mcpUrl})'
                             : 'MCP отключен (${settings.mcpUrl})'),

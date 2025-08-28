@@ -32,6 +32,11 @@ class SimpleAgent {
   /// Текущая копия истории в формате LLM-сообщений.
   List<Map<String, String>> get history => List.unmodifiable(_history);
 
+  /// Текущие capabilities MCP (кэшированы после refreshMcpCapabilities).
+  Map<String, dynamic>? get mcpCapabilities => _mcpCapabilities == null
+      ? null
+      : Map<String, dynamic>.from(_mcpCapabilities!);
+
   /// Очистка истории.
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();

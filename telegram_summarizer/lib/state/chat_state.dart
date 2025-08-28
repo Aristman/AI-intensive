@@ -44,6 +44,20 @@ class ChatState extends ChangeNotifier {
   bool get mcpConnecting => _mcpConnecting;
   String? get mcpError => _mcpError;
 
+  /// Краткий список доступных инструментов MCP (если capabilities загружены).
+  List<String> get mcpTools {
+    final caps = _agent.mcpCapabilities;
+    if (caps == null) return const [];
+    final toolsVal = caps['tools'];
+    if (toolsVal is List) {
+      return toolsVal.map((e) => e.toString()).where((e) => e.isNotEmpty).toList(growable: false);
+    }
+    if (toolsVal is Map) {
+      return toolsVal.keys.map((e) => e.toString()).where((e) => e.isNotEmpty).toList(growable: false);
+    }
+    return const [];
+  }
+
   Future<void> connectMcp() async {
     if (_mcp == null) return;
     _mcpError = null;
