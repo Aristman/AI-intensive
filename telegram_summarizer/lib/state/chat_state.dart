@@ -21,9 +21,13 @@ class ChatState extends ChangeNotifier {
   bool _mcpConnecting = false;
   String? _mcpError;
 
-  ChatState(this._llm, [this._mcp]) : _agent = SimpleAgent(_llm) {
+  ChatState(this._llm, [this._mcp]) : _agent = SimpleAgent(_llm, mcp: _mcp) {
     // Subscribe to MCP low-level state to update UI immediately on disconnect/error
     _mcp?.onStateChanged = () {
+      // При установлении соединения обновим capabilities в агенте
+      if (_mcp!.isConnected) {
+        _agent.refreshMcpCapabilities();
+      }
       notifyListeners();
     };
     _mcp?.onErrorCallback = (e) {
@@ -48,6 +52,8 @@ class ChatState extends ChangeNotifier {
     try {
       final started = DateTime.now();
       await _mcp!.connect();
+      // после успешного соединения запросим capabilities
+      await _agent.refreshMcpCapabilities();
       final elapsed = DateTime.now().difference(started);
       if (elapsed < _minConnectIndicator) {
         await Future.delayed(_minConnectIndicator - elapsed);
@@ -75,6 +81,8 @@ class ChatState extends ChangeNotifier {
     try {
       final started = DateTime.now();
       await _mcp!.connect();
+      // после успешного соединения запросим capabilities
+      await _agent.refreshMcpCapabilities();
       final elapsed = DateTime.now().difference(started);
       if (elapsed < _minConnectIndicator) {
         await Future.delayed(_minConnectIndicator - elapsed);
@@ -108,6 +116,7 @@ class ChatState extends ChangeNotifier {
     // Проверим/установим состояние MCP при старте
     if (_mcp != null) {
       await connectMcp();
+      // capabilities подтянутся внутри connectMcp
     } else {
       notifyListeners();
     }
@@ -136,73 +145,19 @@ class ChatState extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Ответ получаем через агента; внутренний контекст агент сжимает сам при необходимости
-      final responseText = await _agent.ask(text, settings);
+      // Ответ получаем через агента; агент сам учитывает capabilities MCP и может вернуть structuredContent
+      final rich = await _agent.askRich(text, settings);
 
-      // Create initial LLM message
-      var llmMsg = ChatMessage(
+      final llmMsg = ChatMessage(
         id: _uuid.v4(),
         author: MessageAuthor.llm,
-        text: responseText,
+        text: rich.text,
         timestamp: DateTime.now(),
+        structuredContent: rich.structuredContent,
       );
       _messages.add(llmMsg);
       await _persist();
       notifyListeners();
-
-      // Optionally call MCP to get structured content and attach to last LLM message
-      if (_mcp != null) {
-        try {
-          if (!_mcp!.isConnected) {
-            _mcpError = null;
-            _mcpConnecting = true;
-            notifyListeners();
-            try {
-              final started = DateTime.now();
-              await _mcp!.connect();
-              final elapsed = DateTime.now().difference(started);
-              if (elapsed < _minConnectIndicator) {
-                await Future.delayed(_minConnectIndicator - elapsed);
-              }
-            } catch (e) {
-              _mcpError = e.toString();
-            } finally {
-              _mcpConnecting = false;
-              notifyListeners();
-            }
-          }
-          final summary = await _mcp!.summarize(responseText);
-          // Replace last message with structuredContent attached
-          final last = _messages.isNotEmpty ? _messages.last : null;
-          if (last != null && last.id == llmMsg.id) {
-            llmMsg = ChatMessage(
-              id: last.id,
-              author: last.author,
-              text: last.text,
-              timestamp: last.timestamp,
-              structuredContent: summary,
-            );
-            _messages[_messages.length - 1] = llmMsg;
-            await _persist();
-            notifyListeners();
-          }
-        } catch (e) {
-          // Attach error as structured content for visibility
-          final last = _messages.isNotEmpty ? _messages.last : null;
-          if (last != null && last.id == llmMsg.id) {
-            llmMsg = ChatMessage(
-              id: last.id,
-              author: last.author,
-              text: last.text,
-              timestamp: last.timestamp,
-              structuredContent: {'error': e.toString()},
-            );
-            _messages[_messages.length - 1] = llmMsg;
-            await _persist();
-            notifyListeners();
-          }
-        }
-      }
     } catch (e) {
       _messages.add(ChatMessage(
         id: _uuid.v4(),

@@ -52,8 +52,10 @@ class _FakeMcp implements McpClient {
 
   // Unused in this test
   @override
-  Future<Map<String, dynamic>> call(String method, Map<String, dynamic> params, {Duration timeout = const Duration(seconds: 20)}) {
-    throw UnimplementedError();
+  Future<Map<String, dynamic>> call(String method, Map<String, dynamic> params, {Duration timeout = const Duration(seconds: 20)}) async {
+    // Возвращаем пустые capabilities, чтобы агент не падал
+    if (method == 'capabilities') return <String, dynamic>{};
+    return <String, dynamic>{};
   }
 
   @override

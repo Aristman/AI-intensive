@@ -1,7 +1,7 @@
 # telegram_summarizer — ROADMAP
 
 Дата: 2025-08-28
-Статус: В работе; iOS bundle id и тесты — готово
+Статус: В работе; централизованная MCP‑интеграция в агенте и тесты — готово
 Ответственный: TBD
 
 ## Цели
@@ -13,7 +13,7 @@
 
 ## Критерии MVP (готовности)
 - LLM (YandexGPT) работает: пользователь отправляет запрос → получаем ответ LLM.
-- MCP подключается (настраиваемый ws:// URL), вызываются минимум два инструмента (пример: `tg.resolve_chat`, `tg.fetch_history`) через tools/call.
+- MCP подключается (настраиваемый ws:// URL), базовые вызовы через JSON‑RPC (`capabilities`, `summarize`) работают и используются агентом. В дальнейшем — `tg.resolve_chat`, `tg.fetch_history`.
 - По запросу пользователю отображается сводка: parsed `structuredContent` → карточки со сводной информацией, доступна кнопка «Копировать».
 - UI по спецификации: AppBar (название, модель, «Очистка», «Настройки»), лента сообщений (пользователь — голубой фон; LLM текст — светло‑зелёный; сводки — карточки).
 - Контекст чата и настройки персистятся (SharedPreferences). Очистка контекста работает.
@@ -26,12 +26,13 @@
 
 ---
 
-## Сделано (2025-08-28)
+## Сделано (2025-08-29)
 - Обновлён iOS bundle identifier в `ios/Runner.xcodeproj/project.pbxproj` для Runner (Debug/Release/Profile) и RunnerTests: `ru.marslab.telegram.summarizer` и `ru.marslab.telegram.summarizer.RunnerTests`.
 - Подтверждён `CFBundleDisplayName = "Telegram Summarizer"` в `ios/Runner/Info.plist`.
 - Исправлен pending Timer в `lib/ui/chat_screen.dart::_send()` — заменён `Future.delayed` на `WidgetsBinding.instance.addPostFrameCallback` для стабильных виджет‑тестов.
 - Виджет‑тесты проходят: `flutter test` зелёный.
 - Добавлена индикация статуса MCP в `chat_screen.dart` (зелёная/красная точка) и кнопка «Переподключить» (вызывает `ChatState.reconnectMcp()`).
+- Интеграция MCP вынесена в `SimpleAgent`: после подключения MCP агент подтягивает `capabilities` и добавляет их в системный промпт LLM; `askRich()` возвращает `structuredContent` (успешный `summarize`). `ChatState` не вызывает MCP напрямую.
 
 ## Архитектура (высокоуровнево)
 - Flutter (как в `sample_app/`): Provider/ChangeNotifier для настроек и состояния чата; виджет‑тесты.
@@ -90,11 +91,13 @@
 - [x] Простой агент с сохранением контекста и сжатием (SimpleAgent + тесты).
 
 ### Этап 4. MCP клиент (WebSocket JSON‑RPC)
-- [ ] Клиент: connect/close, `initialize`, `tools/list`, `tools/call`.
-- [ ] Конфиги через Settings: MCP URL, тест подключения (пинг/initialize + tools/list).
-- [ ] Модель ответа: поддержка `content[]`, `structuredContent`, `resources`.
-- [ ] Обработка ошибок: `FLOOD_WAIT`, `CHANNEL_PRIVATE`, `USERNAME_INVALID`, `INPUT_VALIDATION`; общий формат JSON‑RPC ошибок.
-- [ ] Фейки/моки для интеграционных тестов.
+- [x] Клиент: connect/close, базовый `call`, `summarize` (JSON‑RPC по WebSocket).
+- [ ] Расширение: `initialize`, `tools/list`, `tools/call` (после MVP).
+- [x] Конфиги через Settings: MCP URL, автоподключение при старте UI.
+- [x] Интеграция в агент: `refreshMcpCapabilities()` и системный промпт LLM.
+- [ ] Модель ответа: поддержка `content[]`, `structuredContent`, `resources` (частично: `structuredContent`).
+- [ ] Обработка расширенных ошибок (`FLOOD_WAIT`, `CHANNEL_PRIVATE`, и пр.).
+- [x] Фейки/моки для интеграционных тестов (capabilities, summarize, ошибки summarize).
 
 ### Этап 5. Рендер сводок (structuredContent)
 - [ ] JSON Schema‑валидируемый парсер structuredContent.
@@ -107,14 +110,15 @@
       - Если запрос содержит маркеры Telegram/канала/периода → выполнить `tg.resolve_chat` → `tg.fetch_history` (1–2 страницы, ограничение).
       - Сформировать `structuredContent` агрегат для рендера карточек.
       - Отправить в LLM user‑запрос + краткий контекст из MCP → получить текстовую выжимку.
-- [ ] Отображение: карточки сводки + ответ LLM.
-- [ ] Индикация состояний: подключение MCP, запрос/ответ LLM, ошибки.
+- [x] Отображение: карточки сводки + ответ LLM (через `askRich()` и рендер `structuredContent`).
+- [x] Индикация состояний: подключение MCP (желтый/зеленый/красный), ошибки MCP показываются отдельно, не как `structuredContent`.
 
 ### Этап 7. Тестирование
-- [ ] Юнит‑тесты: парсер/рендер structuredContent; LLM usecase; MCP клиент (моки, ошибки).
+- [x] Юнит‑тесты: агент + MCP (`askRich`, capabilities → системный промпт; успешный/ошибочный summarize).
+- [ ] Юнит‑тесты: парсер/рендер structuredContent; LLM usecase; MCP клиент (расширенные ошибки).
 - [ ] Виджет‑тесты: Chat UI, Settings, очистка контекста, копирование.
 - [ ] Интеграционные: сценарий MVP с мок‑MCP (resolve → fetch → summary → LLM).
-- [ ] Все тесты должны проходить локально (как в репо — правило качества).
+- [x] Все тесты проходят локально (как в репо — правило качества).
 
 ### Этап 8. Документация
 - [ ] `telegram_summarizer/README.md`: быстрый старт, настройки IAM/Yandex, MCP URL, сценарии, ограничения.

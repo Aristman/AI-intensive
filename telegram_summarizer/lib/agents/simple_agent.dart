@@ -2,6 +2,14 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:telegram_summarizer/domain/llm_usecase.dart';
 import 'package:telegram_summarizer/state/settings_state.dart';
+import 'package:telegram_summarizer/data/mcp/mcp_client.dart';
+
+/// Простой агент с сохранением контекста и возможностью сжатия контекста через LLM.
+class AgentReply {
+  final String text;
+  final Map<String, dynamic>? structuredContent;
+  AgentReply({required this.text, this.structuredContent});
+}
 
 /// Простой агент с сохранением контекста и возможностью сжатия контекста через LLM.
 class SimpleAgent {
@@ -9,11 +17,13 @@ class SimpleAgent {
   static const int _tokenCompressThreshold = 2000;
   final LlmUseCase _llm;
   final List<Map<String, String>> _history = [];
+  final McpClient? _mcp;
+  Map<String, dynamic>? _mcpCapabilities;
 
   /// Базовый системный промпт, который можно задать при создании агента.
   final String? systemPrompt;
 
-  SimpleAgent(this._llm, {this.systemPrompt}) {
+  SimpleAgent(this._llm, {this.systemPrompt, McpClient? mcp}) : _mcp = mcp {
     if (systemPrompt != null && systemPrompt!.isNotEmpty) {
       _history.add({'role': 'system', 'content': systemPrompt!});
     }
@@ -86,7 +96,7 @@ class SimpleAgent {
     addUserMessage(userText);
 
     final reply = await _llm.complete(
-      messages: _history,
+      messages: _messagesForLlm(),
       modelUri: settings.llmModel,
       iamToken: settings.iamToken,
       apiKey: settings.apiKey,
@@ -101,6 +111,52 @@ class SimpleAgent {
     addAssistantMessage(reply);
     await _save();
     return reply;
+  }
+
+  /// Расширенный диалог: возвращает текст и structuredContent (например, сводку от MCP) при наличии.
+  Future<AgentReply> askRich(String userText, SettingsState settings, {
+    double temperature = 0.2,
+    int maxTokens = 256,
+    Duration timeout = const Duration(seconds: 20),
+    int retries = 0,
+    Duration retryDelay = const Duration(milliseconds: 200),
+  }) async {
+    // Поведение идентично ask(), но формируем сообщения с учётом возможностей MCP
+    final prospective = [
+      ..._history,
+      {'role': 'user', 'content': userText.trim()},
+    ];
+    if (_estimateTokens(prospective) > _tokenCompressThreshold) {
+      await compressContext(settings, keepLastUser: true, maxTokens: maxTokens, timeout: timeout, retries: retries, retryDelay: retryDelay);
+    }
+
+    addUserMessage(userText);
+
+    final replyText = await _llm.complete(
+      messages: _messagesForLlm(),
+      modelUri: settings.llmModel,
+      iamToken: settings.iamToken,
+      apiKey: settings.apiKey,
+      folderId: settings.folderId,
+      temperature: temperature,
+      maxTokens: maxTokens,
+      timeout: timeout,
+      retries: retries,
+      retryDelay: retryDelay,
+    );
+
+    addAssistantMessage(replyText);
+    await _save();
+
+    Map<String, dynamic>? structured;
+    if (_mcp != null && _mcp!.isConnected) {
+      try {
+        structured = await _mcp!.summarize(replyText, timeout: timeout);
+      } catch (_) {
+        // Игнорируем ошибки MCP здесь; ответственность UI — показать статус
+      }
+    }
+    return AgentReply(text: replyText, structuredContent: structured);
   }
 
   /// Сжать текущий контекст с помощью LLM.
@@ -159,5 +215,30 @@ class SimpleAgent {
       sum += ((m['content'] ?? '').length / 4).ceil();
     }
     return sum;
+  }
+
+  /// Сформировать сообщения для LLM, добавив системную подсказку с возможностями MCP при наличии.
+  List<Map<String, String>> _messagesForLlm() {
+    final msgs = <Map<String, String>>[..._history];
+    if (_mcpCapabilities != null) {
+      msgs.add({
+        'role': 'system',
+        'content': 'Доступны возможности внешнего MCP-сервера (JSON-RPC tools). '
+            'Capabilities: ${jsonEncode(_mcpCapabilities)}. '
+            'Если эти инструменты релевантны к задаче пользователя, предлагай использовать их результаты в ответе.'
+      });
+    }
+    return msgs;
+  }
+
+  /// Обновить сведения о возможностях MCP. Вызывать после установления соединения MCP.
+  Future<void> refreshMcpCapabilities({Duration timeout = const Duration(seconds: 10)}) async {
+    if (_mcp == null || !_mcp!.isConnected) return;
+    try {
+      final caps = await _mcp!.call('capabilities', {}, timeout: timeout);
+      _mcpCapabilities = caps;
+    } catch (_) {
+      // молча игнорируем, capabilities опциональны
+    }
   }
 }

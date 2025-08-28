@@ -46,12 +46,12 @@ Flutter приложение-агент для суммаризации с LLM (
 - Обновлён iOS bundle id во всех конфигурациях проекта Xcode.
 - `CFBundleDisplayName` = "Telegram Summarizer" подтверждён.
 - Исправлены виджет‑тесты (устранён pending Timer при скролле).
-- Персист (SharedPreferences), MCP клиент и YandexGPT — в работе (см. `ROADMAP.md`).
+- Интеграция MCP централизована в `SimpleAgent` (агент): `capabilities` подгружается после соединения и добавляется в системную подсказку LLM, `askRich()` возвращает `structuredContent` при успешном ответе MCP. `ChatState` не вызывает MCP напрямую.
 - В AppBar добавлен индикатор статуса MCP и кнопка «Переподключить»:
-  - жёлтый — идёт подключение (подключение к MCP),
-  - зелёный — подключено (MCP подключен),
-  - красный — отключено/ошибка (всплывающее уведомление с текстом ошибки).
-  - При запуске приложения выполняется проверка/автоподключение MCP.
+  - жёлтый — идёт подключение (минимум 250 мс, чтобы избежать мигания),
+  - зелёный — подключено,
+  - красный — отключено/ошибка (ошибка отображается во всплывающем уведомлении).
+  - При запуске выполняется автоподключение MCP и обновление `capabilities` в агенте.
 
 ## CI
 - Настроен GitHub Actions для анализа и тестов Flutter: `.github/workflows/flutter-ci.yml`.
@@ -62,28 +62,42 @@ Flutter приложение-агент для суммаризации с LLM (
 - Рендер `structuredContent` в карточках со сводной информацией (кнопка «Копировать»)
 - Персист контекста/настроек через SharedPreferences
 
-## SimpleAgent (контекст + сжатие)
-Простой агент с сохранением истории сообщений и возможностью её сжатия через LLM.
+## SimpleAgent (контекст + сжатие + MCP)
+Простой агент с сохранением истории сообщений, возможностью её сжатия, и централизованной интеграцией MCP.
 
 - Особенности:
   - Сохраняет историю сообщений в оперативной памяти в формате `[{role, content}]`.
   - Опциональный системный промпт при создании.
   - Метод `ask()` добавляет сообщение пользователя, вызывает LLM и добавляет ответ ассистента.
+  - Метод `askRich()` делает всё как `ask()`, а также при наличии подключённого MCP вызывает `summarize` и возвращает `structuredContent` вместе с текстом LLM.
+  - Метод `refreshMcpCapabilities()` вызывает `capabilities` на MCP и добавляет результат в системную подсказку LLM (как дополнительное системное сообщение) для контекстно‑осознанных ответов.
   - Метод `compressContext()` сжимает историю в одну системную сводку и (опционально) оставляет последнее сообщение пользователя.
 
 - Использование:
   ```dart
   import 'package:telegram_summarizer/agents/simple_agent.dart';
+  import 'package:telegram_summarizer/data/mcp/mcp_client.dart';
   import 'package:telegram_summarizer/state/settings_state.dart';
   import 'package:telegram_summarizer/domain/llm_resolver.dart';
 
   final settings = SettingsState();
   await settings.load();
   final llm = resolveLlmUseCase(settings);
-  final agent = SimpleAgent(llm, systemPrompt: 'Вы — полезный ассистент.');
+  final mcp = McpClient(url: settings.mcpUrl);
+  await mcp.connect();
 
-  final reply = await agent.ask('Привет!', settings);
-  // ... при необходимости сжать контекст
+  final agent = SimpleAgent(
+    llm,
+    systemPrompt: 'Вы — полезный ассистент.',
+    mcp: mcp,
+  );
+  await agent.refreshMcpCapabilities(); // подтянуть capabilities и добавить в системную подсказку
+
+  final rich = await agent.askRich('Привет!', settings);
+  final text = rich.text; // ответ LLM
+  final structured = rich.structuredContent; // JSON сводка от MCP (если подключено и без ошибок)
+
+  // Опционально: сжать контекст
   await agent.compressContext(settings, keepLastUser: true);
   ```
 
@@ -95,9 +109,10 @@ flutter test
 ## Структура (основное)
 - `lib/ui/chat_screen.dart` — основной экран чата
 - `lib/ui/settings_screen.dart` — экран настроек (план)
-- `lib/state/` — состояние (настройки, чат)
-- `lib/data/llm/` — клиент YandexGPT (заготовка)
-- `lib/data/mcp/` — клиент MCP WebSocket JSON-RPC (заготовка)
+- `lib/state/` — состояние (настройки, чат). `ChatState` делегирует всю логику LLM+MCP агенту и не вызывает MCP напрямую.
+- `lib/data/llm/` — клиент YandexGPT
+- `lib/data/mcp/` — клиент MCP WebSocket JSON-RPC (`connect/disconnect`, `call`, `summarize`)
+- `lib/agents/` — `SimpleAgent` (контекст, сжатие, интеграция MCP: `askRich`, `refreshMcpCapabilities`)
 - `lib/widgets/` — визуальные компоненты (MessageBubble, SummaryCard)
 
 Подробный план — см. `ROADMAP.md`.

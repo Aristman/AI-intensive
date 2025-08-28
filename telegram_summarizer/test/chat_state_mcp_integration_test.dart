@@ -39,18 +39,27 @@ void main() {
       url: 'ws://test',
       connector: (uri) async {
         ctrl = StreamChannelController<dynamic>();
-        // Echo successful summarize
+        // Handle capabilities and summarize
         ctrl.foreign.stream.listen((data) {
           final map = jsonDecode(data as String) as Map<String, dynamic>;
           final id = map['id'];
-          ctrl.foreign.sink.add(jsonEncode({
-            'jsonrpc': '2.0',
-            'id': id,
-            'result': {
-              'summary': 'ok',
-              'source': 'mcp',
-            },
-          }));
+          final method = map['method'] as String?;
+          if (method == 'capabilities') {
+            ctrl.foreign.sink.add(jsonEncode({
+              'jsonrpc': '2.0',
+              'id': id,
+              'result': {'tools': ['summarize']},
+            }));
+          } else {
+            ctrl.foreign.sink.add(jsonEncode({
+              'jsonrpc': '2.0',
+              'id': id,
+              'result': {
+                'summary': 'ok',
+                'source': 'mcp',
+              },
+            }));
+          }
         });
         return ctrl.local;
       },
@@ -67,21 +76,30 @@ void main() {
     expect(chat.messages.last.structuredContent!['summary'], 'ok');
   });
 
-  test('ChatState attaches error structuredContent when MCP fails', () async {
+  test('ChatState does not attach structuredContent when MCP fails', () async {
     late StreamChannelController<dynamic> ctrl;
     final mcp = McpClient(
       url: 'ws://test',
       connector: (uri) async {
         ctrl = StreamChannelController<dynamic>();
-        // Respond with JSON-RPC error
+        // Respond with capabilities ok, summarize error
         ctrl.foreign.stream.listen((data) {
           final map = jsonDecode(data as String) as Map<String, dynamic>;
           final id = map['id'];
-          ctrl.foreign.sink.add(jsonEncode({
-            'jsonrpc': '2.0',
-            'id': id,
-            'error': {'code': -32000, 'message': 'boom'},
-          }));
+          final method = map['method'] as String?;
+          if (method == 'capabilities') {
+            ctrl.foreign.sink.add(jsonEncode({
+              'jsonrpc': '2.0',
+              'id': id,
+              'result': {'tools': ['summarize']},
+            }));
+          } else {
+            ctrl.foreign.sink.add(jsonEncode({
+              'jsonrpc': '2.0',
+              'id': id,
+              'error': {'code': -32000, 'message': 'boom'},
+            }));
+          }
         });
         return ctrl.local;
       },
@@ -94,9 +112,7 @@ void main() {
     await chat.sendUserMessage('Hello', settings);
 
     expect(chat.messages.last.text, 'LLM reply');
-    expect(chat.messages.last.structuredContent, isNotNull);
-    final err = chat.messages.last.structuredContent!['error'] as String?;
-    expect(err, isNotNull);
-    expect(err!, contains('boom'));
+    // При ошибке MCP агент не добавляет structuredContent
+    expect(chat.messages.last.structuredContent, isNull);
   });
 }
