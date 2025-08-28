@@ -24,13 +24,13 @@ Flutter приложение-агент для суммаризации с LLM (
 
 ## Настройки
 - LLM: YandexGPT через IAM + `x-folder-id` (указываются в экране Настроек, сохраняются в SharedPreferences)
-- MCP: внешний сервер, URL вида `ws://localhost:8080` (задаётся в Настройках)
+- MCP: внешний сервер, URL может быть в виде `ws://`/`wss://` или `http://`/`https://` (в приложении `http(s)` автоматически конвертируется в `ws(s)` при подключении). Пример: `https://tgtoolkit.azazazaza.work`.
 - Локальная конфигурация: используйте `assets/.env.example` и скопируйте его в `assets/.env`, затем заполните значения. `.env` игнорируется Git.
   - Переменные:
     - `IAM_TOKEN`
     - `X_FOLDER_ID`
     - `YANDEX_API_KEY`
-    - `MCP_URL` (например, `ws://localhost:8080`)
+    - `MCP_URL` (например, `https://tgtoolkit.azazazaza.work` или `ws://localhost:8080`)
 
 ## Платформенные заметки
 - iOS: подпись и сборка

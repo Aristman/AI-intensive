@@ -74,8 +74,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             TextField(
               controller: _mcpUrlController,
               decoration: const InputDecoration(
-                labelText: 'MCP WebSocket URL',
-                hintText: 'ws://localhost:8080',
+                labelText: 'MCP URL (ws(s):// или http(s)://)',
+                hintText: 'https://tgtoolkit.azazazaza.work',
                 border: OutlineInputBorder(),
               ),
             ),

@@ -47,11 +47,22 @@ void main() {
           final map = jsonDecode(data as String) as Map<String, dynamic>;
           final id = map['id'];
           final method = map['method'] as String?;
-          if (method == 'capabilities') {
+          if (method == 'initialize') {
             ctrl.foreign.sink.add(jsonEncode({
               'jsonrpc': '2.0',
               'id': id,
-              'result': {'tools': ['summarize']},
+              'result': {'ok': true},
+            }));
+          } else if (method == 'tools/list') {
+            ctrl.foreign.sink.add(jsonEncode({
+              'jsonrpc': '2.0',
+              'id': id,
+              'result': {
+                'tools': [
+                  {'name': 'tg.resolve_chat'},
+                  {'name': 'tg.fetch_history'},
+                ]
+              },
             }));
           } else if (method == 'summarize') {
             ctrl.foreign.sink.add(jsonEncode({
@@ -88,7 +99,10 @@ void main() {
     final msgs = recLlm.lastMessages!;
     final sysCaps = msgs.where((m) => m['role'] == 'system' && (m['content'] ?? '').contains('Capabilities:')).toList();
     expect(sysCaps, isNotEmpty);
-    expect(sysCaps.last['content']!, contains('"tools":["summarize"]'));
+    // capabilities должны отражать инструменты удалённого сервера
+    final capsContent = sysCaps.last['content']!;
+    expect(capsContent, contains('tg.resolve_chat'));
+    expect(capsContent, contains('tg.fetch_history'));
 
     // 2) Возвращено structuredContent из MCP
     expect(rich.structuredContent, isNotNull);

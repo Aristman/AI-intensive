@@ -59,6 +59,16 @@ class _FakeMcp implements McpClient {
   }
 
   @override
+  Future<List<Map<String, dynamic>>> listTools({Duration timeout = const Duration(seconds: 10)}) async {
+    return const <Map<String, dynamic>>[];
+  }
+
+  @override
+  Future<Map<String, dynamic>> callTool(String name, Map<String, dynamic> arguments, {Duration timeout = const Duration(seconds: 20)}) async {
+    return <String, dynamic>{};
+  }
+
+  @override
   Future<Map<String, dynamic>> summarize(String text, {Duration timeout = const Duration(seconds: 20)}) {
     throw UnimplementedError();
   }
@@ -95,6 +105,16 @@ class _SlowFailMcp implements McpClient {
   @override
   Future<Map<String, dynamic>> call(String method, Map<String, dynamic> params, {Duration timeout = const Duration(seconds: 20)}) {
     throw UnimplementedError();
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> listTools({Duration timeout = const Duration(seconds: 10)}) async {
+    return const <Map<String, dynamic>>[];
+  }
+
+  @override
+  Future<Map<String, dynamic>> callTool(String name, Map<String, dynamic> arguments, {Duration timeout = const Duration(seconds: 20)}) async {
+    return <String, dynamic>{};
   }
 
   @override

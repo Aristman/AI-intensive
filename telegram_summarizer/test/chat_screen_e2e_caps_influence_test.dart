@@ -75,6 +75,19 @@ class _CapableMcp implements McpClient {
   Future<Map<String, dynamic>> summarize(String text, {Duration timeout = const Duration(seconds: 20)}) async {
     return <String, dynamic>{'summary': 'ok', 'items': []};
   }
+
+  @override
+  Future<List<Map<String, dynamic>>> listTools({Duration timeout = const Duration(seconds: 10)}) async {
+    return const <Map<String, dynamic>>[
+      {'name': 'tg.resolve'},
+      {'name': 'tg.fetch'},
+    ];
+  }
+
+  @override
+  Future<Map<String, dynamic>> callTool(String name, Map<String, dynamic> arguments, {Duration timeout = const Duration(seconds: 20)}) async {
+    return <String, dynamic>{};
+  }
 }
 
 Widget _wrap({required ChatState chat, required SettingsState settings}) {
