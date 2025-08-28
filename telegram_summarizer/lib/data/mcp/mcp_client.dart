@@ -32,6 +32,8 @@ class McpClient {
   StreamSubscription? _sub;
   final Map<int, Completer<Map<String, dynamic>>> _pending = {};
   int _nextId = 1;
+  void Function()? onStateChanged;
+  void Function(Object error)? onErrorCallback;
 
   McpClient({required this.url, WebSocketConnector? connector})
       : _connector = connector ?? ((uri) async => WebSocketChannel.connect(uri));
@@ -44,6 +46,8 @@ class McpClient {
     final ch = await _connector(uri);
     _channel = ch;
     _sub = ch.stream.listen(_onData, onError: _onError, onDone: _onDone);
+    // Notify about new connection state
+    try { onStateChanged?.call(); } catch (_) {}
   }
 
   Future<void> disconnect() async {
@@ -63,6 +67,7 @@ class McpClient {
     try {
       ch?.sink.close();
     } catch (_) {}
+    try { onStateChanged?.call(); } catch (_) {}
   }
 
   void _onData(dynamic data) {
@@ -98,12 +103,22 @@ class McpClient {
   }
 
   void _onError(Object error) {
+    // Reset connection state
+    final ch = _channel;
+    _channel = null;
+    _sub?.cancel();
+    _sub = null;
+    try { ch?.sink.close(); } catch (_) {}
+
     // Complete all pending with this error
     final pending = List.of(_pending.values);
     _pending.clear();
     for (final c in pending) {
       if (!c.isCompleted) c.completeError(error);
     }
+    // Notify listeners
+    try { onErrorCallback?.call(error); } catch (_) {}
+    try { onStateChanged?.call(); } catch (_) {}
   }
 
   void _onDone() {
@@ -116,6 +131,7 @@ class McpClient {
     for (final c in pending) {
       if (!c.isCompleted) c.completeError(StateError('Disconnected'));
     }
+    try { onStateChanged?.call(); } catch (_) {}
   }
 
   Future<Map<String, dynamic>> call(

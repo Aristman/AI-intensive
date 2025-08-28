@@ -65,15 +65,21 @@ class _ChatScreenState extends State<ChatScreen> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4.0),
               child: Tooltip(
-                message: chat.mcpConnected
-                    ? 'MCP подключен (${settings.mcpUrl})'
-                    : 'MCP отключен (${settings.mcpUrl})',
+                message: chat.mcpConnecting
+                    ? 'MCP подключается… (${settings.mcpUrl})'
+                    : chat.mcpConnected
+                        ? 'MCP подключен (${settings.mcpUrl})'
+                        : (chat.mcpError != null
+                            ? 'Ошибка MCP: ${chat.mcpError}\n(${settings.mcpUrl})'
+                            : 'MCP отключен (${settings.mcpUrl})'),
                 child: Icon(
                   Icons.circle,
                   size: 14,
-                  color: chat.mcpConnected
-                      ? Colors.green
-                      : Colors.red,
+                  color: chat.mcpConnecting
+                      ? Colors.amber
+                      : (chat.mcpConnected
+                          ? Colors.green
+                          : Colors.red),
                 ),
               ),
             ),
@@ -83,6 +89,16 @@ class _ChatScreenState extends State<ChatScreen> {
               icon: const Icon(Icons.refresh),
               onPressed: () async {
                 await context.read<ChatState>().reconnectMcp();
+                if (!mounted) return;
+                final cs = context.read<ChatState>();
+                if (cs.mcpError != null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Не удалось подключиться к MCP: ${cs.mcpError}'),
+                      backgroundColor: Theme.of(context).colorScheme.error,
+                    ),
+                  );
+                }
               },
             ),
           IconButton(

@@ -11,27 +11,53 @@ import 'package:uuid/uuid.dart';
 class ChatState extends ChangeNotifier {
   static const _kHistoryKey = 'chatHistory';
   static const int _maxHistory = 200;
+  static const Duration _minConnectIndicator = Duration(milliseconds: 250);
 
   final _uuid = const Uuid();
   final List<ChatMessage> _messages = [];
   final LlmUseCase _llm;
   final McpClient? _mcp; // optional MCP client
   final SimpleAgent _agent;
+  bool _mcpConnecting = false;
+  String? _mcpError;
 
-  ChatState(this._llm, [this._mcp]) : _agent = SimpleAgent(_llm);
+  ChatState(this._llm, [this._mcp]) : _agent = SimpleAgent(_llm) {
+    // Subscribe to MCP low-level state to update UI immediately on disconnect/error
+    _mcp?.onStateChanged = () {
+      notifyListeners();
+    };
+    _mcp?.onErrorCallback = (e) {
+      _mcpError = e.toString();
+      notifyListeners();
+    };
+  }
 
   List<ChatMessage> get messages => List.unmodifiable(_messages);
 
   // MCP status helpers
   bool get hasMcp => _mcp != null;
   bool get mcpConnected => _mcp?.isConnected ?? false;
+  bool get mcpConnecting => _mcpConnecting;
+  String? get mcpError => _mcpError;
 
   Future<void> connectMcp() async {
     if (_mcp == null) return;
-    try {
-      await _mcp!.connect();
-    } catch (_) {}
+    _mcpError = null;
+    _mcpConnecting = true;
     notifyListeners();
+    try {
+      final started = DateTime.now();
+      await _mcp!.connect();
+      final elapsed = DateTime.now().difference(started);
+      if (elapsed < _minConnectIndicator) {
+        await Future.delayed(_minConnectIndicator - elapsed);
+      }
+    } catch (e) {
+      _mcpError = e.toString();
+    } finally {
+      _mcpConnecting = false;
+      notifyListeners();
+    }
   }
 
   Future<void> disconnectMcp() async {
@@ -42,11 +68,23 @@ class ChatState extends ChangeNotifier {
 
   Future<void> reconnectMcp() async {
     if (_mcp == null) return;
+    _mcpError = null;
+    _mcpConnecting = true;
+    notifyListeners();
     await _mcp!.disconnect();
     try {
+      final started = DateTime.now();
       await _mcp!.connect();
-    } catch (_) {}
-    notifyListeners();
+      final elapsed = DateTime.now().difference(started);
+      if (elapsed < _minConnectIndicator) {
+        await Future.delayed(_minConnectIndicator - elapsed);
+      }
+    } catch (e) {
+      _mcpError = e.toString();
+    } finally {
+      _mcpConnecting = false;
+      notifyListeners();
+    }
   }
 
   Future<void> load() async {
@@ -67,7 +105,12 @@ class ChatState extends ChangeNotifier {
     }
     // Загрузим историю агента (внутренний контекст)
     await _agent.load();
-    notifyListeners();
+    // Проверим/установим состояние MCP при старте
+    if (_mcp != null) {
+      await connectMcp();
+    } else {
+      notifyListeners();
+    }
   }
 
   Future<void> _persist() async {
@@ -111,8 +154,22 @@ class ChatState extends ChangeNotifier {
       if (_mcp != null) {
         try {
           if (!_mcp!.isConnected) {
-            await _mcp!.connect();
+            _mcpError = null;
+            _mcpConnecting = true;
             notifyListeners();
+            try {
+              final started = DateTime.now();
+              await _mcp!.connect();
+              final elapsed = DateTime.now().difference(started);
+              if (elapsed < _minConnectIndicator) {
+                await Future.delayed(_minConnectIndicator - elapsed);
+              }
+            } catch (e) {
+              _mcpError = e.toString();
+            } finally {
+              _mcpConnecting = false;
+              notifyListeners();
+            }
           }
           final summary = await _mcp!.summarize(responseText);
           // Replace last message with structuredContent attached
