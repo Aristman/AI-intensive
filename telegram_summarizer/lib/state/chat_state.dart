@@ -16,24 +16,13 @@ class ChatState extends ChangeNotifier {
   final _uuid = const Uuid();
   final List<ChatMessage> _messages = [];
   final LlmUseCase _llm;
-  final McpClient? _mcp; // optional MCP client
+  McpClient? _mcp; // optional MCP client (mutable to allow URL changes)
   final SimpleAgent _agent;
   bool _mcpConnecting = false;
   String? _mcpError;
 
   ChatState(this._llm, [this._mcp]) : _agent = SimpleAgent(_llm, mcp: _mcp) {
-    // Subscribe to MCP low-level state to update UI immediately on disconnect/error
-    _mcp?.onStateChanged = () {
-      // При установлении соединения обновим capabilities в агенте
-      if (_mcp!.isConnected) {
-        _agent.refreshMcpCapabilities();
-      }
-      notifyListeners();
-    };
-    _mcp?.onErrorCallback = (e) {
-      _mcpError = e.toString();
-      notifyListeners();
-    };
+    _attachMcpListeners();
   }
 
   List<ChatMessage> get messages => List.unmodifiable(_messages);
@@ -43,6 +32,7 @@ class ChatState extends ChangeNotifier {
   bool get mcpConnected => _mcp?.isConnected ?? false;
   bool get mcpConnecting => _mcpConnecting;
   String? get mcpError => _mcpError;
+  String? get currentMcpUrl => (_mcp is McpClient) ? (_mcp as McpClient).url : null;
 
   /// Краткий список доступных инструментов MCP (если capabilities загружены).
   List<String> get mcpTools {
@@ -107,6 +97,56 @@ class ChatState extends ChangeNotifier {
       _mcpConnecting = false;
       notifyListeners();
     }
+  }
+
+  /// Применить новый URL MCP: пересоздать клиента, подключиться и обновить агента.
+  Future<void> applyMcpUrl(String url, {WebSocketConnector? connector}) async {
+    if (url.isEmpty) {
+      // Отключаем MCP полностью
+      await _mcp?.disconnect();
+      _mcp = null;
+      _agent.setMcp(null);
+      _mcpError = null;
+      notifyListeners();
+      return;
+    }
+
+    // Если URL не менялся — просто переподключение
+    if (_mcp != null && _mcp is McpClient) {
+      if ((_mcp as McpClient).url == url) {
+        await reconnectMcp();
+        return;
+      }
+    }
+
+    // Отключим старый клиент
+    try { await _mcp?.disconnect(); } catch (_) {}
+    // Отвяжем колбэки
+    if (_mcp != null) {
+      try { _mcp!.onStateChanged = null; } catch (_) {}
+      try { _mcp!.onErrorCallback = null; } catch (_) {}
+    }
+
+    // Создадим новый клиент
+    _mcp = McpClient(url: url, connector: connector);
+    _agent.setMcp(_mcp);
+    _attachMcpListeners();
+    await connectMcp();
+  }
+
+  void _attachMcpListeners() {
+    // Subscribe to MCP low-level state to update UI immediately on disconnect/error
+    _mcp?.onStateChanged = () {
+      // При установлении соединения обновим capabilities в агенте
+      if (_mcp!.isConnected) {
+        _agent.refreshMcpCapabilities();
+      }
+      notifyListeners();
+    };
+    _mcp?.onErrorCallback = (e) {
+      _mcpError = e.toString();
+      notifyListeners();
+    };
   }
 
   Future<void> load() async {

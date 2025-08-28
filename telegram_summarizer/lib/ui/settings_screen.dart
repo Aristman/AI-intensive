@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:telegram_summarizer/state/settings_state.dart';
+import 'package:telegram_summarizer/state/chat_state.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -37,14 +38,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
-  void _save() {
+  Future<void> _save() async {
     final s = context.read<SettingsState>();
-    s.setLlmModel(_modelController.text.trim());
-    s.setMcpUrl(_mcpUrlController.text.trim());
-    s.setIamToken(_iamController.text.trim());
-    s.setFolderId(_folderController.text.trim());
-    s.setApiKey(_apiKeyController.text.trim());
-    Navigator.of(context).pop();
+    final chat = context.read<ChatState>();
+    final newUrl = _mcpUrlController.text.trim();
+
+    await s.setLlmModel(_modelController.text.trim());
+    await s.setMcpUrl(newUrl);
+    await s.setIamToken(_iamController.text.trim());
+    await s.setFolderId(_folderController.text.trim());
+    await s.setApiKey(_apiKeyController.text.trim());
+
+    // Немедленно применяем новый MCP URL
+    await chat.applyMcpUrl(newUrl);
+
+    if (mounted) Navigator.of(context).pop();
   }
 
   @override

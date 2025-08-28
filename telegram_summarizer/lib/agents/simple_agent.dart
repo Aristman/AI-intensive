@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as dev;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:telegram_summarizer/domain/llm_usecase.dart';
 import 'package:telegram_summarizer/state/settings_state.dart';
@@ -17,7 +18,7 @@ class SimpleAgent {
   static const int _tokenCompressThreshold = 2000;
   final LlmUseCase _llm;
   final List<Map<String, String>> _history = [];
-  final McpClient? _mcp;
+  McpClient? _mcp;
   Map<String, dynamic>? _mcpCapabilities;
 
   /// Базовый системный промпт, который можно задать при создании агента.
@@ -26,6 +27,7 @@ class SimpleAgent {
   SimpleAgent(this._llm, {this.systemPrompt, McpClient? mcp}) : _mcp = mcp {
     if (systemPrompt != null && systemPrompt!.isNotEmpty) {
       _history.add({'role': 'system', 'content': systemPrompt!});
+      dev.log('Agent.init: add systemPrompt="${systemPrompt!}"', name: 'SimpleAgent', level: 800);
     }
   }
 
@@ -56,11 +58,13 @@ class SimpleAgent {
       _history.add({'role': 'system', 'content': systemPrompt!});
       await _save();
     }
+    dev.log('Agent.load: historyLen=${_history.length} history=${jsonEncode(_history)}', name: 'SimpleAgent');
   }
 
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kAgentHistoryKey, jsonEncode(_history));
+    dev.log('Agent._save: historyLen=${_history.length}', name: 'SimpleAgent', level: 700);
   }
 
   Future<void> clear() async {
@@ -72,12 +76,14 @@ class SimpleAgent {
   void addUserMessage(String text) {
     if (text.trim().isEmpty) return;
     _history.add({'role': 'user', 'content': text.trim()});
+    dev.log('Agent.addUser: text="${text.trim()}" historyLen=${_history.length}', name: 'SimpleAgent');
   }
 
   /// Добавить ответ ассистента в историю.
   void addAssistantMessage(String text) {
     if (text.trim().isEmpty) return;
     _history.add({'role': 'assistant', 'content': text.trim()});
+    dev.log('Agent.addAssistant: text="${text.trim()}" historyLen=${_history.length}', name: 'SimpleAgent');
   }
 
   /// Спросить модель с учётом сохранённого контекста.
@@ -100,8 +106,11 @@ class SimpleAgent {
 
     addUserMessage(userText);
 
+    final msgs = _messagesForLlm();
+    dev.log('Agent.ask: sending to LLM. hasCaps=${_mcpCapabilities != null} messages=${jsonEncode(msgs)}', name: 'SimpleAgent');
+
     final reply = await _llm.complete(
-      messages: _messagesForLlm(),
+      messages: msgs,
       modelUri: settings.llmModel,
       iamToken: settings.iamToken,
       apiKey: settings.apiKey,
@@ -113,6 +122,7 @@ class SimpleAgent {
       retryDelay: retryDelay,
     );
 
+    dev.log('Agent.ask: got reply text="$reply"', name: 'SimpleAgent');
     addAssistantMessage(reply);
     await _save();
     return reply;
@@ -137,8 +147,11 @@ class SimpleAgent {
 
     addUserMessage(userText);
 
+    final msgs = _messagesForLlm();
+    dev.log('Agent.askRich: sending to LLM. hasCaps=${_mcpCapabilities != null} messages=${jsonEncode(msgs)}', name: 'SimpleAgent');
+
     final replyText = await _llm.complete(
-      messages: _messagesForLlm(),
+      messages: msgs,
       modelUri: settings.llmModel,
       iamToken: settings.iamToken,
       apiKey: settings.apiKey,
@@ -150,15 +163,19 @@ class SimpleAgent {
       retryDelay: retryDelay,
     );
 
+    dev.log('Agent.askRich: got reply text="$replyText"', name: 'SimpleAgent');
     addAssistantMessage(replyText);
     await _save();
 
     Map<String, dynamic>? structured;
     if (_mcp != null && _mcp!.isConnected) {
       try {
+        dev.log('Agent.askRich: MCP summarize start text="$replyText"', name: 'SimpleAgent');
         structured = await _mcp!.summarize(replyText, timeout: timeout);
-      } catch (_) {
+        dev.log('Agent.askRich: MCP summarize result=${jsonEncode(structured)}', name: 'SimpleAgent');
+      } catch (e) {
         // Игнорируем ошибки MCP здесь; ответственность UI — показать статус
+        dev.log('Agent.askRich: MCP summarize error: $e', name: 'SimpleAgent', level: 900);
       }
     }
     return AgentReply(text: replyText, structuredContent: structured);
@@ -190,6 +207,8 @@ class SimpleAgent {
       {'role': 'system', 'content': compressionPrompt},
     ];
 
+    dev.log('Agent.compressContext: start messages=${jsonEncode(messages)} keepLastUser=$keepLastUser', name: 'SimpleAgent');
+
     final summary = await _llm.complete(
       messages: messages,
       modelUri: settings.llmModel,
@@ -203,6 +222,7 @@ class SimpleAgent {
       retryDelay: retryDelay,
     );
 
+    dev.log('Agent.compressContext: summary="$summary"', name: 'SimpleAgent');
     _history
       ..clear()
       ..add({'role': 'system', 'content': 'Сводка диалога:\n$summary'});
@@ -211,6 +231,7 @@ class SimpleAgent {
       _history.add(lastUser);
     }
     await _save();
+    dev.log('Agent.compressContext: done historyLen=${_history.length} history=${jsonEncode(_history)}', name: 'SimpleAgent');
   }
 
   // Грубая оценка токенов (~4 символа на токен)
@@ -236,14 +257,23 @@ class SimpleAgent {
     return msgs;
   }
 
+  /// Обновить ссылку на MCP-клиент (используется при смене URL и переподключении).
+  void setMcp(McpClient? mcp) {
+    _mcp = mcp;
+    dev.log('Agent.setMcp: ${mcp == null ? 'null' : 'updated'}', name: 'SimpleAgent');
+  }
+
   /// Обновить сведения о возможностях MCP. Вызывать после установления соединения MCP.
   Future<void> refreshMcpCapabilities({Duration timeout = const Duration(seconds: 10)}) async {
     if (_mcp == null || !_mcp!.isConnected) return;
     try {
+      dev.log('Agent.refreshMcpCapabilities: request', name: 'SimpleAgent');
       final caps = await _mcp!.call('capabilities', {}, timeout: timeout);
       _mcpCapabilities = caps;
-    } catch (_) {
+      dev.log('Agent.refreshMcpCapabilities: response=${jsonEncode(caps)}', name: 'SimpleAgent');
+    } catch (e) {
       // молча игнорируем, capabilities опциональны
+      dev.log('Agent.refreshMcpCapabilities: error: $e', name: 'SimpleAgent', level: 900);
     }
   }
 }
