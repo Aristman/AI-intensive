@@ -63,16 +63,6 @@ class _FakeMcp implements McpClient {
   Future<Map<String, dynamic>> summarize(String text, {Duration timeout = const Duration(seconds: 20)}) async {
     return <String, dynamic>{};
   }
-
-  @override
-  Future<List<Map<String, dynamic>>> listTools({Duration timeout = const Duration(seconds: 10)}) async {
-    return const <Map<String, dynamic>>[];
-  }
-
-  @override
-  Future<Map<String, dynamic>> callTool(String name, Map<String, dynamic> arguments, {Duration timeout = const Duration(seconds: 20)}) async {
-    return <String, dynamic>{};
-  }
 }
 
 class _SlowFailMcp implements McpClient {
@@ -105,14 +95,6 @@ class _SlowFailMcp implements McpClient {
   }
   @override
   Future<Map<String, dynamic>> summarize(String text, {Duration timeout = const Duration(seconds: 20)}) async {
-    return <String, dynamic>{};
-  }
-  @override
-  Future<List<Map<String, dynamic>>> listTools({Duration timeout = const Duration(seconds: 10)}) async {
-    return const <Map<String, dynamic>>[];
-  }
-  @override
-  Future<Map<String, dynamic>> callTool(String name, Map<String, dynamic> arguments, {Duration timeout = const Duration(seconds: 20)}) async {
     return <String, dynamic>{};
   }
 }
