@@ -9,6 +9,7 @@ import 'package:telegram_summarizer/data/mcp/mcp_client.dart';
 class AgentReply {
   final String text;
   final Map<String, dynamic>? structuredContent;
+
   AgentReply({required this.text, this.structuredContent});
 }
 
@@ -27,7 +28,8 @@ class SimpleAgent {
   SimpleAgent(this._llm, {this.systemPrompt, McpClient? mcp}) : _mcp = mcp {
     if (systemPrompt != null && systemPrompt!.isNotEmpty) {
       _history.add({'role': 'system', 'content': systemPrompt!});
-      dev.log('Agent.init: add systemPrompt="${systemPrompt!}"', name: 'SimpleAgent', level: 800);
+      dev.log('Agent.init: add systemPrompt="${systemPrompt!}"',
+          name: 'SimpleAgent', level: 800);
     }
   }
 
@@ -48,7 +50,9 @@ class SimpleAgent {
       try {
         final list = jsonDecode(jsonStr);
         if (list is List) {
-          _history.addAll(list.whereType<Map>().map((e) => Map<String, String>.from(e as Map)));
+          _history.addAll(list
+              .whereType<Map>()
+              .map((e) => Map<String, String>.from(e as Map)));
         }
       } catch (_) {
         // ignore
@@ -58,13 +62,16 @@ class SimpleAgent {
       _history.add({'role': 'system', 'content': systemPrompt!});
       await _save();
     }
-    dev.log('Agent.load: historyLen=${_history.length} history=${jsonEncode(_history)}', name: 'SimpleAgent');
+    dev.log(
+        'Agent.load: historyLen=${_history.length} history=${jsonEncode(_history)}',
+        name: 'SimpleAgent');
   }
 
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kAgentHistoryKey, jsonEncode(_history));
-    dev.log('Agent._save: historyLen=${_history.length}', name: 'SimpleAgent', level: 700);
+    dev.log('Agent._save: historyLen=${_history.length}',
+        name: 'SimpleAgent', level: 700);
   }
 
   Future<void> clear() async {
@@ -76,19 +83,25 @@ class SimpleAgent {
   void addUserMessage(String text) {
     if (text.trim().isEmpty) return;
     _history.add({'role': 'user', 'content': text.trim()});
-    dev.log('Agent.addUser: text="${text.trim()}" historyLen=${_history.length}', name: 'SimpleAgent');
+    dev.log(
+        'Agent.addUser: text="${text.trim()}" historyLen=${_history.length}',
+        name: 'SimpleAgent');
   }
 
   /// Добавить ответ ассистента в историю.
   void addAssistantMessage(String text) {
     if (text.trim().isEmpty) return;
     _history.add({'role': 'assistant', 'content': text.trim()});
-    dev.log('Agent.addAssistant: text="${text.trim()}" historyLen=${_history.length}', name: 'SimpleAgent');
+    dev.log(
+        'Agent.addAssistant: text="${text.trim()}" historyLen=${_history.length}',
+        name: 'SimpleAgent');
   }
 
   /// Спросить модель с учётом сохранённого контекста.
   /// Возвращает ответ и автоматически добавляет его в историю.
-  Future<String> ask(String userText, SettingsState settings, {
+  Future<String> ask(
+    String userText,
+    SettingsState settings, {
     double temperature = 0.2,
     int maxTokens = 256,
     Duration timeout = const Duration(seconds: 20),
@@ -101,13 +114,20 @@ class SimpleAgent {
       {'role': 'user', 'content': userText.trim()},
     ];
     if (_estimateTokens(prospective) > _tokenCompressThreshold) {
-      await compressContext(settings, keepLastUser: true, maxTokens: maxTokens, timeout: timeout, retries: retries, retryDelay: retryDelay);
+      await compressContext(settings,
+          keepLastUser: true,
+          maxTokens: maxTokens,
+          timeout: timeout,
+          retries: retries,
+          retryDelay: retryDelay);
     }
 
     addUserMessage(userText);
 
     final msgs = _messagesForLlm();
-    dev.log('Agent.ask: sending to LLM. hasCaps=${_mcpCapabilities != null} messages=${jsonEncode(msgs)}', name: 'SimpleAgent');
+    dev.log(
+        'Agent.ask: sending to LLM. hasCaps=${_mcpCapabilities != null} messages=${jsonEncode(msgs)}',
+        name: 'SimpleAgent');
 
     final reply = await _llm.complete(
       messages: msgs,
@@ -129,7 +149,9 @@ class SimpleAgent {
   }
 
   /// Расширенный диалог: возвращает текст и structuredContent (например, сводку от MCP) при наличии.
-  Future<AgentReply> askRich(String userText, SettingsState settings, {
+  Future<AgentReply> askRich(
+    String userText,
+    SettingsState settings, {
     double temperature = 0.2,
     int maxTokens = 256,
     Duration timeout = const Duration(seconds: 20),
@@ -142,13 +164,20 @@ class SimpleAgent {
       {'role': 'user', 'content': userText.trim()},
     ];
     if (_estimateTokens(prospective) > _tokenCompressThreshold) {
-      await compressContext(settings, keepLastUser: true, maxTokens: maxTokens, timeout: timeout, retries: retries, retryDelay: retryDelay);
+      await compressContext(settings,
+          keepLastUser: true,
+          maxTokens: maxTokens,
+          timeout: timeout,
+          retries: retries,
+          retryDelay: retryDelay);
     }
 
     addUserMessage(userText);
 
     final msgs = _messagesForLlm();
-    dev.log('Agent.askRich: sending to LLM. hasCaps=${_mcpCapabilities != null} messages=${jsonEncode(msgs)}', name: 'SimpleAgent');
+    dev.log(
+        'Agent.askRich: sending to LLM. hasCaps=${_mcpCapabilities != null} messages=${jsonEncode(msgs)}',
+        name: 'SimpleAgent');
 
     final replyText = await _llm.complete(
       messages: msgs,
@@ -164,26 +193,88 @@ class SimpleAgent {
     );
 
     dev.log('Agent.askRich: got reply text="$replyText"', name: 'SimpleAgent');
-    addAssistantMessage(replyText);
-    await _save();
 
-    Map<String, dynamic>? structured;
-    if (_mcp != null && _mcp!.isConnected) {
+    // Проверить, содержит ли ответ tool call
+    Map<String, dynamic>? toolCall;
+    final extractedJson = _extractJsonFromMarkdown(replyText);
+    if (extractedJson != null && extractedJson.containsKey('tool_call')) {
+      toolCall = extractedJson['tool_call'] as Map<String, dynamic>;
+      dev.log('Agent.askRich: detected tool call=${jsonEncode(toolCall)}',
+          name: 'SimpleAgent');
+    } else {
+      // Не JSON или нет tool_call - продолжаем как обычный ответ
+      dev.log('Agent.askRich: not a tool call, treating as regular response',
+          name: 'SimpleAgent');
+    }
+
+    String finalReplyText = replyText;
+
+    // Если есть tool call, выполняем его
+    if (toolCall != null && _mcp != null && _mcp!.isConnected) {
       try {
-        dev.log('Agent.askRich: MCP summarize start text="$replyText"', name: 'SimpleAgent');
-        structured = await _mcp!.summarize(replyText, timeout: timeout);
-        dev.log('Agent.askRich: MCP summarize result=${jsonEncode(structured)}', name: 'SimpleAgent');
+        final toolName = toolCall['name'] as String?;
+        final toolArgs = toolCall['arguments'] as Map<String, dynamic>?;
+
+        if (toolName != null && toolArgs != null) {
+          dev.log(
+              'Agent.askRich: executing tool $toolName with args=${jsonEncode(toolArgs)}',
+              name: 'SimpleAgent');
+
+          final toolResult = await _mcp!.call(
+              'tools/call', {'name': toolName, 'arguments': toolArgs},
+              timeout: timeout);
+
+          dev.log('Agent.askRich: tool result=${jsonEncode(toolResult)}',
+              name: 'SimpleAgent');
+
+          // Получить финальный ответ от LLM с результатом инструмента
+          final followUpMsgs = [
+            ...msgs,
+            {'role': 'assistant', 'content': replyText},
+            {
+              'role': 'user',
+              'content':
+                  'Результат выполнения инструмента $toolName: ${jsonEncode(toolResult)}. Теперь дай полный ответ пользователю на основе этого результата.'
+            }
+          ];
+
+          finalReplyText = await _llm.complete(
+            messages: followUpMsgs,
+            modelUri: settings.llmModel,
+            iamToken: settings.iamToken,
+            apiKey: settings.apiKey,
+            folderId: settings.folderId,
+            temperature: temperature,
+            maxTokens: maxTokens,
+            timeout: timeout,
+            retries: retries,
+            retryDelay: retryDelay,
+          );
+
+          dev.log(
+              'Agent.askRich: final response after tool call="$finalReplyText"',
+              name: 'SimpleAgent');
+        }
       } catch (e) {
-        // Игнорируем ошибки MCP здесь; ответственность UI — показать статус
-        dev.log('Agent.askRich: MCP summarize error: $e', name: 'SimpleAgent', level: 900);
+        dev.log('Agent.askRich: tool execution failed: $e',
+            name: 'SimpleAgent', level: 900);
+        finalReplyText =
+            'Ошибка выполнения инструмента: $e. Попробуйте переформулировать запрос.';
       }
     }
-    return AgentReply(text: replyText, structuredContent: structured);
+
+    addAssistantMessage(finalReplyText);
+    await _save();
+
+    Map<String, dynamic>?
+        structured; // MCP не используется для суммирования текста - сервер не поддерживает метод 'summarize'
+    return AgentReply(text: finalReplyText, structuredContent: structured);
   }
 
   /// Сжать текущий контекст с помощью LLM.
   /// По итогу история заменяется одной системной сводкой + (опционально) последним сообщением пользователя.
-  Future<void> compressContext(SettingsState settings, {
+  Future<void> compressContext(
+    SettingsState settings, {
     bool keepLastUser = false,
     int maxTokens = 256,
     Duration timeout = const Duration(seconds: 20),
@@ -193,8 +284,9 @@ class SimpleAgent {
     if (_history.isEmpty) return;
 
     final lastUser = keepLastUser
-        ? (List<Map<String, String>>.from(_history.reversed)
-              .firstWhere((m) => m['role'] == 'user', orElse: () => const {'role': 'user', 'content': ''}))
+        ? (List<Map<String, String>>.from(_history.reversed).firstWhere(
+            (m) => m['role'] == 'user',
+            orElse: () => const {'role': 'user', 'content': ''}))
         : null;
 
     final compressionPrompt =
@@ -207,7 +299,9 @@ class SimpleAgent {
       {'role': 'system', 'content': compressionPrompt},
     ];
 
-    dev.log('Agent.compressContext: start messages=${jsonEncode(messages)} keepLastUser=$keepLastUser', name: 'SimpleAgent');
+    dev.log(
+        'Agent.compressContext: start messages=${jsonEncode(messages)} keepLastUser=$keepLastUser',
+        name: 'SimpleAgent');
 
     final summary = await _llm.complete(
       messages: messages,
@@ -227,11 +321,15 @@ class SimpleAgent {
       ..clear()
       ..add({'role': 'system', 'content': 'Сводка диалога:\n$summary'});
 
-    if (keepLastUser && lastUser != null && (lastUser['content'] ?? '').isNotEmpty) {
+    if (keepLastUser &&
+        lastUser != null &&
+        (lastUser['content'] ?? '').isNotEmpty) {
       _history.add(lastUser);
     }
     await _save();
-    dev.log('Agent.compressContext: done historyLen=${_history.length} history=${jsonEncode(_history)}', name: 'SimpleAgent');
+    dev.log(
+        'Agent.compressContext: done historyLen=${_history.length} history=${jsonEncode(_history)}',
+        name: 'SimpleAgent');
   }
 
   // Грубая оценка токенов (~4 символа на токен)
@@ -247,12 +345,19 @@ class SimpleAgent {
   List<Map<String, String>> _messagesForLlm() {
     final msgs = <Map<String, String>>[..._history];
     if (_mcpCapabilities != null) {
-      msgs.add({
-        'role': 'system',
-        'content': 'Доступны возможности внешнего MCP-сервера (JSON-RPC tools). '
-            'Capabilities: ${jsonEncode(_mcpCapabilities)}. '
-            'Если эти инструменты релевантны к задаче пользователя, предлагай использовать их результаты в ответе.'
-      });
+      final tools = _mcpCapabilities!['tools'];
+      if (tools is List && tools.isNotEmpty) {
+        msgs.add({
+          'role': 'system',
+          'content': 'У тебя есть доступ к внешним инструментам через MCP (Model Context Protocol). '
+              'Доступные инструменты: ${jsonEncode(tools)}. '
+              'Когда пользователь просит выполнить действие, которое можно сделать с помощью этих инструментов, '
+              'ты должен вернуть JSON объект в специальном формате: '
+              '{"tool_call": {"name": "tool_name", "arguments": {...}}} '
+              'НЕ описывай, как использовать инструмент - делай реальный вызов! '
+              'После получения результата инструмента ты сможешь дать пользователю осмысленный ответ.'
+        });
+      }
     }
     return msgs;
   }
@@ -260,20 +365,57 @@ class SimpleAgent {
   /// Обновить ссылку на MCP-клиент (используется при смене URL и переподключении).
   void setMcp(McpClient? mcp) {
     _mcp = mcp;
-    dev.log('Agent.setMcp: ${mcp == null ? 'null' : 'updated'}', name: 'SimpleAgent');
+    dev.log('Agent.setMcp: ${mcp == null ? 'null' : 'updated'}',
+        name: 'SimpleAgent');
+  }
+
+  /// Извлекает JSON из markdown блоков кода (```json или ```)
+  Map<String, dynamic>? _extractJsonFromMarkdown(String text) {
+    // Ищем блоки кода в формате ```json или просто ```
+    final codeBlockRegex = RegExp(r'```(?:json)?\n(.*?)\n```', dotAll: true);
+    final matches = codeBlockRegex.allMatches(text);
+
+    for (final match in matches) {
+      final jsonText = match.group(1)?.trim();
+      if (jsonText != null && jsonText.isNotEmpty) {
+        try {
+          final parsed = jsonDecode(jsonText);
+          if (parsed is Map<String, dynamic>) {
+            return parsed;
+          }
+        } catch (e) {
+          // Продолжаем искать другие блоки
+          continue;
+        }
+      }
+    }
+
+    // Если не нашли в блоках кода, пробуем распарсить весь текст как JSON
+    try {
+      final parsed = jsonDecode(text.trim());
+      if (parsed is Map<String, dynamic>) {
+        return parsed;
+      }
+    } catch (e) {
+      // Не JSON
+    }
   }
 
   /// Обновить сведения о возможностях MCP. Вызывать после установления соединения MCP.
-  Future<void> refreshMcpCapabilities({Duration timeout = const Duration(seconds: 10)}) async {
+  Future<void> refreshMcpCapabilities(
+      {Duration timeout = const Duration(seconds: 10)}) async {
     if (_mcp == null || !_mcp!.isConnected) return;
     try {
-      dev.log('Agent.refreshMcpCapabilities: request', name: 'SimpleAgent');
-      final caps = await _mcp!.call('capabilities', {}, timeout: timeout);
-      _mcpCapabilities = caps;
-      dev.log('Agent.refreshMcpCapabilities: response=${jsonEncode(caps)}', name: 'SimpleAgent');
+      dev.log('Agent.refreshMcpCapabilities: request tools/list',
+          name: 'SimpleAgent');
+      final tools = await _mcp!.call('tools/list', {}, timeout: timeout);
+      _mcpCapabilities = tools;
+      dev.log('Agent.refreshMcpCapabilities: response=${jsonEncode(tools)}',
+          name: 'SimpleAgent');
     } catch (e) {
       // молча игнорируем, capabilities опциональны
-      dev.log('Agent.refreshMcpCapabilities: error: $e', name: 'SimpleAgent', level: 900);
+      dev.log('Agent.refreshMcpCapabilities: error: $e',
+          name: 'SimpleAgent', level: 900);
     }
   }
 }
