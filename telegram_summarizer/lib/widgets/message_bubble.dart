@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:telegram_summarizer/core/models/message.dart';
 
 class MessageBubble extends StatelessWidget {
@@ -26,7 +27,29 @@ class MessageBubble extends StatelessWidget {
           color: bg,
           borderRadius: radius,
         ),
-        child: Text(message.text),
+        child: Markdown(
+          data: message.text,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          styleSheet: MarkdownStyleSheet(
+            p: const TextStyle(fontSize: 16),
+            h1: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            h2: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            h3: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            h4: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            h5: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            h6: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            code: const TextStyle(
+              fontFamily: 'monospace',
+              backgroundColor: Color(0xFFE8E8E8),
+              fontSize: 14,
+            ),
+            codeblockDecoration: BoxDecoration(
+              color: const Color(0xFFE8E8E8),
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+        ),
       ),
     );
   }
