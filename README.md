@@ -25,6 +25,8 @@ This repository contains multiple projects that showcase and integrate AI-assist
 
 - `sample_app/`
   - Flutter приложение (CodeOpsAgent + чат‑интерфейс), интегрированное с MCP.
+  - Поддерживает несколько LLM моделей: DeepSeek, YandexGPT, TinyLlama (OpenAI-compatible API на VPS).
+  - TinyLlama: развернутая на VPS модель TinyLlama-1.1B-Chat, доступна по OpenAI-compatible API без авторизации, лимит 2048 токенов.
   - Умеет запускать Java‑код внутри Docker через MCP (`docker_exec_java`).
   - Автоопределяет `entrypoint` (FQCN) и корректный путь `filename` по `package`.
   - Глобальный AppBar (`HomeScreen`) содержит индикатор статуса MCP: `MCP off`/`MCP ready`/`MCP active`; тултип показывает URL MCP или сообщение о fallback.
@@ -39,6 +41,8 @@ This repository contains multiple projects that showcase and integrate AI-assist
   - Подробности в `sample_app/README.md`.
   
   Flutter app (CodeOps Agent + chat UI) integrated with MCP:
+  - Supports multiple LLM models: DeepSeek, YandexGPT, TinyLlama (OpenAI-compatible API on VPS).
+  - TinyLlama: TinyLlama-1.1B-Chat model deployed on VPS, available via OpenAI-compatible API without authentication, 2048 token limit.
   - Runs Java code in Docker via MCP (`docker_exec_java`).
   - Automatically infers Java `entrypoint` (FQCN) and `filename` path from source `package`.
   - Global AppBar (`HomeScreen`) contains an MCP status chip: `MCP off`/`MCP ready`/`MCP active`; tooltip shows MCP URL or fallback note.

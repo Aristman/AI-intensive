@@ -30,6 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _systemPromptController = TextEditingController();
   final _yandexTokensController = TextEditingController();
   final _deepseekTokensController = TextEditingController();
+  final _tinylamaTokensController = TextEditingController();
   bool _isGithubTokenValid = false;
   // MCP client and state
   final McpClient _mcpClient = McpClient();
@@ -51,6 +52,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _systemPromptController.text = _currentSettings.systemPrompt;
     _yandexTokensController.text = _currentSettings.yandexMaxTokens.toString();
     _deepseekTokensController.text = _currentSettings.deepseekMaxTokens.toString();
+    _tinylamaTokensController.text = _currentSettings.tinylamaMaxTokens.toString();
     _mcpUrlController.text = _currentSettings.mcpServerUrl ?? '';
     // начальная валидация MCP URL
     _mcpUrlErrorText = _currentSettings.useMcpServer && !_isValidWebSocketUrl(_mcpUrlController.text.trim())
@@ -249,7 +251,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             items: NeuralNetwork.values.map((network) {
                               return DropdownMenuItem<NeuralNetwork>(
                                 value: network,
-                                child: Text(network == NeuralNetwork.deepseek ? 'DeepSeek' : 'YandexGPT'),
+                                child: Text(switch (network) {
+                                  NeuralNetwork.deepseek => 'DeepSeek',
+                                  NeuralNetwork.yandexgpt => 'YandexGPT',
+                                  NeuralNetwork.tinylama => 'TinyLlama',
+                                }),
                               );
                             }).toList(),
                             onChanged: (value) {
@@ -273,7 +279,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                   // LLM provider-specific params (temperature, max tokens)
                   if (_currentSettings.selectedNetwork == NeuralNetwork.deepseek ||
-                      _currentSettings.selectedNetwork == NeuralNetwork.yandexgpt)
+                      _currentSettings.selectedNetwork == NeuralNetwork.yandexgpt ||
+                      _currentSettings.selectedNetwork == NeuralNetwork.tinylama)
                     Card(
                       child: Padding(
                         padding: const EdgeInsets.all(16.0),
@@ -286,12 +293,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                             const SizedBox(height: 8),
                             Builder(builder: (context) {
-                              final isDeepseek = _currentSettings.selectedNetwork == NeuralNetwork.deepseek;
+                              final network = _currentSettings.selectedNetwork;
+                              final isDeepseek = network == NeuralNetwork.deepseek;
+                              final isTinylama = network == NeuralNetwork.tinylama;
                               final maxTemp = isDeepseek ? 2.0 : 1.0;
                               final divisions = (maxTemp * 20).round(); // шаг 0.05
-                              final value = isDeepseek
-                                  ? _currentSettings.deepseekTemperature.clamp(0.0, 2.0)
-                                  : _currentSettings.yandexTemperature.clamp(0.0, 1.0);
+                              final value = switch (network) {
+                                NeuralNetwork.deepseek => _currentSettings.deepseekTemperature.clamp(0.0, 2.0),
+                                NeuralNetwork.tinylama => _currentSettings.tinylamaTemperature.clamp(0.0, 1.0),
+                                NeuralNetwork.yandexgpt => _currentSettings.yandexTemperature.clamp(0.0, 1.0),
+                              };
                               return Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -310,10 +321,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                           label: value.toStringAsFixed(2),
                                           onChanged: (v) {
                                             setState(() {
-                                              if (isDeepseek) {
-                                                _currentSettings = _currentSettings.copyWith(deepseekTemperature: v);
-                                              } else {
-                                                _currentSettings = _currentSettings.copyWith(yandexTemperature: v);
+                                              switch (network) {
+                                                case NeuralNetwork.deepseek:
+                                                  _currentSettings = _currentSettings.copyWith(deepseekTemperature: v);
+                                                case NeuralNetwork.tinylama:
+                                                  _currentSettings = _currentSettings.copyWith(tinylamaTemperature: v);
+                                                case NeuralNetwork.yandexgpt:
+                                                  _currentSettings = _currentSettings.copyWith(yandexTemperature: v);
                                               }
                                             });
                                             widget.onSettingsChanged(_currentSettings);
@@ -323,7 +337,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     ],
                                   ),
                                   Text(
-                                    isDeepseek ? 'Диапазон DeepSeek: 0.0 – 2.0' : 'Диапазон YandexGPT: 0.0 – 1.0',
+                                    switch (network) {
+                                      NeuralNetwork.deepseek => 'Диапазон DeepSeek: 0.0 – 2.0',
+                                      NeuralNetwork.tinylama => 'Диапазон TinyLlama: 0.0 – 1.0',
+                                      NeuralNetwork.yandexgpt => 'Диапазон YandexGPT: 0.0 – 1.0',
+                                    },
                                     style: const TextStyle(color: Colors.grey),
                                   ),
                                 ],
@@ -331,11 +349,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             }),
                             const SizedBox(height: 12),
                             Builder(builder: (context) {
-                              final isDeepseek = _currentSettings.selectedNetwork == NeuralNetwork.deepseek;
-                              final controller = isDeepseek ? _deepseekTokensController : _yandexTokensController;
-                              final current = isDeepseek
-                                  ? _currentSettings.deepseekMaxTokens
-                                  : _currentSettings.yandexMaxTokens;
+                              final network = _currentSettings.selectedNetwork;
+                              final controller = switch (network) {
+                                NeuralNetwork.deepseek => _deepseekTokensController,
+                                NeuralNetwork.tinylama => _tinylamaTokensController,
+                                NeuralNetwork.yandexgpt => _yandexTokensController,
+                              };
+                              final current = switch (network) {
+                                NeuralNetwork.deepseek => _currentSettings.deepseekMaxTokens,
+                                NeuralNetwork.tinylama => _currentSettings.tinylamaMaxTokens,
+                                NeuralNetwork.yandexgpt => _currentSettings.yandexMaxTokens,
+                              };
                               return TextField(
                                 key: const Key('llm_max_tokens_field'),
                                 controller: controller,
@@ -345,18 +369,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   labelText: 'Макс. токенов',
                                   hintText: current.toString(),
                                   border: const OutlineInputBorder(),
-                                  helperText: isDeepseek
-                                      ? 'DeepSeek: целое число токенов (например, 1500)'
-                                      : 'YandexGPT: целое число токенов (например, 1500)',
+                                  helperText: switch (network) {
+                                    NeuralNetwork.deepseek => 'DeepSeek: целое число токенов (например, 1500)',
+                                    NeuralNetwork.tinylama => 'TinyLlama: целое число токенов (например, 2048)',
+                                    NeuralNetwork.yandexgpt => 'YandexGPT: целое число токенов (например, 1500)',
+                                  },
                                 ),
                                 onChanged: (v) {
                                   final parsed = int.tryParse(v.trim());
                                   if (parsed == null || parsed <= 0) return;
                                   setState(() {
-                                    if (isDeepseek) {
-                                      _currentSettings = _currentSettings.copyWith(deepseekMaxTokens: parsed);
-                                    } else {
-                                      _currentSettings = _currentSettings.copyWith(yandexMaxTokens: parsed);
+                                    switch (network) {
+                                      case NeuralNetwork.deepseek:
+                                        _currentSettings = _currentSettings.copyWith(deepseekMaxTokens: parsed);
+                                      case NeuralNetwork.tinylama:
+                                        _currentSettings = _currentSettings.copyWith(tinylamaMaxTokens: parsed);
+                                      case NeuralNetwork.yandexgpt:
+                                        _currentSettings = _currentSettings.copyWith(yandexMaxTokens: parsed);
                                     }
                                   });
                                   widget.onSettingsChanged(_currentSettings);

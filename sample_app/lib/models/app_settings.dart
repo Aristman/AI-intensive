@@ -1,5 +1,5 @@
 
-enum NeuralNetwork { deepseek, yandexgpt }
+enum NeuralNetwork { deepseek, yandexgpt, tinylama }
 
 enum ResponseFormat { text, json }
 
@@ -17,6 +17,9 @@ class AppSettings {
   final int yandexMaxTokens;
   final double deepseekTemperature; // 0..2
   final int deepseekMaxTokens;
+  final double tinylamaTemperature; // 0..1
+  final int tinylamaMaxTokens;
+  final String tinylamaEndpoint; // URL VPS сервера
   final Set<MCPProvider> enabledMCPProviders;
   final String? githubMcpToken;
   final bool useMcpServer; // использовать ли внешний MCP-сервер
@@ -43,6 +46,9 @@ class AppSettings {
     this.yandexMaxTokens = 1500,
     this.deepseekTemperature = 1.0,
     this.deepseekMaxTokens = 1500,
+    this.tinylamaTemperature = 0.7,
+    this.tinylamaMaxTokens = 2048,
+    this.tinylamaEndpoint = 'http://158.160.107.227:8000/v1/chat/completions',
     this.enabledMCPProviders = const {},
     this.githubMcpToken,
     this.useMcpServer = false,
@@ -69,6 +75,9 @@ class AppSettings {
     int? yandexMaxTokens,
     double? deepseekTemperature,
     int? deepseekMaxTokens,
+    double? tinylamaTemperature,
+    int? tinylamaMaxTokens,
+    String? tinylamaEndpoint,
     Set<MCPProvider>? enabledMCPProviders,
     String? githubMcpToken,
     bool? useMcpServer,
@@ -93,6 +102,9 @@ class AppSettings {
       yandexMaxTokens: yandexMaxTokens ?? this.yandexMaxTokens,
       deepseekTemperature: deepseekTemperature ?? this.deepseekTemperature,
       deepseekMaxTokens: deepseekMaxTokens ?? this.deepseekMaxTokens,
+      tinylamaTemperature: tinylamaTemperature ?? this.tinylamaTemperature,
+      tinylamaMaxTokens: tinylamaMaxTokens ?? this.tinylamaMaxTokens,
+      tinylamaEndpoint: tinylamaEndpoint ?? this.tinylamaEndpoint,
       enabledMCPProviders: enabledMCPProviders ?? this.enabledMCPProviders,
       githubMcpToken: githubMcpToken ?? this.githubMcpToken,
       useMcpServer: useMcpServer ?? this.useMcpServer,
@@ -121,6 +133,9 @@ class AppSettings {
       'yandexMaxTokens': yandexMaxTokens,
       'deepseekTemperature': deepseekTemperature,
       'deepseekMaxTokens': deepseekMaxTokens,
+      'tinylamaTemperature': tinylamaTemperature,
+      'tinylamaMaxTokens': tinylamaMaxTokens,
+      'tinylamaEndpoint': tinylamaEndpoint,
       'githubMcpToken': githubMcpToken,
       'enabledMCPProviders': enabledMCPProviders.map((e) => e.toString().split('.').last).toList(),
       'useMcpServer': useMcpServer,
@@ -155,6 +170,9 @@ class AppSettings {
       yandexMaxTokens: (json['yandexMaxTokens'] as int?) ?? 1500,
       deepseekTemperature: ((json['deepseekTemperature'] as num?) ?? 1.0).toDouble(),
       deepseekMaxTokens: (json['deepseekMaxTokens'] as int?) ?? 1500,
+      tinylamaTemperature: ((json['tinylamaTemperature'] as num?) ?? 0.7).toDouble(),
+      tinylamaMaxTokens: (json['tinylamaMaxTokens'] as int?) ?? 2048,
+      tinylamaEndpoint: (json['tinylamaEndpoint'] as String?) ?? 'http://158.160.107.227:8000/v1/chat/completions',
       githubMcpToken: json['githubMcpToken'] as String?,
       enabledMCPProviders: ((json['enabledMCPProviders'] as List?) ?? const <dynamic>[]) 
           .map((e) => e.toString())
@@ -183,6 +201,8 @@ class AppSettings {
         return 'DeepSeek';
       case NeuralNetwork.yandexgpt:
         return 'YandexGPT';
+      case NeuralNetwork.tinylama:
+        return 'TinyLlama';
     }
   }
 

@@ -48,6 +48,13 @@
 ## sample_app/
 - [x] Централизация навигации через enum `Screen` (SSOT: иконки, лейблы, пункты нижней навигации и фабрика страниц в `screens.dart`)
 - [x] Централизованный резолвер LLM (`resolveLlmUseCase`) и рефакторинг агентов; добавлены юнит‑тесты; обновлена документация (README/ROADMAP)
+- [x] Добавлена поддержка TinyLlama модели (OpenAI-compatible API на VPS)
+  - [x] Создан `TinyLlamaUseCase` с поддержкой OpenAI Chat Completions API
+  - [x] Добавлен новый вариант `tinylama` в enum `NeuralNetwork` и параметры в `AppSettings`
+  - [x] Обновлен UI настроек для выбора и настройки параметров TinyLlama (temperature, maxTokens)
+  - [x] Обновлен LLM resolver для поддержки TinyLlama
+  - [x] Добавлены unit-тесты для TinyLlamaUseCase и обновлены тесты resolver
+  - [x] Обновлена документация в README.md с описанием новой модели
  - [ ] Интеграция `McpGithubService` в `GitHubAgentScreen` (создание релиза, управление PR) и покрытие виджет/юнит‑тестами
    - [x] Убран ввод owner/repo из основного UI; добавлен локальный диалог настроек с валидацией и персистентностью
    - [x] Ключи для тестов диалога: `github_local_owner_field`, `github_local_repo_field`, `github_local_repos_limit_field`, `github_local_issues_limit_field`, `github_local_other_limit_field`, `github_local_save_btn`; кнопка `github_local_settings_btn`; лейбл контекста `github_repo_context_label`
