@@ -32,6 +32,10 @@ class McpClient {
   final String url;
   final WebSocketConnector _connector;
   final StdioConnector? _stdioConnector;
+  /// If true, for http/https URLs we will first attempt WebSocket (https->wss, http->ws)
+  /// and only fall back to HTTP JSON-RPC if WS connection cannot be established.
+  /// Kept private to avoid changing the public interface for classes implementing McpClient.
+  final bool _preferWebSocketOnHttp;
   _Transport? _transport;
 
   StreamChannel<dynamic>? _channel;
@@ -48,9 +52,14 @@ class McpClient {
   Uri? _httpBase;
   Uri? _httpEndpoint; // discovered working JSON-RPC endpoint
 
-  McpClient({required this.url, WebSocketConnector? connector, StdioConnector? stdioConnector})
-      : _connector = connector ?? ((uri) async => WebSocketChannel.connect(uri)),
-        _stdioConnector = stdioConnector;
+  McpClient({
+    required this.url,
+    WebSocketConnector? connector,
+    StdioConnector? stdioConnector,
+    bool? preferWebSocketOnHttp,
+  })  : _connector = connector ?? ((uri) async => WebSocketChannel.connect(uri)),
+        _stdioConnector = stdioConnector,
+        _preferWebSocketOnHttp = preferWebSocketOnHttp ?? true;
 
   bool get isConnected {
     if (_transport == _Transport.http) {
@@ -79,22 +88,43 @@ class McpClient {
       final ch = await _connectStdio(input);
       _channel = ch;
     } else if (scheme == 'http' || scheme == 'https') {
-      // HTTP JSON-RPC transport (no WebSocket on remote)
-      _transport = _Transport.http;
-      _httpClient = HttpClient();
-      _httpBase = parsed;
-      // Probe endpoint lazily but try once on connect to fail fast
-      try {
-        await _httpEnsureEndpoint(timeout: const Duration(seconds: 3));
-      } catch (e) {
-        // Ensure cleanup on failure
-        try { _httpClient?.close(force: true); } catch (_) {}
-        _httpClient = null;
-        _httpBase = null;
-        rethrow;
+      // Prefer WS first (normalize https->wss, http->ws), then fall back to HTTP JSON-RPC.
+      if (_preferWebSocketOnHttp) {
+        try {
+          _transport = _Transport.websocket;
+          final ch = await _connectWebSocket(parsed!);
+          _channel = ch;
+        } catch (_) {
+          // Fall back to HTTP transport
+          _transport = _Transport.http;
+          _httpClient = HttpClient();
+          _httpBase = parsed;
+          // Optionally probe endpoint to fail fast
+          try {
+            await _httpEnsureEndpoint(timeout: const Duration(seconds: 3));
+          } catch (e) {
+            try { _httpClient?.close(force: true); } catch (_) {}
+            _httpClient = null;
+            _httpBase = null;
+            rethrow;
+          }
+          _channel = null;
+        }
+      } else {
+        // HTTP JSON-RPC transport (no WebSocket preferred)
+        _transport = _Transport.http;
+        _httpClient = HttpClient();
+        _httpBase = parsed;
+        try {
+          await _httpEnsureEndpoint(timeout: const Duration(seconds: 3));
+        } catch (e) {
+          try { _httpClient?.close(force: true); } catch (_) {}
+          _httpClient = null;
+          _httpBase = null;
+          rethrow;
+        }
+        _channel = null;
       }
-      // Mark as connected (no persistent channel for HTTP)
-      _channel = null;
     } else {
       _transport = _Transport.websocket;
       final ch = await _connectWebSocket(parsed ?? Uri.parse(input));
