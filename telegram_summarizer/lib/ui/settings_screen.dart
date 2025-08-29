@@ -16,7 +16,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _iamController;
   late TextEditingController _folderController;
   late TextEditingController _apiKeyController;
-  late String _mcpClientType; // 'standard' | 'github_telegram'
 
   @override
   void initState() {
@@ -27,7 +26,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _iamController = TextEditingController(text: s.iamToken);
     _folderController = TextEditingController(text: s.folderId);
     _apiKeyController = TextEditingController(text: s.apiKey);
-    _mcpClientType = s.mcpClientType;
   }
 
   @override
@@ -47,13 +45,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     await s.setLlmModel(_modelController.text.trim());
     await s.setMcpUrl(newUrl);
-    await s.setMcpClientType(_mcpClientType);
     await s.setIamToken(_iamController.text.trim());
     await s.setFolderId(_folderController.text.trim());
     await s.setApiKey(_apiKeyController.text.trim());
 
-    // Немедленно применяем новый MCP URL и тип клиента
-    await chat.applyMcp(newUrl, _mcpClientType);
+    // Немедленно применяем новый MCP URL
+    await chat.applyMcpUrl(newUrl);
 
     if (mounted) Navigator.of(context).pop();
   }
@@ -81,19 +78,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 hintText: 'https://tgtoolkit.azazazaza.work',
                 border: OutlineInputBorder(),
               ),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: _mcpClientType,
-              decoration: const InputDecoration(
-                labelText: 'Тип MCP клиента',
-                border: OutlineInputBorder(),
-              ),
-              items: const [
-                DropdownMenuItem(value: 'standard', child: Text('Стандартный')),
-                DropdownMenuItem(value: 'github_telegram', child: Text('GitHub + Telegram')),
-              ],
-              onChanged: (v) => setState(() { _mcpClientType = v ?? 'standard'; }),
             ),
             const SizedBox(height: 12),
             TextField(

@@ -34,12 +34,6 @@
 - Добавлена индикация статуса MCP в `chat_screen.dart` (зелёная/красная точка) и кнопка «Переподключить» (вызывает `ChatState.reconnectMcp()`).
 - Интеграция MCP вынесена в `SimpleAgent`: после подключения MCP агент подтягивает `capabilities` и добавляет их в системный промпт LLM; `askRich()` возвращает `structuredContent` (успешный `summarize`). `ChatState` не вызывает MCP напрямую.
 
-- Добавлен выбор типа MCP‑клиента (Variant A): `standard`/`github_telegram`.
-  - UI: Dropdown на экране Настроек.
-  - Логика: `ChatState.applyMcp(url, clientType)` с безопасным переподключением; обратная совместимость `applyMcpUrl(url)` сохранена.
-  - Персист: `SettingsState.mcpClientType` + поддержка `.env` (`MCP_CLIENT_TYPE`).
-  - Тесты: `test/apply_mcp_client_type_test.dart`; обновлён `test/settings_state_test.dart`.
-
 - `SummaryCard`: отображает строковое поле `summary` отдельно над JSON; добавлены виджет‑тесты рендера и копирования. Добавлены виджет‑тесты индикатора статуса MCP и кнопки переподключения.
 
 - Тултип индикатора MCP при подключении показывает краткий список доступных инструментов (capabilities/tools).

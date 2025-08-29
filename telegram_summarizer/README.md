@@ -31,16 +31,6 @@ Flutter приложение-агент для суммаризации с LLM (
     - `X_FOLDER_ID`
     - `YANDEX_API_KEY`
     - `MCP_URL` (например, `https://tgtoolkit.azazazaza.work` или `ws://localhost:8080`)
-    - `MCP_CLIENT_TYPE` — тип MCP‑клиента: `standard` (по умолчанию) или `github_telegram`.
-      - `standard` использует базовый `McpClient`.
-      - `github_telegram` включает специализированный клиент `GithubTelegramMcpClient` с удобными методами для GitHub/Telegram/Docker Java инструментов сервера из каталога `mcp_server/`.
-
-### Выбор типа MCP‑клиента
-- В экране «Настройки» добавлен переключатель «Тип MCP клиента» с вариантами:
-  - «Стандартный» — базовый `McpClient`.
-  - «GitHub + Telegram» — `GithubTelegramMcpClient`.
-- Выбор сохраняется в SharedPreferences и может быть предзадан через `.env` переменную `MCP_CLIENT_TYPE`.
-- При изменении URL MCP или типа клиента выполняется безопасное переподключение (disconnect → create → connect), UI индикатор обновляется.
 
 ## Платформенные заметки
 - iOS: подпись и сборка
@@ -70,15 +60,6 @@ Flutter приложение-агент для суммаризации с LLM (
 - E2E‑тесты для MCP capabilities:
   - `test/chat_screen_e2e_capabilities_test.dart` — проверяет, что capabilities добавляются в системное сообщение LLM и появляется `SummaryCard`.
   - `test/chat_screen_e2e_caps_influence_test.dart` — демонстрирует влияние capabilities: ответ LLM отличается при наличии/отсутствии capabilities; тултип показывает список инструментов при подключении.
-
-## Обновления на 2025-08-29
-- Добавлена поддержка выбора типа MCP‑клиента (Variant A): `standard` и `github_telegram`.
-- В `lib/state/chat_state.dart` реализован метод `applyMcp(url, clientType)` (сохранена обратная совместимость `applyMcpUrl(url)`).
-- В `lib/ui/settings_screen.dart` добавлен Dropdown для выбора типа клиента.
-- Настройка сохраняется в `SettingsState` и читается из `.env` через `MCP_CLIENT_TYPE`.
-- Добавлены тесты:
-  - `test/apply_mcp_client_type_test.dart` — проверяет переключение клиента и переподключение.
-  - Обновлён `test/settings_state_test.dart` — проверка персиста `mcpClientType`.
 
 ## CI
 - Настроен GitHub Actions для анализа и тестов Flutter: `.github/workflows/flutter-ci.yml`.

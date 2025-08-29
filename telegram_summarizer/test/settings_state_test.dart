@@ -13,7 +13,6 @@ void main() {
 
     await s1.setLlmModel('yandexgpt');
     await s1.setMcpUrl('ws://example');
-    await s1.setMcpClientType('github_telegram');
     await s1.setIamToken('iam');
     await s1.setFolderId('folder');
     await s1.setApiKey('api');
@@ -23,7 +22,6 @@ void main() {
 
     expect(s2.llmModel, 'yandexgpt');
     expect(s2.mcpUrl, 'ws://example');
-    expect(s2.mcpClientType, 'github_telegram');
     expect(s2.iamToken, 'iam');
     expect(s2.folderId, 'folder');
     expect(s2.apiKey, 'api');

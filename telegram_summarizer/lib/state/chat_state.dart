@@ -5,7 +5,6 @@ import 'package:telegram_summarizer/core/models/message.dart';
 import 'package:telegram_summarizer/domain/llm_usecase.dart';
 import 'package:telegram_summarizer/state/settings_state.dart';
 import 'package:telegram_summarizer/data/mcp/mcp_client.dart';
-import 'package:telegram_summarizer/data/mcp/clients/github_telegram_mcp_client.dart';
 import 'package:telegram_summarizer/agents/simple_agent.dart';
 import 'package:uuid/uuid.dart';
 
@@ -34,12 +33,6 @@ class ChatState extends ChangeNotifier {
   bool get mcpConnecting => _mcpConnecting;
   String? get mcpError => _mcpError;
   String? get currentMcpUrl => (_mcp is McpClient) ? (_mcp as McpClient).url : null;
-  /// Отладочный геттер для определения типа активного MCP клиента.
-  /// Возвращает 'github_telegram', 'standard' или 'none'.
-  String get mcpClientTypeDebug {
-    if (_mcp == null) return 'none';
-    return (_mcp is GithubTelegramMcpClient) ? 'github_telegram' : 'standard';
-    }
 
   /// Краткий список доступных инструментов MCP (если capabilities загружены).
   List<String> get mcpTools {
@@ -136,48 +129,6 @@ class ChatState extends ChangeNotifier {
 
     // Создадим новый клиент
     _mcp = McpClient(url: url, connector: connector);
-    _agent.setMcp(_mcp);
-    _attachMcpListeners();
-    await connectMcp();
-  }
-
-  /// Применить MCP по URL и типу клиента ("standard" | "github_telegram").
-  /// Быстрая интеграция варианта A: позволяет выбрать специализированный клиент.
-  Future<void> applyMcp(String url, String clientType, {WebSocketConnector? connector}) async {
-    if (url.isEmpty) {
-      await _mcp?.disconnect();
-      _mcp = null;
-      _agent.setMcp(null);
-      _mcpError = null;
-      notifyListeners();
-      return;
-    }
-
-    // Если URL не менялся и тип клиента условно тот же (по runtimeType) — просто переподключение
-    if (_mcp != null && _mcp is McpClient) {
-      final sameUrl = (_mcp as McpClient).url == url;
-      final sameType = (clientType == 'github_telegram')
-          ? (_mcp is GithubTelegramMcpClient)
-          : (_mcp is McpClient && _mcp is! GithubTelegramMcpClient);
-      if (sameUrl && sameType) {
-        await reconnectMcp();
-        return;
-      }
-    }
-
-    // Отключим старый клиент и отвяжем колбэки
-    try { await _mcp?.disconnect(); } catch (_) {}
-    if (_mcp != null) {
-      try { _mcp!.onStateChanged = null; } catch (_) {}
-      try { _mcp!.onErrorCallback = null; } catch (_) {}
-    }
-
-    // Создадим новый клиент по типу
-    if (clientType == 'github_telegram') {
-      _mcp = GithubTelegramMcpClient.fromUrl(url, connector: connector);
-    } else {
-      _mcp = McpClient(url: url, connector: connector);
-    }
     _agent.setMcp(_mcp);
     _attachMcpListeners();
     await connectMcp();
