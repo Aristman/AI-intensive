@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:mockito/annotations.dart';
@@ -15,7 +16,7 @@ void main() {
 
   setUp(() {
     mockClient = MockClient();
-    usecase = TinyLlamaUseCase();
+    usecase = TinyLlamaUseCase(client: mockClient);
     testSettings = const AppSettings(
       selectedNetwork: NeuralNetwork.tinylama,
       tinylamaEndpoint: 'http://test-server:8000/v1/chat/completions',
@@ -58,7 +59,7 @@ void main() {
         headers: anyNamed('headers'),
         body: anyNamed('body'),
       )).thenAnswer((_) async => http.Response(
-        mockResponse.toString(),
+        jsonEncode(mockResponse),
         200,
         headers: {'content-type': 'application/json'},
       ));
@@ -142,7 +143,11 @@ void main() {
       // Act & Assert
       expect(
         () => usecase.complete(messages: testMessages, settings: testSettings),
-        throwsA(isA<Exception>()),
+        throwsA(isA<Exception>().having(
+          (e) => e.toString(),
+          'message',
+          contains('Ошибка парсинга ответа от TinyLlama'),
+        )),
       );
     });
 
@@ -170,7 +175,7 @@ void main() {
         headers: anyNamed('headers'),
         body: anyNamed('body'),
       )).thenAnswer((_) async => http.Response(
-        mockResponse.toString(),
+        jsonEncode(mockResponse),
         200,
         headers: {'content-type': 'application/json'},
       ));
@@ -219,7 +224,7 @@ void main() {
         headers: anyNamed('headers'),
         body: anyNamed('body'),
       )).thenAnswer((_) async => http.Response(
-        mockResponse.toString(),
+        jsonEncode(mockResponse),
         200,
         headers: {'content-type': 'application/json'},
       ));
