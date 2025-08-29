@@ -50,9 +50,8 @@ class SimpleAgent {
       try {
         final list = jsonDecode(jsonStr);
         if (list is List) {
-          _history.addAll(list
-              .whereType<Map>()
-              .map((e) => Map<String, String>.from(e as Map)));
+          _history.addAll(
+              list.whereType<Map>().map((e) => Map<String, String>.from(e)));
         }
       } catch (_) {
         // ignore
@@ -349,12 +348,19 @@ class SimpleAgent {
       if (tools is List && tools.isNotEmpty) {
         msgs.add({
           'role': 'system',
-          'content': 'У тебя есть доступ к внешним инструментам через MCP (Model Context Protocol). '
-              'Доступные инструменты: ${jsonEncode(tools)}. '
-              'Когда пользователь просит выполнить действие, которое можно сделать с помощью этих инструментов, '
-              'ты должен вернуть JSON объект в специальном формате: '
-              '{"tool_call": {"name": "tool_name", "arguments": {...}}} '
-              'НЕ описывай, как использовать инструмент - делай реальный вызов! '
+          'content': 'У тебя есть доступ к внешним инструментам через MCP (Model Context Protocol).\n\n' +
+              'ОСОБЕННО ВАЖНО ПОНИМАТЬ:\n' +
+              '- Для Telegram инструментов (tg_send_message, tg_send_photo, create_issue_and_notify):\n' +
+              '  * Параметр chat_id является ОПЦИОНАЛЬНЫМ\n' +
+              '  * Если chat_id НЕ указан, автоматически используется TELEGRAM_DEFAULT_CHAT_ID из настроек сервера\n' +
+              '  * НЕ проси пользователя указывать chat_id - просто используй инструмент без него!\n\n' +
+              'Доступные инструменты:\n${jsonEncode(tools)}\n\n' +
+              'Когда пользователь просит отправить сообщение в Telegram, выполнить GitHub действия и т.д.,\n' +
+              'ты должен вернуть JSON объект в специальном формате:\n' +
+              '```json\n' +
+              '{"tool_call": {"name": "tool_name", "arguments": {...}}}\n' +
+              '```\n\n' +
+              'НЕ описывай, как использовать инструмент - делай реальный вызов!\n' +
               'После получения результата инструмента ты сможешь дать пользователю осмысленный ответ.'
         });
       }
@@ -390,15 +396,8 @@ class SimpleAgent {
       }
     }
 
-    // Если не нашли в блоках кода, пробуем распарсить весь текст как JSON
-    try {
-      final parsed = jsonDecode(text.trim());
-      if (parsed is Map<String, dynamic>) {
-        return parsed;
-      }
-    } catch (e) {
-      // Не JSON
-    }
+    // Если ничего не нашли, возвращаем null
+    return null;
   }
 
   /// Обновить сведения о возможностях MCP. Вызывать после установления соединения MCP.
