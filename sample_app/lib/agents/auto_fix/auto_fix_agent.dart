@@ -19,7 +19,8 @@ class AutoFixAgent implements IAgent {
         streaming: true,
         reasoning: false,
         tools: {},
-        systemPrompt: 'AutoFix agent for analyzing and fixing code. Returns unified diffs for changes.',
+        systemPrompt:
+            'AutoFix agent for analyzing and fixing code. Returns unified diffs for changes.',
         responseRules: [
           'Return concise status and uncertainty when applicable',
         ],
@@ -82,10 +83,12 @@ class AutoFixAgent implements IAgent {
           final entity = FileSystemEntity.typeSync(path);
           if (entity == FileSystemEntityType.file) {
             targets.add(File(path));
-          } else if (entity == FileSystemEntityType.directory || mode == 'dir') {
+          } else if (entity == FileSystemEntityType.directory ||
+              mode == 'dir') {
             final dir = Directory(path);
             if (await dir.exists()) {
-              await for (final e in dir.list(recursive: true, followLinks: false)) {
+              await for (final e
+                  in dir.list(recursive: true, followLinks: false)) {
                 if (e is File && _isSupported(e.path)) targets.add(e);
               }
             }
@@ -146,9 +149,13 @@ class AutoFixAgent implements IAgent {
         if (targets.isNotEmpty) {
           try {
             final effectiveSettings = _settings ?? const AppSettings();
-            final overrideRaw = req.context?['llm_raw_override'] as String?; // для тестов
-            final suggestions = overrideRaw ?? await _requestLlmSuggestions(
-                files: targets, issues: issues, settings: effectiveSettings);
+            final overrideRaw =
+                req.context?['llm_raw_override'] as String?; // для тестов
+            final suggestions = overrideRaw ??
+                await _requestLlmSuggestions(
+                    files: targets,
+                    issues: issues,
+                    settings: effectiveSettings);
             if (suggestions.trim().isNotEmpty) {
               final head = suggestions.split('\n').take(5).join(' | ');
               ctrl.add(AgentEvent(
@@ -173,11 +180,14 @@ class AutoFixAgent implements IAgent {
                 progress: 0.65,
               ));
               // Фильтрация по поддерживаемым типам и ограничению по пути
-              String _norm(String x) => File(x).absolute.path.replaceAll('\\', '/').toLowerCase();
-              String _sanitizeDiffPath(String p) {
+              String norm(String x) =>
+                  File(x).absolute.path.replaceAll('\\', '/').toLowerCase();
+              String sanitizeDiffPath(String p) {
                 var s = p.trim();
                 // убрать окружающие кавычки
-                if (s.length >= 2 && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))) {
+                if (s.length >= 2 &&
+                    ((s.startsWith('"') && s.endsWith('"')) ||
+                        (s.startsWith("'") && s.endsWith("'")))) {
                   s = s.substring(1, s.length - 1);
                 }
                 // снять экранирование подчёркиваний и других тривиальных мест
@@ -189,16 +199,18 @@ class AutoFixAgent implements IAgent {
                 s = s.replaceAll(RegExp(r"[\\/]{2,}"), "/");
                 return s;
               }
+
               bool isAllowedPath(String p) {
                 if (path.isEmpty) return true;
                 if (mode == 'dir') {
-                  return _norm(p).startsWith(_norm(path));
+                  return norm(p).startsWith(norm(path));
                 } else {
-                  return _norm(path) == _norm(p);
+                  return norm(path) == norm(p);
                 }
               }
+
               String toAbs(String p) {
-                p = _sanitizeDiffPath(p);
+                p = sanitizeDiffPath(p);
                 final hasDrive = RegExp(r'^[A-Za-z]:[\\/]').hasMatch(p);
                 final isUnixAbs = p.startsWith('/');
                 if (hasDrive || isUnixAbs) {
@@ -280,11 +292,15 @@ class AutoFixAgent implements IAgent {
           id: 'e3',
           runId: runId,
           stage: AgentStage.pipeline_complete,
-          message: llmPatches.isEmpty ? 'Готово: изменений нет' : 'Готово: предложено исправлений: ${llmPatches.length}',
+          message: llmPatches.isEmpty
+              ? 'Готово: изменений нет'
+              : 'Готово: предложено исправлений: ${llmPatches.length}',
           progress: 1.0,
           meta: {
             'patches': llmPatches, // только LLM-диффы
-            'summary': llmPatches.isEmpty ? 'Нет изменений' : 'Предложено ${llmPatches.length} изменений',
+            'summary': llmPatches.isEmpty
+                ? 'Нет изменений'
+                : 'Предложено ${llmPatches.length} изменений',
           },
         ));
       } catch (e) {
@@ -313,7 +329,11 @@ class AutoFixAgent implements IAgent {
 
   bool _isSupported(String path) {
     final p = path.toLowerCase();
-    return p.endsWith('.dart') || p.endsWith('.md') || p.endsWith('.markdown') || p.endsWith('.java') || p.endsWith('.kt');
+    return p.endsWith('.dart') ||
+        p.endsWith('.md') ||
+        p.endsWith('.markdown') ||
+        p.endsWith('.java') ||
+        p.endsWith('.kt');
   }
 }
 
@@ -347,7 +367,7 @@ Future<_FixResult?> _analyzeAndFixFile(File file) async {
 
     // Правило 2: файл должен оканчиваться переводом строки
     if (!fixed.endsWith('\n')) {
-      fixed = fixed + '\n';
+      fixed = '$fixed\n';
       issues.add({'type': 'missing_final_newline', 'file': file.path});
     }
 
@@ -380,13 +400,18 @@ String _makeUnifiedDiff(String path, String oldContent, String newContent) {
 }
 
 /// Построить промпт для LLM на основе списка файлов и найденных проблем.
-String _buildLlmPrompt({required List<File> files, required List<Map<String, dynamic>> issues, int maxPreviewChars = 4000}) {
+String _buildLlmPrompt(
+    {required List<File> files,
+    required List<Map<String, dynamic>> issues,
+    int maxPreviewChars = 4000}) {
   final buf = StringBuffer();
   buf.writeln('You are a code maintenance assistant.');
-  buf.writeln('Goal: propose small, safe fixes and improvements for the following files.');
+  buf.writeln(
+      'Goal: propose small, safe fixes and improvements for the following files.');
   buf.writeln('Return unified diffs only, per file, when you propose changes.');
   buf.writeln('If no changes are needed, state "NO_CHANGES" for that file.');
-  buf.writeln('Focus on formatting, minor style issues, comments clarity, and obvious correctness.');
+  buf.writeln(
+      'Focus on formatting, minor style issues, comments clarity, and obvious correctness.');
   buf.writeln('Avoid large refactors. Keep diffs minimal.');
   if (issues.isNotEmpty) {
     buf.writeln('\nKnown issues:');
@@ -407,9 +432,11 @@ String _buildLlmPrompt({required List<File> files, required List<Map<String, dyn
       // ignore read error for prompt
     }
   }
-  buf.writeln('\nOutput format: For each file that needs changes, output a standard unified diff with headers');
+  buf.writeln(
+      '\nOutput format: For each file that needs changes, output a standard unified diff with headers');
   buf.writeln('"--- a/<path>" and "+++ b/<path>" and hunks starting with @@.');
-  buf.writeln('For files without changes, output a single line: FILE <path>: NO_CHANGES');
+  buf.writeln(
+      'For files without changes, output a single line: FILE <path>: NO_CHANGES');
   return buf.toString();
 }
 
@@ -422,7 +449,11 @@ Future<String> _requestLlmSuggestions({
   final usecase = resolveLlmUseCase(settings);
   final prompt = _buildLlmPrompt(files: files, issues: issues);
   final messages = <Map<String, String>>[
-    {'role': 'system', 'content': 'You are a helpful code assistant that returns unified diffs for suggested changes.'},
+    {
+      'role': 'system',
+      'content':
+          'You are a helpful code assistant that returns unified diffs for suggested changes.'
+    },
     {'role': 'user', 'content': prompt},
   ];
   final answer = await usecase.complete(messages: messages, settings: settings);

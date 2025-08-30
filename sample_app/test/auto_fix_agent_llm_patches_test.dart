@@ -7,7 +7,7 @@ import 'package:sample_app/agents/auto_fix/auto_fix_agent.dart';
 
 void main() {
   group('AutoFixAgent LLM patches integration', () {
-    Future<List<AgentEvent>> _collect(Stream<AgentEvent>? s) async {
+    Future<List<AgentEvent>> collect(Stream<AgentEvent>? s) async {
       if (s == null) return [];
       final out = <AgentEvent>[];
       final c = Completer<void>();
@@ -22,7 +22,8 @@ void main() {
       return out;
     }
 
-    test('includes llm_patches separately when includeLLMInApply=false', () async {
+    test('includes llm_patches separately when includeLLMInApply=false',
+        () async {
       final dir = await Directory.systemTemp.createTemp('autofix_agent_');
       final file = File('${dir.path}/main.dart');
       await file.writeAsString('void main(){}\n');
@@ -35,7 +36,8 @@ void main() {
           '+void main(){ print(\'hi\'); }\n';
 
       final agent = AutoFixAgent();
-      final events = await _collect(agent.start(AgentRequest('analyze', context: {
+      final events =
+          await collect(agent.start(AgentRequest('analyze', context: {
         'path': file.path,
         'mode': 'file',
         'useLLM': true,
@@ -43,9 +45,10 @@ void main() {
         'llm_raw_override': raw,
       })));
 
-      final complete = events.where((e) => e.stage == AgentStage.pipeline_complete).toList();
+      final complete =
+          events.where((e) => e.stage == AgentStage.pipeline_complete).toList();
       expect(complete.length, 1);
-      final meta = complete.first.meta as Map<String, dynamic>?;
+      final meta = complete.first.meta;
       expect(meta, isNotNull);
       final patches = (meta!['patches'] as List?) ?? [];
       final llmPatches = (meta['llm_patches'] as List?) ?? [];
@@ -54,7 +57,8 @@ void main() {
       expect(patches.length, lessThanOrEqualTo(1));
     });
 
-    test('merges llm_patches into patches when includeLLMInApply=true', () async {
+    test('merges llm_patches into patches when includeLLMInApply=true',
+        () async {
       final dir = await Directory.systemTemp.createTemp('autofix_agent_');
       final file = File('${dir.path}/main.dart');
       await file.writeAsString('void main(){}\n');
@@ -67,7 +71,8 @@ void main() {
           '+void main(){ print(\'hi\'); }\n';
 
       final agent = AutoFixAgent();
-      final events = await _collect(agent.start(AgentRequest('analyze', context: {
+      final events =
+          await collect(agent.start(AgentRequest('analyze', context: {
         'path': file.path,
         'mode': 'file',
         'useLLM': true,
@@ -75,9 +80,10 @@ void main() {
         'llm_raw_override': raw,
       })));
 
-      final complete = events.where((e) => e.stage == AgentStage.pipeline_complete).toList();
+      final complete =
+          events.where((e) => e.stage == AgentStage.pipeline_complete).toList();
       expect(complete.length, 1);
-      final meta = complete.first.meta as Map<String, dynamic>?;
+      final meta = complete.first.meta;
       expect(meta, isNotNull);
       final patches = (meta!['patches'] as List?) ?? [];
       final llmPatches = (meta['llm_patches'] as List?) ?? [];

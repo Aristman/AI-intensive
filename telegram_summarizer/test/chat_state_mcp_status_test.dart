@@ -52,14 +52,16 @@ class _FakeMcp implements McpClient {
 
   // Unused in this test
   @override
-  Future<Map<String, dynamic>> call(String method, Map<String, dynamic> params, {Duration timeout = const Duration(seconds: 20)}) async {
+  Future<Map<String, dynamic>> call(String method, Map<String, dynamic> params,
+      {Duration timeout = const Duration(seconds: 20)}) async {
     // Возвращаем пустые capabilities, чтобы агент не падал
     if (method == 'capabilities') return <String, dynamic>{};
     return <String, dynamic>{};
   }
 
   @override
-  Future<Map<String, dynamic>> summarize(String text, {Duration timeout = const Duration(seconds: 20)}) {
+  Future<Map<String, dynamic>> summarize(String text,
+      {Duration timeout = const Duration(seconds: 20)}) {
     throw UnimplementedError();
   }
 }
@@ -74,7 +76,7 @@ class _SlowFailMcp implements McpClient {
   @override
   void Function(Object error)? onErrorCallback;
 
-  _SlowFailMcp(this.url, {this.delay = const Duration(milliseconds: 50)});
+  _SlowFailMcp(this.url);
 
   @override
   bool get isConnected => _connected;
@@ -93,12 +95,14 @@ class _SlowFailMcp implements McpClient {
   }
 
   @override
-  Future<Map<String, dynamic>> call(String method, Map<String, dynamic> params, {Duration timeout = const Duration(seconds: 20)}) {
+  Future<Map<String, dynamic>> call(String method, Map<String, dynamic> params,
+      {Duration timeout = const Duration(seconds: 20)}) {
     throw UnimplementedError();
   }
 
   @override
-  Future<Map<String, dynamic>> summarize(String text, {Duration timeout = const Duration(seconds: 20)}) {
+  Future<Map<String, dynamic>> summarize(String text,
+      {Duration timeout = const Duration(seconds: 20)}) {
     throw UnimplementedError();
   }
 }
@@ -122,7 +126,8 @@ void main() {
     expect(chat.mcpConnected, isTrue);
   });
 
-  test('ChatState shows connecting and captures error on failed reconnect', () async {
+  test('ChatState shows connecting and captures error on failed reconnect',
+      () async {
     final chat = ChatState(_FakeLlm(), _SlowFailMcp('ws://bad'));
 
     // Start reconnect and verify transient connecting state flips
@@ -135,7 +140,8 @@ void main() {
     expect(chat.mcpError, isNotNull);
   });
 
-  test('ChatState.connectMcp is invoked during load when MCP is present', () async {
+  test('ChatState.connectMcp is invoked during load when MCP is present',
+      () async {
     final chat = ChatState(_FakeLlm(), _FakeMcp('ws://test'));
     await chat.load();
     expect(chat.mcpConnected, isTrue);

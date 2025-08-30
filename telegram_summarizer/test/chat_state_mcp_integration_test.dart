@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -48,7 +47,9 @@ void main() {
             ctrl.foreign.sink.add(jsonEncode({
               'jsonrpc': '2.0',
               'id': id,
-              'result': {'tools': ['summarize']},
+              'result': {
+                'tools': ['summarize']
+              },
             }));
           } else {
             ctrl.foreign.sink.add(jsonEncode({
@@ -91,7 +92,9 @@ void main() {
             ctrl.foreign.sink.add(jsonEncode({
               'jsonrpc': '2.0',
               'id': id,
-              'result': {'tools': ['summarize']},
+              'result': {
+                'tools': ['summarize']
+              },
             }));
           } else {
             ctrl.foreign.sink.add(jsonEncode({

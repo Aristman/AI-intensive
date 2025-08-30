@@ -22,14 +22,17 @@ void main() {
       final agent = AutoFixAgent(initialSettings: const AppSettings());
       final events = <AgentEvent>[];
       final sub = agent
-          .start(const AgentRequest('analyze', context: {'path': 'x.dart', 'mode': 'file'}))!
+          .start(const AgentRequest('analyze',
+              context: {'path': 'x.dart', 'mode': 'file'}))
           .listen(events.add);
       await sub.asFuture<void>();
-      expect(events.map((e) => e.stage), containsAll(<AgentStage>[
-        AgentStage.analysis_started,
-        AgentStage.analysis_result,
-        AgentStage.pipeline_complete,
-      ]));
+      expect(
+          events.map((e) => e.stage),
+          containsAll(<AgentStage>[
+            AgentStage.analysis_started,
+            AgentStage.analysis_result,
+            AgentStage.pipeline_complete,
+          ]));
       agent.dispose();
     });
   });

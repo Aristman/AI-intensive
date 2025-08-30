@@ -22,17 +22,16 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
 
   final _pathCtrl = TextEditingController();
   String _mode = 'file'; // 'file' | 'dir'
-  
 
   IAgent? _agent;
   StreamSubscription<AgentEvent>? _sub;
   final List<AgentEvent> _events = [];
   bool _running = false;
-  bool _eventsExpanded = false; // панель событий: развернута во время выполнения
+  bool _eventsExpanded =
+      false; // панель событий: развернута во время выполнения
   List<Map<String, dynamic>> _patches = const [];
   final _patchService = PatchApplyService();
   // Всегда применяем через LLM-агента в PatchApplyService
-  
 
   @override
   void initState() {
@@ -162,8 +161,14 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
               SegmentedButton<String>(
                 key: const Key('autofix_mode_segmented'),
                 segments: const [
-                  ButtonSegment(value: 'file', label: Text('Файл'), icon: Icon(Icons.insert_drive_file_outlined)),
-                  ButtonSegment(value: 'dir', label: Text('Папка'), icon: Icon(Icons.folder_open)),
+                  ButtonSegment(
+                      value: 'file',
+                      label: Text('Файл'),
+                      icon: Icon(Icons.insert_drive_file_outlined)),
+                  ButtonSegment(
+                      value: 'dir',
+                      label: Text('Папка'),
+                      icon: Icon(Icons.folder_open)),
                 ],
                 selected: {_mode},
                 onSelectionChanged: (s) => setState(() => _mode = s.first),
@@ -211,7 +216,8 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                               runId: 'ui',
                               stage: AgentStage.code_generated,
                               severity: AgentSeverity.info,
-                              message: 'Применено файлов: $count (через LLM-агента)',
+                              message:
+                                  'Применено файлов: $count (через LLM-агента)',
                               meta: {
                                 'applied': count,
                                 'patches': _patches.length,
@@ -254,7 +260,8 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
               initiallyExpanded: _eventsExpanded,
               onExpansionChanged: (v) => setState(() => _eventsExpanded = v),
               tilePadding: EdgeInsets.zero,
-              title: Text('События', style: Theme.of(context).textTheme.titleMedium),
+              title: Text('События',
+                  style: Theme.of(context).textTheme.titleMedium),
               children: [
                 SizedBox(
                   height: 200,
@@ -278,7 +285,8 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                                     : Icons.info_outline),
                           ),
                           title: Text('${e.stage.name}: ${e.message}'),
-                          subtitle: e.meta == null ? null : Text(e.meta.toString()),
+                          subtitle:
+                              e.meta == null ? null : Text(e.meta.toString()),
                         );
                       },
                     ),
@@ -328,7 +336,7 @@ class _DiffPreview extends StatelessWidget {
 
   Color _bgForLine(BuildContext context, String line) {
     if (line.startsWith('+++') || line.startsWith('---')) {
-      return Theme.of(context).colorScheme.surfaceVariant;
+      return Theme.of(context).colorScheme.surfaceContainerHighest;
     }
     if (line.startsWith('+')) return Colors.green.withOpacity(0.08);
     if (line.startsWith('-')) return Colors.red.withOpacity(0.08);
@@ -354,12 +362,14 @@ class _DiffPreview extends StatelessWidget {
         final isHunk = s.title.trim().startsWith('@@');
         final titleWidget = Text(
           s.title.isEmpty ? (isHunk ? '@@' : 'Header') : s.title,
-          style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600),
+          style: const TextStyle(
+              fontFamily: 'monospace', fontWeight: FontWeight.w600),
         );
 
         final content = Container(
           decoration: BoxDecoration(
-            border: Border(left: BorderSide(color: Theme.of(context).dividerColor)),
+            border:
+                Border(left: BorderSide(color: Theme.of(context).dividerColor)),
           ),
           child: ListView.builder(
             shrinkWrap: true,
@@ -410,7 +420,8 @@ class _DiffPreview extends StatelessWidget {
               initiallyExpanded: index == 0,
               dense: true,
               tilePadding: const EdgeInsets.symmetric(horizontal: 8),
-              childrenPadding: const EdgeInsets.only(left: 8, right: 4, bottom: 8),
+              childrenPadding:
+                  const EdgeInsets.only(left: 8, right: 4, bottom: 8),
               title: titleWidget,
               children: [content],
             ),
