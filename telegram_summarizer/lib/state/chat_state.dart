@@ -32,7 +32,8 @@ class ChatState extends ChangeNotifier {
   bool get mcpConnected => _mcp?.isConnected ?? false;
   bool get mcpConnecting => _mcpConnecting;
   String? get mcpError => _mcpError;
-  String? get currentMcpUrl => (_mcp is McpClient) ? (_mcp as McpClient).url : null;
+  String? get currentMcpUrl =>
+      (_mcp is McpClient) ? (_mcp as McpClient).url : null;
 
   /// Краткий список доступных инструментов MCP (если capabilities загружены).
   List<String> get mcpTools {
@@ -40,10 +41,16 @@ class ChatState extends ChangeNotifier {
     if (caps == null) return const [];
     final toolsVal = caps['tools'];
     if (toolsVal is List) {
-      return toolsVal.map((e) => e.toString()).where((e) => e.isNotEmpty).toList(growable: false);
+      return toolsVal
+          .map((e) => e.toString())
+          .where((e) => e.isNotEmpty)
+          .toList(growable: false);
     }
     if (toolsVal is Map) {
-      return toolsVal.keys.map((e) => e.toString()).where((e) => e.isNotEmpty).toList(growable: false);
+      return toolsVal.keys
+          .map((e) => e.toString())
+          .where((e) => e.isNotEmpty)
+          .toList(growable: false);
     }
     return const [];
   }
@@ -120,11 +127,17 @@ class ChatState extends ChangeNotifier {
     }
 
     // Отключим старый клиент
-    try { await _mcp?.disconnect(); } catch (_) {}
+    try {
+      await _mcp?.disconnect();
+    } catch (_) {}
     // Отвяжем колбэки
     if (_mcp != null) {
-      try { _mcp!.onStateChanged = null; } catch (_) {}
-      try { _mcp!.onErrorCallback = null; } catch (_) {}
+      try {
+        _mcp!.onStateChanged = null;
+      } catch (_) {}
+      try {
+        _mcp!.onErrorCallback = null;
+      } catch (_) {}
     }
 
     // Создадим новый клиент
@@ -158,8 +171,8 @@ class ChatState extends ChangeNotifier {
         if (list is List) {
           _messages
             ..clear()
-            ..addAll(list.whereType<Map>().map((e) =>
-                ChatMessage.fromJson(Map<String, dynamic>.from(e as Map))));
+            ..addAll(list.whereType<Map>().map(
+                (e) => ChatMessage.fromJson(Map<String, dynamic>.from(e))));
         }
       } catch (_) {
         // ignore malformed state

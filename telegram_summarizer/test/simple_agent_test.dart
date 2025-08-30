@@ -20,7 +20,8 @@ class _FakeLlm implements LlmUseCase {
     Duration retryDelay = const Duration(milliseconds: 200),
   }) async {
     // Если в конце есть системная инструкция на компрессию — возвращаем SUM.
-    if (messages.isNotEmpty && messages.last['role'] == 'system' &&
+    if (messages.isNotEmpty &&
+        messages.last['role'] == 'system' &&
         (messages.last['content'] ?? '').contains('Сожми диалог')) {
       return 'SUMMARIZED';
     }
@@ -38,7 +39,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  Future<SettingsState> _settings() async {
+  Future<SettingsState> settings0() async {
     final s = SettingsState();
     await s.load();
     await s.setApiKey('api');
@@ -47,7 +48,7 @@ void main() {
   }
 
   test('SimpleAgent.ask adds to history and returns reply', () async {
-    final settings = await _settings();
+    final settings = await settings0();
     final agent = SimpleAgent(_FakeLlm(), systemPrompt: 'You are helpful');
 
     final reply = await agent.ask('Hello', settings);
@@ -59,8 +60,9 @@ void main() {
     expect(agent.history[2]['role'], 'assistant');
   });
 
-  test('SimpleAgent.compressContext reduces history, no keepLastUser', () async {
-    final settings = await _settings();
+  test('SimpleAgent.compressContext reduces history, no keepLastUser',
+      () async {
+    final settings = await settings0();
     final agent = SimpleAgent(_FakeLlm(), systemPrompt: 'S');
     await agent.ask('A', settings);
     await agent.ask('B', settings);
@@ -74,8 +76,9 @@ void main() {
     expect(content, contains('SUMMARIZED'));
   });
 
-  test('SimpleAgent.compressContext keeps last user when keepLastUser=true', () async {
-    final settings = await _settings();
+  test('SimpleAgent.compressContext keeps last user when keepLastUser=true',
+      () async {
+    final settings = await settings0();
     final agent = SimpleAgent(_FakeLlm());
     await agent.ask('first', settings);
     await agent.ask('second', settings);

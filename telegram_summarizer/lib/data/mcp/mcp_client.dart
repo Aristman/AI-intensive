@@ -14,8 +14,9 @@ class McpError implements Exception {
 
   factory McpError.fromJson(dynamic json) {
     if (json is Map) {
-      final map = Map<String, dynamic>.from(json as Map);
-      return McpError(map['code'] as int? ?? -32000, map['message']?.toString() ?? 'MCP error', map['data']);
+      final map = Map<String, dynamic>.from(json);
+      return McpError(map['code'] as int? ?? -32000,
+          map['message']?.toString() ?? 'MCP error', map['data']);
     }
     return McpError(-32000, json?.toString() ?? 'MCP error');
   }
@@ -36,7 +37,8 @@ class McpClient {
   void Function(Object error)? onErrorCallback;
 
   McpClient({required this.url, WebSocketConnector? connector})
-      : _connector = connector ?? ((uri) async => WebSocketChannel.connect(uri));
+      : _connector =
+            connector ?? ((uri) async => WebSocketChannel.connect(uri));
 
   bool get isConnected => _channel != null;
 
@@ -47,7 +49,9 @@ class McpClient {
     _channel = ch;
     _sub = ch.stream.listen(_onData, onError: _onError, onDone: _onDone);
     // Notify about new connection state
-    try { onStateChanged?.call(); } catch (_) {}
+    try {
+      onStateChanged?.call();
+    } catch (_) {}
   }
 
   Future<void> disconnect() async {
@@ -67,7 +71,9 @@ class McpClient {
     try {
       ch?.sink.close();
     } catch (_) {}
-    try { onStateChanged?.call(); } catch (_) {}
+    try {
+      onStateChanged?.call();
+    } catch (_) {}
   }
 
   void _onData(dynamic data) {
@@ -75,10 +81,12 @@ class McpClient {
       final text = data is List<int> ? utf8.decode(data) : data.toString();
       final decoded = jsonDecode(text);
       if (decoded is Map) {
-        final map = Map<String, dynamic>.from(decoded as Map);
+        final map = Map<String, dynamic>.from(decoded);
         final idRaw = map['id'];
         int? id;
-        if (idRaw is int) id = idRaw; else if (idRaw is String) id = int.tryParse(idRaw);
+        if (idRaw is int) {
+          id = idRaw;
+        } else if (idRaw is String) id = int.tryParse(idRaw);
         if (id != null) {
           final completer = _pending.remove(id);
           if (completer != null) {
@@ -108,7 +116,9 @@ class McpClient {
     _channel = null;
     _sub?.cancel();
     _sub = null;
-    try { ch?.sink.close(); } catch (_) {}
+    try {
+      ch?.sink.close();
+    } catch (_) {}
 
     // Complete all pending with this error
     final pending = List.of(_pending.values);
@@ -117,8 +127,12 @@ class McpClient {
       if (!c.isCompleted) c.completeError(error);
     }
     // Notify listeners
-    try { onErrorCallback?.call(error); } catch (_) {}
-    try { onStateChanged?.call(); } catch (_) {}
+    try {
+      onErrorCallback?.call(error);
+    } catch (_) {}
+    try {
+      onStateChanged?.call();
+    } catch (_) {}
   }
 
   void _onDone() {
@@ -131,7 +145,9 @@ class McpClient {
     for (final c in pending) {
       if (!c.isCompleted) c.completeError(StateError('Disconnected'));
     }
-    try { onStateChanged?.call(); } catch (_) {}
+    try {
+      onStateChanged?.call();
+    } catch (_) {}
   }
 
   Future<Map<String, dynamic>> call(
@@ -156,7 +172,8 @@ class McpClient {
     try {
       return await completer.future.timeout(timeout, onTimeout: () {
         _pending.remove(id);
-        throw TimeoutException('MCP request $method timed out after ${timeout.inSeconds}s');
+        throw TimeoutException(
+            'MCP request $method timed out after ${timeout.inSeconds}s');
       });
     } finally {
       // Ensure cleanup if completed exceptionally
@@ -164,7 +181,8 @@ class McpClient {
     }
   }
 
-  Future<Map<String, dynamic>> summarize(String text, {Duration timeout = const Duration(seconds: 20)}) {
+  Future<Map<String, dynamic>> summarize(String text,
+      {Duration timeout = const Duration(seconds: 20)}) {
     return call('summarize', {'text': text}, timeout: timeout);
   }
 }
