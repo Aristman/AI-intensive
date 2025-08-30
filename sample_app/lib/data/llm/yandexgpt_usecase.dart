@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer';
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
@@ -32,13 +33,21 @@ class YandexGptUseCase implements LlmUseCase {
     required List<Map<String, String>> messages,
     required AppSettings settings,
   }) async {
+    log('YandexGptUseCase.complete: Начинаем обработку запроса', name: 'YandexGptUseCase');
+
     // Требуем либо IAM токен (предпочтительно), либо Api-Key (временный fallback)
     if (_iamToken.isEmpty && _apiKey.isEmpty) {
+      log('YandexGptUseCase: Ошибка - IAM токен и API ключ не найдены', name: 'YandexGptUseCase');
       throw Exception('Не найден Yandex IAM токен или API ключ. Укажите YANDEX_IAM_TOKEN (предпочтительно) или YANDEX_API_KEY в assets/.env');
     }
     if (_folderId.isEmpty) {
+      log('YandexGptUseCase: Ошибка - folder ID не указан', name: 'YandexGptUseCase');
       throw Exception('Не указан YANDEX_FOLDER_ID в assets/.env');
     }
+
+    log('YandexGptUseCase: Используем аутентификацию: ${_iamToken.isNotEmpty ? 'IAM токен' : 'API ключ'}', name: 'YandexGptUseCase');
+    log('YandexGptUseCase: Model URI: $_modelUri', name: 'YandexGptUseCase');
+    log('YandexGptUseCase: Endpoint: $_endpoint', name: 'YandexGptUseCase');
 
     // Конвертируем наше сообщение из {'role': 'user', 'content': '...'} в формат Yandex {'role': 'user', 'text': '...'}
     final ycMessages = [
@@ -52,6 +61,9 @@ class YandexGptUseCase implements LlmUseCase {
     // Настройки генерации
     final double temperature = settings.yandexTemperature.clamp(0.0, 1.0);
     final int maxTokens = settings.yandexMaxTokens > 0 ? settings.yandexMaxTokens : 1;
+
+    log('YandexGptUseCase: Параметры - temperature: $temperature, maxTokens: $maxTokens', name: 'YandexGptUseCase');
+    log('YandexGptUseCase: Сообщений для обработки: ${messages.length}', name: 'YandexGptUseCase');
 
     final body = jsonEncode({
       'modelUri': _modelUri,
@@ -74,22 +86,33 @@ class YandexGptUseCase implements LlmUseCase {
       }
     };
 
+    log('YandexGptUseCase: Отправляем запрос к $_endpoint', name: 'YandexGptUseCase');
+    log('YandexGptUseCase: Тело запроса: $body', name: 'YandexGptUseCase');
+
     final response = await http.post(
       Uri.parse(_endpoint),
       headers: headers,
       body: body,
     );
 
+    log('YandexGptUseCase: Получен ответ с кодом ${response.statusCode}', name: 'YandexGptUseCase');
+
     if (response.statusCode != 200) {
+      log('YandexGptUseCase: Ошибка HTTP ${response.statusCode}: ${response.body}', name: 'YandexGptUseCase');
       throw Exception('Ошибка YandexGPT: ${response.statusCode} ${response.body}');
     }
 
+    log('YandexGptUseCase: Успешный ответ, парсим JSON', name: 'YandexGptUseCase');
     final Map<String, dynamic> data = jsonDecode(response.body);
     // Формат: { result: { alternatives: [ { message: { role, text } } ] } }
     final text = data['result']?['alternatives']?[0]?['message']?['text'];
+
     if (text is String && text.isNotEmpty) {
+      log('YandexGptUseCase: Успешно извлечен текст длиной ${text.length} символов', name: 'YandexGptUseCase');
       return text;
     }
+
+    log('YandexGptUseCase: Ошибка - пустой текст в ответе', name: 'YandexGptUseCase');
     throw Exception('Пустой ответ от YandexGPT');
   }
 }

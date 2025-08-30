@@ -3,6 +3,7 @@ import 'package:sample_app/domain/llm_resolver.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/data/llm/deepseek_usecase.dart';
 import 'package:sample_app/data/llm/yandexgpt_usecase.dart';
+import 'package:sample_app/data/llm/tinylama_usecase.dart';
 
 void main() {
   group('resolveLlmUseCase', () {
@@ -16,6 +17,12 @@ void main() {
       const settings = AppSettings(selectedNetwork: NeuralNetwork.yandexgpt);
       final usecase = resolveLlmUseCase(settings);
       expect(usecase, isA<YandexGptUseCase>());
+    });
+
+    test('returns TinyLlamaUseCase when selectedNetwork is tinylama', () {
+      const settings = AppSettings(selectedNetwork: NeuralNetwork.tinylama);
+      final usecase = resolveLlmUseCase(settings);
+      expect(usecase, isA<TinyLlamaUseCase>());
     });
   });
 }

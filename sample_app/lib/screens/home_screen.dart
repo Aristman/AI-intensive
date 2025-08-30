@@ -94,7 +94,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final s = _settings;
     final text = s == null
         ? '-'
-        : (s.selectedNetwork == NeuralNetwork.deepseek ? 'DeepSeek' : 'YandexGPT');
+        : switch (s.selectedNetwork) {
+            NeuralNetwork.deepseek => 'DeepSeek',
+            NeuralNetwork.yandexgpt => 'YandexGPT',
+            NeuralNetwork.tinylama => 'TinyLlama',
+          };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
