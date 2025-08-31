@@ -70,7 +70,7 @@ class _SlowFailMcp implements McpClient {
   @override
   final String url;
   bool _connected = false;
-  final Duration delay;
+  final Duration delay = const Duration(milliseconds: 100);
   @override
   void Function()? onStateChanged;
   @override

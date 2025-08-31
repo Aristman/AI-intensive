@@ -1,0 +1,42 @@
+{
+  "telegram_api_id": "",
+  "telegram_api_hash": "",
+  "telegram_bot_token": "",
+  "use_userbot": true,
+  "mcp_server_command": "telegram-mcp",
+  "mcp_transport": "http",
+  "mcp_ssh_tunnel": {
+    "enabled": false,
+    "host": "",
+    "port": 22,
+    "user": "",
+    "key_path": "",
+    "remote_command": ""
+  },
+  "mcp_http_remote": {
+    "enabled": true,
+    "url": ""
+  },
+  "mcp_env_vars": {},
+  "chats": ["@SourceCraft", "@prog_tools", "@my_aigents"],
+  "ui_theme": "light",
+  "log_level": "DEBUG",
+  "llm_provider": "deepseek",
+  "deepseek_api_key": "",
+  "deepseek_temperature": 0.2,
+  "deepseek_max_tokens": 2000,
+  "yandex_iam_token": "",
+  "yandex_api_key": "",
+  "yandex_folder_id": "b1golisqrg02h9b6u39de",
+  "yandex_temperature": 0.2,
+  "yandex_max_tokens": 2000,
+  "monitor_interval_sec": 60,
+  "page_size": 10,
+  "chunk_size": 12,
+  "summary_chat": "@aigents_report",
+  "filters": {
+    "keywords": ["ai", "ml", "deep learning", "neural networks", "ИИ"],
+    "exclude_senders": [],
+    "min_length": 10
+  }
+}

@@ -50,5 +50,6 @@ bin/
 .env
 issue-monitor/.env
 /изменения_в_README_md.patch
-/.windsurf/
 node_modules
+telegram_monitoring_agent/logs/*.*
+telegram_monitoring_agent/.env
