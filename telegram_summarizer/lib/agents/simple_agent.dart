@@ -181,18 +181,24 @@ class SimpleAgent {
       if (_mcp != null && _mcp!.isConnected) {
         final sum = await _mcp!.summarize(userText, timeout: timeout);
         structured = sum;
-        dev.log('Agent.askRich: pre-fetched summarize via MCP=${jsonEncode(sum)}', name: 'SimpleAgent');
+        dev.log(
+            'Agent.askRich: pre-fetched summarize via MCP=${jsonEncode(sum)}',
+            name: 'SimpleAgent');
       }
     } catch (e) {
-      dev.log('Agent.askRich: summarize prefetch failed: $e', name: 'SimpleAgent', level: 800);
+      dev.log('Agent.askRich: summarize prefetch failed: $e',
+          name: 'SimpleAgent', level: 800);
     }
 
     // Попытка распознать прямой tool_call в пользовательском сообщении
     Map<String, dynamic>? userToolCall;
-    final userJson = _extractJsonFromMarkdown(userText) ?? _tryParseRawJson(userText);
+    final userJson =
+        _extractJsonFromMarkdown(userText) ?? _tryParseRawJson(userText);
     if (userJson != null && userJson['tool_call'] is Map<String, dynamic>) {
       userToolCall = Map<String, dynamic>.from(userJson['tool_call'] as Map);
-      dev.log('Agent.askRich: detected DIRECT user tool_call=${jsonEncode(userToolCall)}', name: 'SimpleAgent');
+      dev.log(
+          'Agent.askRich: detected DIRECT user tool_call=${jsonEncode(userToolCall)}',
+          name: 'SimpleAgent');
     }
 
     final baseMsgs = _messagesForLlm();
@@ -206,20 +212,25 @@ class SimpleAgent {
             ? Map<String, dynamic>.from(userToolCall['arguments'] as Map)
             : null;
         if (toolName == null || toolArgs == null) {
-          throw StateError('Некорректный формат tool_call: name/arguments отсутствуют');
+          throw StateError(
+              'Некорректный формат tool_call: name/arguments отсутствуют');
         }
-        dev.log('Agent.askRich: executing DIRECT tool $toolName with args=${jsonEncode(toolArgs)}', name: 'SimpleAgent');
-        final toolResult = await _mcp!.call('tools/call', {'name': toolName, 'arguments': toolArgs}, timeout: timeout);
-        dev.log('Agent.askRich: DIRECT tool result=${jsonEncode(toolResult)}', name: 'SimpleAgent');
-        if (toolResult is Map<String, dynamic>) {
-          structured = toolResult;
-        }
+        dev.log(
+            'Agent.askRich: executing DIRECT tool $toolName with args=${jsonEncode(toolArgs)}',
+            name: 'SimpleAgent');
+        final toolResult = await _mcp!.call(
+            'tools/call', {'name': toolName, 'arguments': toolArgs},
+            timeout: timeout);
+        dev.log('Agent.askRich: DIRECT tool result=${jsonEncode(toolResult)}',
+            name: 'SimpleAgent');
+        structured = toolResult;
 
         final followUpMsgs = [
           ...baseMsgs,
           {
             'role': 'user',
-            'content': 'Результат выполнения инструмента $toolName: ${jsonEncode(toolResult)}. Теперь дай полный ответ пользователю на основе этого результата.'
+            'content':
+                'Результат выполнения инструмента $toolName: ${jsonEncode(toolResult)}. Теперь дай полный ответ пользователю на основе этого результата.'
           }
         ];
         finalReplyText = await _llm.complete(
@@ -235,12 +246,16 @@ class SimpleAgent {
           retryDelay: retryDelay,
         );
       } catch (e) {
-        dev.log('Agent.askRich: DIRECT tool execution failed: $e', name: 'SimpleAgent', level: 900);
-        finalReplyText = 'Ошибка выполнения инструмента: $e. Проверьте корректность JSON и попробуйте снова.';
+        dev.log('Agent.askRich: DIRECT tool execution failed: $e',
+            name: 'SimpleAgent', level: 900);
+        finalReplyText =
+            'Ошибка выполнения инструмента: $e. Проверьте корректность JSON и попробуйте снова.';
       }
     } else {
       // Обычный цикл: сперва спросить LLM
-      dev.log('Agent.askRich: sending to LLM. hasCaps=${_mcpCapabilities != null} messages=${jsonEncode(baseMsgs)}', name: 'SimpleAgent');
+      dev.log(
+          'Agent.askRich: sending to LLM. hasCaps=${_mcpCapabilities != null} messages=${jsonEncode(baseMsgs)}',
+          name: 'SimpleAgent');
       final replyText = await _llm.complete(
         messages: baseMsgs,
         modelUri: settings.llmModel,
@@ -253,14 +268,17 @@ class SimpleAgent {
         retries: retries,
         retryDelay: retryDelay,
       );
-      dev.log('Agent.askRich: got reply text="$replyText"', name: 'SimpleAgent');
+      dev.log('Agent.askRich: got reply text="$replyText"',
+          name: 'SimpleAgent');
 
       // Попытка извлечь tool_call из ответа ассистента (markdown или сырой JSON)
       Map<String, dynamic>? toolCall;
-      final extractedJson = _extractJsonFromMarkdown(replyText) ?? _tryParseRawJson(replyText);
+      final extractedJson =
+          _extractJsonFromMarkdown(replyText) ?? _tryParseRawJson(replyText);
       if (extractedJson != null && extractedJson['tool_call'] is Map) {
         toolCall = Map<String, dynamic>.from(extractedJson['tool_call'] as Map);
-        dev.log('Agent.askRich: detected tool call=${jsonEncode(toolCall)}', name: 'SimpleAgent');
+        dev.log('Agent.askRich: detected tool call=${jsonEncode(toolCall)}',
+            name: 'SimpleAgent');
       }
 
       finalReplyText = replyText;
@@ -272,19 +290,23 @@ class SimpleAgent {
               ? Map<String, dynamic>.from(toolCall['arguments'] as Map)
               : null;
           if (toolName != null && toolArgs != null) {
-            dev.log('Agent.askRich: executing tool $toolName with args=${jsonEncode(toolArgs)}', name: 'SimpleAgent');
-            final toolResult = await _mcp!.call('tools/call', {'name': toolName, 'arguments': toolArgs}, timeout: timeout);
-            dev.log('Agent.askRich: tool result=${jsonEncode(toolResult)}', name: 'SimpleAgent');
-            if (toolResult is Map<String, dynamic>) {
-              structured = toolResult;
-            }
+            dev.log(
+                'Agent.askRich: executing tool $toolName with args=${jsonEncode(toolArgs)}',
+                name: 'SimpleAgent');
+            final toolResult = await _mcp!.call(
+                'tools/call', {'name': toolName, 'arguments': toolArgs},
+                timeout: timeout);
+            dev.log('Agent.askRich: tool result=${jsonEncode(toolResult)}',
+                name: 'SimpleAgent');
+            structured = toolResult;
 
             final followUpMsgs = [
               ...baseMsgs,
               {'role': 'assistant', 'content': replyText},
               {
                 'role': 'user',
-                'content': 'Результат выполнения инструмента $toolName: ${jsonEncode(toolResult)}. Теперь дай полный ответ пользователю на основе этого результата.'
+                'content':
+                    'Результат выполнения инструмента $toolName: ${jsonEncode(toolResult)}. Теперь дай полный ответ пользователю на основе этого результата.'
               }
             ];
             finalReplyText = await _llm.complete(
@@ -299,11 +321,15 @@ class SimpleAgent {
               retries: retries,
               retryDelay: retryDelay,
             );
-            dev.log('Agent.askRich: final response after tool call="$finalReplyText"', name: 'SimpleAgent');
+            dev.log(
+                'Agent.askRich: final response after tool call="$finalReplyText"',
+                name: 'SimpleAgent');
           }
         } catch (e) {
-          dev.log('Agent.askRich: tool execution failed: $e', name: 'SimpleAgent', level: 900);
-          finalReplyText = 'Ошибка выполнения инструмента: $e. Попробуйте переформулировать запрос.';
+          dev.log('Agent.askRich: tool execution failed: $e',
+              name: 'SimpleAgent', level: 900);
+          finalReplyText =
+              'Ошибка выполнения инструмента: $e. Попробуйте переформулировать запрос.';
         }
       }
     }
@@ -392,8 +418,8 @@ class SimpleAgent {
       if (tools is List && tools.isNotEmpty) {
         msgs.add({
           'role': 'system',
-          'content': 'У тебя есть доступ к внешним инструментам через MCP (Model Context Protocol).\n\n' +
-              'ОСОБЕННО ВАЖНО ПОНИМАТЬ:\n' +
+          'content': 'У тебя есть доступ к внешним инструментам через MCP (Model Context Protocol).\n\n'
+                  'ОСОБЕННО ВАЖНО ПОНИМАТЬ:\n' +
               '- Для Telegram инструментов (tg_send_message, tg_send_photo, create_issue_and_notify):\n' +
               '  * Параметр chat_id является ОПЦИОНАЛЬНЫМ\n' +
               '  * Если chat_id НЕ указан, автоматически используется TELEGRAM_DEFAULT_CHAT_ID из настроек сервера\n' +
@@ -452,7 +478,7 @@ class SimpleAgent {
     try {
       final parsed = jsonDecode(trimmed);
       if (parsed is Map) {
-        return Map<String, dynamic>.from(parsed as Map);
+        return Map<String, dynamic>.from(parsed);
       }
     } catch (_) {}
     return null;
