@@ -295,7 +295,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             Builder(builder: (context) {
                               final network = _currentSettings.selectedNetwork;
                               final isDeepseek = network == NeuralNetwork.deepseek;
-                              final isTinylama = network == NeuralNetwork.tinylama;
                               final maxTemp = isDeepseek ? 2.0 : 1.0;
                               final divisions = (maxTemp * 20).round(); // шаг 0.05
                               final value = switch (network) {

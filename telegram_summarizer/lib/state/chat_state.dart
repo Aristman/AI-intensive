@@ -15,13 +15,12 @@ class ChatState extends ChangeNotifier {
 
   final _uuid = const Uuid();
   final List<ChatMessage> _messages = [];
-  final LlmUseCase _llm;
   McpClient? _mcp; // optional MCP client (mutable to allow URL changes)
   final SimpleAgent _agent;
   bool _mcpConnecting = false;
   String? _mcpError;
 
-  ChatState(this._llm, [this._mcp]) : _agent = SimpleAgent(_llm, mcp: _mcp) {
+  ChatState(LlmUseCase llm, [this._mcp]) : _agent = SimpleAgent(llm, mcp: _mcp) {
     _attachMcpListeners();
   }
 

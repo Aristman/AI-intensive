@@ -33,6 +33,7 @@ class _ChatScreenState extends State<ChatScreen> {
   ReasoningAgent? _reasoningAgent;
   bool _isUsingMcp = false;
   Timer? _mcpIndicatorTimer;
+  static const String _conversationKey = 'chat_screen';
 
   bool get _useReasoning => widget.reasoningOverride == true;
 
@@ -54,14 +55,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _appSettings = _appSettings.copyWith(reasoningMode: widget.reasoningOverride);
     }
 
-    // Инициализация агента в зависимости от вкладки
-    if (_useReasoning) {
-      _reasoningAgent = ReasoningAgent(baseSettings: _appSettings);
-      _simpleAgent = null;
-    } else {
-      _simpleAgent = SimpleAgent(baseSettings: _appSettings);
-      _reasoningAgent = null;
-    }
+    // Инициализация агента в зависимости от вкладки + загрузка истории при reasoning
+    await _setupAgentsWithSettings();
 
     if (mounted) {
       setState(() {
@@ -77,7 +72,7 @@ class _ChatScreenState extends State<ChatScreen> {
       MaterialPageRoute(
         builder: (context) => SettingsScreen(
           initialSettings: _appSettings,
-          onSettingsChanged: (settings) {
+          onSettingsChanged: (settings) async {
             var s = settings;
             if (widget.reasoningOverride != null) {
               s = s.copyWith(reasoningMode: widget.reasoningOverride);
@@ -85,14 +80,8 @@ class _ChatScreenState extends State<ChatScreen> {
             setState(() {
               _appSettings = s;
             });
-            // Переинициализация соответствующего агента с новыми настройками
-            if (_useReasoning) {
-              _reasoningAgent = ReasoningAgent(baseSettings: _appSettings);
-              _simpleAgent = null;
-            } else {
-              _simpleAgent = SimpleAgent(baseSettings: _appSettings);
-              _reasoningAgent = null;
-            }
+            // Переинициализация соответствующего агента с новыми настройками (+история)
+            await _setupAgentsWithSettings();
           },
         ),
       ),
@@ -106,13 +95,7 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _appSettings = s;
       });
-      if (_useReasoning) {
-        _reasoningAgent = ReasoningAgent(baseSettings: _appSettings);
-        _simpleAgent = null;
-      } else {
-        _simpleAgent = SimpleAgent(baseSettings: _appSettings);
-        _reasoningAgent = null;
-      }
+      await _setupAgentsWithSettings();
     }
   }
 
@@ -259,6 +242,49 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _setupAgentsWithSettings() async {
+    // Сбрасываем индикаторы MCP и загрузки
+    _mcpIndicatorTimer?.cancel();
+    _isUsingMcp = false;
+
+    if (_useReasoning) {
+      // Инициализируем ReasoningAgent с ключом беседы и подгружаем историю из хранилища
+      _reasoningAgent = ReasoningAgent(baseSettings: _appSettings, conversationKey: _conversationKey);
+      _simpleAgent = null;
+      final loaded = await _reasoningAgent!.setConversationKey(_conversationKey);
+      if (mounted) {
+        setState(() {
+          _messages
+            ..clear()
+            ..addAll(_mapHistoryToMessages(loaded));
+        });
+        // Прокрутка к низу после восстановления
+        _scrollToBottom();
+      }
+    } else {
+      // Простой агент без персистентной истории
+      _simpleAgent = SimpleAgent(baseSettings: _appSettings);
+      _reasoningAgent = null;
+      if (mounted) {
+        setState(() {
+          _messages.clear();
+        });
+      }
+    }
+  }
+
+  List<Message> _mapHistoryToMessages(List<Map<String, String>> history) {
+    return [
+      for (final m in history)
+        Message(
+          text: m['content'] ?? '',
+          isUser: (m['role'] ?? 'user') == 'user',
+          // Для восстановленных сообщений финальность неизвестна
+          isFinal: null,
+        )
+    ];
+  }
+
   @override
   void dispose() {
     _textController.dispose();
@@ -282,6 +308,32 @@ class _ChatScreenState extends State<ChatScreen> {
             const Padding(
               padding: EdgeInsets.all(16.0),
               child: Center(child: CircularProgressIndicator()),
+            ),
+          if (_useReasoning)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+              child: Row(
+                children: [
+                  const Spacer(),
+                  TextButton.icon(
+                    key: const Key('clear_history_button'),
+                    onPressed: () async {
+                      if (_reasoningAgent == null) return;
+                      await _reasoningAgent!.clearHistoryAndPersist();
+                      if (mounted) {
+                        setState(() {
+                          _messages.clear();
+                        });
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('История очищена')),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                    label: const Text('Очистить историю'),
+                  ),
+                ],
+              ),
             ),
           Expanded(
             child: ListView.builder(

@@ -643,7 +643,6 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
   }
 
   Future<void> _clearHistory() async {
-    final key = _convKey;
     await _agent?.clearHistoryAndPersist();
     setState(() {
       _messages.clear();
