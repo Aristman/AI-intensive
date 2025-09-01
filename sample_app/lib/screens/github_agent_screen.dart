@@ -7,7 +7,6 @@ import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/models/message.dart';
 import 'package:sample_app/screens/settings_screen.dart';
 import 'package:sample_app/services/settings_service.dart';
-import 'package:sample_app/services/conversation_storage_service.dart';
 import 'package:sample_app/widgets/safe_send_text_field.dart';
 import 'package:sample_app/utils/json_utils.dart';
 import 'package:sample_app/services/mcp_client.dart';
@@ -75,7 +74,6 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
   final _scrollController = ScrollController();
 
   final _settingsService = SettingsService();
-  final _convStore = ConversationStorageService();
   AppSettings? _settings;
   bool _loadingSettings = true;
 
@@ -138,22 +136,16 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
     if (widget.agentFactory != null) {
       _agent = widget.agentFactory!(_settings!, extra);
     } else {
-      _agent = ReasoningAgent(baseSettings: _settings, extraSystemPrompt: extra);
+      _agent = ReasoningAgent(baseSettings: _settings, extraSystemPrompt: extra, conversationKey: _convKey);
     }
     _messages.clear();
-
-    // Загружаем сохранённую историю для текущего репозитория и импортируем в агента
-    final key = _convKey;
-    if (key != null) {
-      final stored = await _convStore.load(key);
-      if (stored.isNotEmpty) {
-        _agent!.importHistory(stored);
-        // Отрисуем историю в UI
-        for (final m in stored) {
-          _messages.add(Message(text: m['content'] ?? '', isUser: (m['role'] == 'user')));
-        }
-        setState(() {});
+    // Устанавливаем ключ беседы и даём агенту загрузить историю самостоятельно
+    final loaded = await _agent!.setConversationKey(_convKey);
+    if (loaded.isNotEmpty) {
+      for (final m in loaded) {
+        _messages.add(Message(text: m['content'] ?? '', isUser: (m['role'] == 'user')));
       }
+      setState(() {});
     }
   }
 
@@ -258,12 +250,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
 
       _scrollToBottom();
 
-      // Сохраняем историю диалога после ответа
-      final key = _convKey;
-      if (key != null) {
-        dev.log('Persist conversation history for key=$key (len=${_agent!.exportHistory().length})', name: 'GitHubAgent');
-        await _convStore.save(key, _agent!.exportHistory());
-      }
+      // История уже сохраняется агентом автоматически
 
       // Попробуем распознать и выполнить инструмент из ответа ассистента (например, create_issue)
       // Запускаем асинхронно, чтобы не блокировать основной поток UI
@@ -368,13 +355,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
         _scrollToBottom();
 
         if (_agent != null) {
-          final hist = _agent!.exportHistory();
-          hist.add({'role': 'assistant', 'content': okMsg});
-          _agent!.importHistory(hist);
-        }
-        final key = _convKey;
-        if (key != null && _agent != null) {
-          await _convStore.save(key, _agent!.exportHistory());
+          await _agent!.addAssistantMessage(okMsg);
         }
         return;
       }
@@ -415,13 +396,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
           _scrollToBottom();
           // Сохраняем в историю
           if (_agent != null) {
-            final hist = _agent!.exportHistory();
-            hist.add({'role': 'assistant', 'content': msg});
-            _agent!.importHistory(hist);
-          }
-          final key = _convKey;
-          if (key != null && _agent != null) {
-            await _convStore.save(key, _agent!.exportHistory());
+            await _agent!.addAssistantMessage(msg);
           }
           return;
         }
@@ -453,13 +428,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
         _scrollToBottom();
 
         if (_agent != null) {
-          final hist = _agent!.exportHistory();
-          hist.add({'role': 'assistant', 'content': summary});
-          _agent!.importHistory(hist);
-        }
-        final key = _convKey;
-        if (key != null && _agent != null) {
-          await _convStore.save(key, _agent!.exportHistory());
+          await _agent!.addAssistantMessage(summary);
         }
       } else {
         // Если MCP выключен — пока не выполняем другие инструменты
@@ -482,13 +451,7 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
           });
           _scrollToBottom();
           if (_agent != null) {
-            final hist = _agent!.exportHistory();
-            hist.add({'role': 'assistant', 'content': msg});
-            _agent!.importHistory(hist);
-          }
-          final key = _convKey;
-          if (key != null && _agent != null) {
-            await _convStore.save(key, _agent!.exportHistory());
+            await _agent!.addAssistantMessage(msg);
           }
           return;
         }
@@ -681,13 +644,10 @@ class _GitHubAgentScreenState extends State<GitHubAgentScreen> {
 
   Future<void> _clearHistory() async {
     final key = _convKey;
-    _agent?.clearHistory();
+    await _agent?.clearHistoryAndPersist();
     setState(() {
       _messages.clear();
     });
-    if (key != null) {
-      await _convStore.clear(key);
-    }
   }
 
   Future<void> _openLocalGithubSettingsDialog() async {

@@ -28,7 +28,7 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
   final List<AgentEvent> _events = [];
   bool _running = false;
   bool _eventsExpanded =
-      false; // панель событий: развернута во время выполнения
+      true; // панель событий: по умолчанию развёрнута для видимости списка в тестах
   List<Map<String, dynamic>> _patches = const [];
   final _patchService = PatchApplyService();
   // Всегда применяем через LLM-агента в PatchApplyService
