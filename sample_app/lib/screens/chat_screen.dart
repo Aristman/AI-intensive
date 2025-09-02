@@ -72,7 +72,8 @@ class _ChatScreenState extends State<ChatScreen> {
           RecordConfig(
             encoder: AudioEncoder.wav,
             bitRate: 128000,
-            sampleRate: 16000,
+            sampleRate: 48000, // повышаем до 48 kHz для лучшего качества
+            numChannels: 1,    // моно для распознавания речи
           ),
           path: path,
         );
@@ -113,7 +114,13 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _isTtsLoading = true);
       final path = await _reasoningAgent!.synthesizeSpeechAudio(message.text);
       await _audioPlayer.stop();
-      await _audioPlayer.play(DeviceFileSource(path));
+      final lower = path.toLowerCase();
+      final source = lower.endsWith('.wav')
+          ? DeviceFileSource(path, mimeType: 'audio/wav')
+          : lower.endsWith('.ogg')
+              ? DeviceFileSource(path, mimeType: 'audio/ogg')
+              : DeviceFileSource(path);
+      await _audioPlayer.play(source);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -442,7 +449,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     onPressed: () async {
                       if (_reasoningAgent == null) return;
                       await _reasoningAgent!.clearHistoryAndPersist();
-                      if (!mounted) return;
+                      if (!context.mounted) return;
                       setState(() {
                         _messages.clear();
                       });
