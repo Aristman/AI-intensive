@@ -42,6 +42,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isRecording = false;
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isTtsLoading = false;
+  bool _autoVoiceReply = false; // автоозвучивание ответов (только для Яндекс GPT)
 
   bool get _useReasoning => widget.reasoningOverride == true;
 
@@ -72,7 +73,7 @@ class _ChatScreenState extends State<ChatScreen> {
           RecordConfig(
             encoder: AudioEncoder.wav,
             bitRate: 128000,
-            sampleRate: 48000, // повышаем до 48 kHz для лучшего качества
+            sampleRate: 16000, // возвращаем 16 kHz для STT
             numChannels: 1,    // моно для распознавания речи
           ),
           path: path,
@@ -158,12 +159,17 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       if (_useReasoning) {
         final res = await _reasoningAgent!.ask(text);
+        final result = res['result'] as ReasoningResult;
+        final assistantMsg =
+            Message(text: result.text, isUser: false, isFinal: result.isFinal);
         setState(() {
           _isLoading = false;
           _isUsingMcp = res['mcp_used'] ?? false;
-          final result = res['result'] as ReasoningResult;
-          _messages.add(Message(text: result.text, isUser: false, isFinal: result.isFinal));
+          _messages.add(assistantMsg);
         });
+        if (_autoVoiceReply && _isYandexReasoning) {
+          await _playTts(assistantMsg);
+        }
       } else {
         final answer = await _simpleAgent!.ask(text);
         setState(() {
@@ -444,6 +450,19 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Row(
                 children: [
                   const Spacer(),
+                  if (_isYandexReasoning)
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: _autoVoiceReply,
+                          onChanged: (v) {
+                            setState(() => _autoVoiceReply = v ?? false);
+                          },
+                        ),
+                        const Text('Автоответ голосом'),
+                        const SizedBox(width: 8),
+                      ],
+                    ),
                   TextButton.icon(
                     key: const Key('clear_history_button'),
                     onPressed: () async {
