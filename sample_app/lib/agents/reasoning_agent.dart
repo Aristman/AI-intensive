@@ -2,6 +2,7 @@ import 'package:sample_app/agents/agent.dart' show Agent; // for stopSequence
 import 'package:sample_app/domain/llm_resolver.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/mcp_integration_service.dart';
+import 'package:sample_app/services/conversation_storage_service.dart';
 
 class ReasoningResult {
   final String text;
@@ -115,19 +116,33 @@ class ReasoningAgent {
   final McpIntegrationService _mcpIntegrationService;
   // Опциональный переопределяемый саммаризатор для юнит‑тестов (чтобы не дергать внешние API)
   final Future<String> Function(List<Map<String, String>> messages, AppSettings settings)? summarizerOverride;
+  // Хранилище истории
+  final ConversationStorageService _convStore = ConversationStorageService();
+  String? _conversationKey;
 
-  ReasoningAgent({AppSettings? baseSettings, this.extraSystemPrompt, this.summarizerOverride})
+  ReasoningAgent({AppSettings? baseSettings, this.extraSystemPrompt, this.summarizerOverride, String? conversationKey})
       : _settings = (baseSettings ?? const AppSettings()).copyWith(
           reasoningMode: true,
           // формат ответа оставляем согласно настройкам; по умолчанию пусть будет текст
         ),
-        _mcpIntegrationService = McpIntegrationService();
+        _mcpIntegrationService = McpIntegrationService() {
+    _conversationKey = conversationKey?.trim().isEmpty == true ? null : conversationKey?.trim();
+  }
 
   void updateSettings(AppSettings settings) {
     _settings = settings.copyWith(reasoningMode: true);
   }
 
   void clearHistory() => _history.clear();
+
+  /// Очистить историю и персистентное хранилище
+  Future<void> clearHistoryAndPersist() async {
+    _history.clear();
+    final key = _conversationKey;
+    if (key != null && key.isNotEmpty) {
+      await _convStore.clear(key);
+    }
+  }
 
   // Экспорт истории (без системного промпта)
   List<Map<String, String>> exportHistory() => [
@@ -148,6 +163,37 @@ class ReasoningAgent {
         _history.add(_Msg(role, content));
       }
     }
+  }
+
+  /// Установить ключ беседы и загрузить историю из SharedPreferences
+  /// Возвращает актуальную историю после загрузки
+  Future<List<Map<String, String>>> setConversationKey(String? key) async {
+    _conversationKey = key?.trim().isEmpty == true ? null : key?.trim();
+    if (_conversationKey != null) {
+      final stored = await _convStore.load(_conversationKey!);
+      if (stored.isNotEmpty) {
+        importHistory(stored);
+      }
+    }
+    return exportHistory();
+  }
+
+  Future<void> _persistIfPossible() async {
+    final key = _conversationKey;
+    if (key != null && key.isNotEmpty) {
+      await _convStore.save(key, exportHistory());
+    }
+  }
+
+  /// Добавить сообщение ассистента в историю и сохранить при наличии ключа
+  Future<void> addAssistantMessage(String content) async {
+    if (content.trim().isEmpty) return;
+    final limit = _settings.historyDepth.clamp(0, 100);
+    _history.add(_Msg('assistant', content.trim()));
+    if (_history.length > limit) {
+      _history.removeRange(0, _history.length - limit);
+    }
+    await _persistIfPossible();
   }
 
   String _buildSystemContent() {
@@ -197,6 +243,7 @@ class ReasoningAgent {
     if (_history.length > limit) {
       _history.removeRange(0, _history.length - limit);
     }
+    await _persistIfPossible();
 
     // Обогащаем контекст через MCP сервис
     final enrichedContext = await _mcpIntegrationService.enrichContext(userText, _settings);
@@ -231,6 +278,7 @@ class ReasoningAgent {
       if (_history.length > limit) {
         _history.removeRange(0, _history.length - limit);
       }
+      await _persistIfPossible();
 
       return {
         'result': ReasoningResult(

@@ -1,10 +1,6 @@
 name: Flutter CI
 
 on:
-  push:
-    paths:
-      - 'telegram_summarizer/**'
-      - '.github/workflows/flutter-ci.yml'
   pull_request:
     paths:
       - 'telegram_summarizer/**'

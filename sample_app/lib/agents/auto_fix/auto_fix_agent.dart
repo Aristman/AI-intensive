@@ -75,8 +75,14 @@ class AutoFixAgent implements IAgent {
       final path = (req.context?['path'] as String?)?.trim() ?? '';
       final mode = (req.context?['mode'] as String?)?.trim() ?? 'file';
 
+      // Базовые патчи (локальные правила без LLM)
       List<Map<String, dynamic>> patches = [];
+      // Список проблем, найденных базовым анализом
       List<Map<String, dynamic>> issues = [];
+      // Флаги управления LLM-этапом
+      final bool useLLM = (req.context?['useLLM'] as bool?) ?? false;
+      final bool includeLLMInApply =
+          (req.context?['includeLLMInApply'] as bool?) ?? false;
       try {
         final targets = <File>[];
         if (path.isNotEmpty) {
@@ -144,9 +150,9 @@ class AutoFixAgent implements IAgent {
           }
         }
 
-        // LLM-этап: всегда формируем итоговый diff из LLM
+        // LLM-этап (опционально): формируем диффы из LLM-ответа
         List<Map<String, dynamic>> llmPatches = [];
-        if (targets.isNotEmpty) {
+        if (targets.isNotEmpty && useLLM) {
           try {
             final effectiveSettings = _settings ?? const AppSettings();
             final overrideRaw =
@@ -166,6 +172,7 @@ class AutoFixAgent implements IAgent {
                 message: 'LLM ответ получен (length=${suggestions.length})',
                 meta: {
                   'preview': head,
+                  'llm_raw': suggestions,
                 },
                 progress: 0.6,
               ));
@@ -288,19 +295,26 @@ class AutoFixAgent implements IAgent {
           },
         ));
 
+        // Соберём финальные патчи для применения в зависимости от флага includeLLMInApply
+        final List<Map<String, dynamic>> finalPatches = [
+          ...patches,
+          if (includeLLMInApply) ...llmPatches,
+        ];
+
         ctrl.add(AgentEvent(
           id: 'e3',
           runId: runId,
           stage: AgentStage.pipeline_complete,
-          message: llmPatches.isEmpty
+          message: finalPatches.isEmpty
               ? 'Готово: изменений нет'
-              : 'Готово: предложено исправлений: ${llmPatches.length}',
+              : 'Готово: предложено исправлений: ${finalPatches.length}',
           progress: 1.0,
           meta: {
-            'patches': llmPatches, // только LLM-диффы
-            'summary': llmPatches.isEmpty
+            'patches': finalPatches,
+            'llm_patches': llmPatches,
+            'summary': finalPatches.isEmpty
                 ? 'Нет изменений'
-                : 'Предложено ${llmPatches.length} изменений',
+                : 'Предложено ${finalPatches.length} изменений',
           },
         ));
       } catch (e) {
