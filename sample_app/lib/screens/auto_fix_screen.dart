@@ -226,6 +226,7 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                           });
                         }
                         if (!mounted) return;
+                        if (!context.mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('Применено файлов: $count')),
                         );
@@ -241,7 +242,7 @@ class _AutoFixScreenState extends State<AutoFixScreen> {
                     : () async {
                         final count = await _patchService.rollbackLast();
                         if (mounted) setState(() {});
-                        if (!mounted) return;
+                        if (!context.mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('Откат файлов: $count')),
                         );
@@ -338,8 +339,8 @@ class _DiffPreview extends StatelessWidget {
     if (line.startsWith('+++') || line.startsWith('---')) {
       return Theme.of(context).colorScheme.surfaceContainerHighest;
     }
-    if (line.startsWith('+')) return Colors.green.withOpacity(0.08);
-    if (line.startsWith('-')) return Colors.red.withOpacity(0.08);
+    if (line.startsWith('+')) return Colors.green.withValues(alpha: 0.08);
+    if (line.startsWith('-')) return Colors.red.withValues(alpha: 0.08);
     return Colors.transparent;
   }
 

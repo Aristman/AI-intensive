@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:sample_app/agents/agent.dart' show Agent; // for stopSequence
 import 'package:sample_app/domain/llm_resolver.dart';
 import 'package:sample_app/models/app_settings.dart';
+import 'package:sample_app/services/yandex_speech_service.dart';
 import 'package:sample_app/services/mcp_integration_service.dart';
 import 'package:sample_app/services/conversation_storage_service.dart';
 
@@ -12,94 +14,6 @@ class ReasoningResult {
     required this.text,
     required this.isFinal,
   });
-}
-
-extension on ReasoningAgent {
-  // Пытаемся извлечь численное значение неопределённости из текста ответа.
-  // Поддерживаются варианты на русском и английском, а также проценты.
-  double? _extractUncertainty(String text) {
-    final patterns = <RegExp>[
-      // «Неопределённость: 0.4», «неопределенность = 0,25»
-      RegExp(r'неопредел[её]нн?ость\s*[:=]?\s*([0-9]{1,3}(?:[\.,][0-9]{1,3})?)\s*%?', caseSensitive: false),
-      // «Uncertainty: 0.4», «uncertainty = 25%»
-      RegExp(r'uncertainty\s*[:=]?\s*([0-9]{1,3}(?:[\.,][0-9]{1,3})?)\s*%?', caseSensitive: false),
-      // Процент отдельно: «40% неопределенности»
-      RegExp(r'([0-9]{1,3})\s*%\s*(?:неопредел|uncertainty)', caseSensitive: false),
-    ];
-
-    for (final re in patterns) {
-      final m = re.firstMatch(text);
-      if (m != null) {
-        var raw = m.group(1) ?? '';
-        raw = raw.replaceAll(',', '.');
-        final val = double.tryParse(raw);
-        if (val == null) continue;
-        // Если это похоже на проценты (>1), нормализуем
-        final normalized = val > 1 ? val / 100.0 : val;
-        if (normalized >= 0 && normalized <= 1) return normalized;
-      }
-    }
-    return null;
-  }
-
-  /// Принудительно сжать историю (для вызова из UI/тестов)
-  // ignore: unused_element
-  Future<void> compressHistoryNow() async {
-    await _maybeCompressHistory(force: true);
-  }
-
-  /// Сжатие истории диалога через LLM: оставляем последние N пар,
-  /// остальное сваливаем в краткую сводку с пометкой.
-  Future<void> _maybeCompressHistory({bool force = false}) async {
-    if (!_settings.enableContextCompression) return;
-    final total = _history.length;
-    if (!force && total <= _settings.compressAfterMessages) return;
-
-    // Не дублировать сжатие, если в начале уже есть сводка
-    if (_history.isNotEmpty && _history.first.content.startsWith('[Сводка контекста]')) {
-      if (!force) return;
-    }
-
-    final keepPairs = _settings.compressKeepLastTurns.clamp(0, 50);
-    final keepMsgs = (keepPairs * 2);
-    if (total <= keepMsgs + 2) return; // нет смысла сжимать
-
-    final toSummarize = _history.sublist(0, total - keepMsgs);
-    final tail = _history.sublist(total - keepMsgs);
-
-    // Готовим сообщения для саммаризации
-    final summarySystem = 'Ты — помощник, который кратко суммирует историю диалога. '
-        'Сделай русскоязычное сжатое резюме предыдущих сообщений в 5–10 маркерах: факты, цели, решения, '
-        'неотвеченные вопросы, важные параметры (например, owner/repo), принятые договорённости. '
-        'Без воды. Не добавляй никаких служебных маркеров вроде END.';
-
-    final summaryMessages = <Map<String, String>>[
-      {'role': 'system', 'content': summarySystem},
-      for (final m in toSummarize) {'role': m.role, 'content': m.content},
-    ];
-
-    String summaryText;
-    try {
-      if (summarizerOverride != null) {
-        summaryText = await summarizerOverride!(
-          [for (final m in toSummarize) {'role': m.role, 'content': m.content}],
-          _settings,
-        );
-      } else {
-        final usecase = resolveLlmUseCase(_settings);
-        summaryText = await usecase.complete(messages: summaryMessages, settings: _settings);
-      }
-    } catch (_) {
-      // В случае ошибки саммаризации — не ломаем поток, просто выходим
-      return;
-    }
-
-    final wrapped = '[Сводка контекста]\n$summaryText'.trim();
-    _history
-      ..clear()
-      ..add(_Msg('assistant', wrapped))
-      ..addAll(tail);
-  }
 }
 
 /// Рассуждающий агент с историей и политикой уточнений.
@@ -119,6 +33,8 @@ class ReasoningAgent {
   // Хранилище истории
   final ConversationStorageService _convStore = ConversationStorageService();
   String? _conversationKey;
+  // Ленивая инициализация сервиса речи только для YandexGPT
+  YandexSpeechService? _speech;
 
   ReasoningAgent({AppSettings? baseSettings, this.extraSystemPrompt, this.summarizerOverride, String? conversationKey})
       : _settings = (baseSettings ?? const AppSettings()).copyWith(
@@ -297,6 +213,112 @@ class ReasoningAgent {
         'mcp_used': false,
       };
     }
+  }
+
+  // ===== Helpers =====
+  // Пытаемся извлечь численное значение неопределённости из текста ответа.
+  // Поддерживаются варианты на русском и английском, а также проценты.
+  double? _extractUncertainty(String text) {
+    final patterns = <RegExp>[
+      RegExp(r'неопредел[её]нн?ость\s*[:=]?\s*([0-9]{1,3}(?:[\.,][0-9]{1,3})?)\s*%?', caseSensitive: false),
+      RegExp(r'uncertainty\s*[:=]?\s*([0-9]{1,3}(?:[\.,][0-9]{1,3})?)\s*%?', caseSensitive: false),
+      RegExp(r'([0-9]{1,3})\s*%\s*(?:неопредел|uncertainty)', caseSensitive: false),
+    ];
+
+    for (final re in patterns) {
+      final m = re.firstMatch(text);
+      if (m != null) {
+        var raw = m.group(1) ?? '';
+        raw = raw.replaceAll(',', '.');
+        final val = double.tryParse(raw);
+        if (val == null) continue;
+        final normalized = val > 1 ? val / 100.0 : val;
+        if (normalized >= 0 && normalized <= 1) return normalized;
+      }
+    }
+    return null;
+  }
+
+  /// Принудительно сжать историю (для вызова из UI/тестов)
+  // ignore: unused_element
+  Future<void> compressHistoryNow() async {
+    await _maybeCompressHistory(force: true);
+  }
+
+  /// Сжатие истории диалога через LLM: оставляем последние N пар,
+  /// остальное сваливаем в краткую сводку с пометкой.
+  Future<void> _maybeCompressHistory({bool force = false}) async {
+    if (!_settings.enableContextCompression) return;
+    final total = _history.length;
+    if (!force && total <= _settings.compressAfterMessages) return;
+
+    if (_history.isNotEmpty && _history.first.content.startsWith('[Сводка контекста]')) {
+      if (!force) return;
+    }
+
+    final keepPairs = _settings.compressKeepLastTurns.clamp(0, 50);
+    final keepMsgs = (keepPairs * 2);
+    if (total <= keepMsgs + 2) return;
+
+    final toSummarize = _history.sublist(0, total - keepMsgs);
+    final tail = _history.sublist(total - keepMsgs);
+
+    final summarySystem = 'Ты — помощник, который кратко суммирует историю диалога. '
+        'Сделай русскоязычное сжатое резюме предыдущих сообщений в 5–10 маркерах: факты, цели, решения, '
+        'неотвеченные вопросы, важные параметры (например, owner/repo), принятые договорённости. '
+        'Без воды. Не добавляй никаких служебных маркеров вроде END.';
+
+    final summaryMessages = <Map<String, String>>[
+      {'role': 'system', 'content': summarySystem},
+      for (final m in toSummarize) {'role': m.role, 'content': m.content},
+    ];
+
+    String summaryText;
+    try {
+      if (summarizerOverride != null) {
+        summaryText = await summarizerOverride!(
+          [for (final m in toSummarize) {'role': m.role, 'content': m.content}],
+          _settings,
+        );
+      } else {
+        final usecase = resolveLlmUseCase(_settings);
+        summaryText = await usecase.complete(messages: summaryMessages, settings: _settings);
+      }
+    } catch (_) {
+      return;
+    }
+
+    final wrapped = '[Сводка контекста]\n$summaryText'.trim();
+    _history
+      ..clear()
+      ..add(_Msg('assistant', wrapped))
+      ..addAll(tail);
+  }
+
+  // ===== STT/TTS только для YandexGPT =====
+  bool get _isYandex => _settings.selectedNetwork == NeuralNetwork.yandexgpt;
+
+  YandexSpeechService _ensureSpeech() {
+    _speech ??= YandexSpeechService();
+    return _speech!;
+  }
+
+  /// Распознавание речи из аудиофайла (wav/ogg). Возвращает распознанный текст.
+  Future<String> transcribeAudio(String filePath, {String contentType = 'audio/wav'}) async {
+    if (!_isYandex) {
+      throw Exception('Распознавание речи доступно только для YandexGPT');
+    }
+    return _ensureSpeech().recognizeSpeech(filePath, contentType: contentType);
+  }
+
+  /// Синтез речи: возвращает путь к аудиофайлу с озвученным текстом.
+  Future<String> synthesizeSpeechAudio(String text, {String voice = 'alena'}) async {
+    if (!_isYandex) {
+      throw Exception('Синтез речи доступен только для YandexGPT');
+    }
+    // На Windows предпочтительно использовать WAV (lpcm), т.к. системные декодеры могут не поддерживать OGG/Opus
+    final ttsFormat = Platform.isWindows ? 'lpcm' : 'oggopus';
+    return _ensureSpeech().synthesizeSpeech(text, voice: voice, format: ttsFormat);
   }
 }
 

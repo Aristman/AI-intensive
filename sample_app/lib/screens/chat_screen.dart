@@ -10,6 +10,9 @@ import 'package:sample_app/models/message.dart';
 import 'package:sample_app/screens/settings_screen.dart';
 import 'package:sample_app/services/settings_service.dart';
 import 'package:sample_app/widgets/safe_send_text_field.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:record/record.dart';
+import 'package:path_provider/path_provider.dart';
 
 class ChatScreen extends StatefulWidget {
   final String title;
@@ -34,6 +37,11 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isUsingMcp = false;
   Timer? _mcpIndicatorTimer;
   static const String _conversationKey = 'chat_screen';
+  // Audio
+  final AudioRecorder _recorder = AudioRecorder();
+  bool _isRecording = false;
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  bool _isTtsLoading = false;
 
   bool get _useReasoning => widget.reasoningOverride == true;
 
@@ -41,6 +49,79 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _loadSettings();
+  }
+
+  bool get _isYandexReasoning =>
+      _useReasoning && _appSettings.selectedNetwork == NeuralNetwork.yandexgpt;
+
+  Future<void> _toggleRecording() async {
+    if (!_isYandexReasoning) return;
+    try {
+      if (!_isRecording) {
+        final hasPerm = await _recorder.hasPermission();
+        if (!hasPerm) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Нет разрешения на запись аудио')),
+          );
+          return;
+        }
+        final dir = await getTemporaryDirectory();
+        final path = '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.wav';
+        await _recorder.start(
+          RecordConfig(
+            encoder: AudioEncoder.wav,
+            bitRate: 128000,
+            sampleRate: 16000,
+          ),
+          path: path,
+        );
+        setState(() => _isRecording = true);
+      } else {
+        final path = await _recorder.stop();
+        setState(() => _isRecording = false);
+        if (path == null) return;
+        // Распознаем и отправляем как обычное сообщение
+        setState(() => _isLoading = true);
+        try {
+          final recognized = await _reasoningAgent!
+              .transcribeAudio(path, contentType: 'audio/wav');
+          setState(() {
+            _messages.add(Message(text: recognized, isUser: true));
+          });
+          _scrollToBottom();
+          await _handleSend(recognized);
+        } catch (e) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Ошибка распознавания: $e')),
+          );
+          setState(() => _isLoading = false);
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Аудиозапись: $e')),
+      );
+    }
+  }
+
+  Future<void> _playTts(Message message) async {
+    if (!_isYandexReasoning) return;
+    try {
+      setState(() => _isTtsLoading = true);
+      final path = await _reasoningAgent!.synthesizeSpeechAudio(message.text);
+      await _audioPlayer.stop();
+      await _audioPlayer.play(DeviceFileSource(path));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка TTS: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _isTtsLoading = false);
+    }
   }
 
   Future<void> _loadSettings() async {
@@ -62,6 +143,45 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _isLoadingSettings = false;
       });
+    }
+  }
+
+  // Выделено, чтобы переиспользовать для распознанного текста
+  Future<void> _handleSend(String text) async {
+    try {
+      if (_useReasoning) {
+        final res = await _reasoningAgent!.ask(text);
+        setState(() {
+          _isLoading = false;
+          _isUsingMcp = res['mcp_used'] ?? false;
+          final result = res['result'] as ReasoningResult;
+          _messages.add(Message(text: result.text, isUser: false, isFinal: result.isFinal));
+        });
+      } else {
+        final answer = await _simpleAgent!.ask(text);
+        setState(() {
+          _isLoading = false;
+          _isUsingMcp = answer['mcp_used'] ?? false;
+          _messages.add(Message(text: answer['answer'] as String, isUser: false));
+        });
+      }
+      if (_isUsingMcp) {
+        _mcpIndicatorTimer = Timer(const Duration(seconds: 5), () {
+          if (mounted) {
+            setState(() {
+              _isUsingMcp = false;
+            });
+          }
+        });
+      }
+      _scrollToBottom();
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _isUsingMcp = false;
+        _messages.add(Message(text: 'Ошибка: $e', isUser: false));
+      });
+      _scrollToBottom();
     }
   }
 
@@ -291,6 +411,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollController.dispose();
     _mcpIndicatorTimer?.cancel();
     // SimpleAgent/ReasoningAgent не требуют dispose
+    _audioPlayer.dispose();
+    _recorder.dispose();
     super.dispose();
   }
 
@@ -320,14 +442,13 @@ class _ChatScreenState extends State<ChatScreen> {
                     onPressed: () async {
                       if (_reasoningAgent == null) return;
                       await _reasoningAgent!.clearHistoryAndPersist();
-                      if (mounted) {
-                        setState(() {
-                          _messages.clear();
-                        });
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('История очищена')),
-                        );
-                      }
+                      if (!mounted) return;
+                      setState(() {
+                        _messages.clear();
+                      });
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('История очищена')),
+                      );
                     },
                     icon: const Icon(Icons.delete_sweep_outlined, size: 18),
                     label: const Text('Очистить историю'),
@@ -388,6 +509,24 @@ class _ChatScreenState extends State<ChatScreen> {
                                   : Theme.of(context).colorScheme.onSurfaceVariant,
                             ),
                           ),
+                        if (!message.isUser && _isYandexReasoning)
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              if (_isTtsLoading)
+                                const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              else
+                                IconButton(
+                                  icon: const Icon(Icons.volume_up, size: 20),
+                                  tooltip: 'Озвучить ответ',
+                                  onPressed: () => _playTts(message),
+                                ),
+                            ],
+                          ),
                       ],
                     ),
                   ),
@@ -410,6 +549,16 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             child: Row(
               children: [
+                if (_isYandexReasoning)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4.0),
+                    child: IconButton(
+                      icon: Icon(_isRecording ? Icons.stop_circle_outlined : Icons.mic),
+                      color: _isRecording ? Colors.red : Theme.of(context).colorScheme.primary,
+                      tooltip: _isRecording ? 'Остановить запись' : 'Записать аудио',
+                      onPressed: _toggleRecording,
+                    ),
+                  ),
                 Expanded(
                   child: SafeSendTextField(
                     controller: _textController,
