@@ -1,0 +1,24 @@
+{
+  "query": {
+    "searchType": "SEARCH_TYPE_RU",
+    "queryText": "site:yandex.ru тест",
+    "familyMode": "FAMILY_MODE_MODERATE",
+    "page": 0,
+    "fixTypoMode": "FIX_TYPO_MODE_ON"
+  },
+  "sortSpec": {
+    "sortMode": "SORT_MODE_BY_RELEVANCE",
+    "sortOrder": "SORT_ORDER_DESC"
+  },
+  "groupSpec": {
+    "groupMode": "GROUP_MODE_FLAT",
+    "groupsOnPage": 10,
+    "docsInGroup": 1
+  },
+  "maxPassages": 3,
+  "region": "213",
+  "l10n": "LOCALIZATION_RU",
+  "folderId": "b1golisqrg02h9b6u39d",
+  "responseFormat": "FORMAT_HTML",
+  "userAgent": "yandex-search-mcp-tests/0.1.0"
+}
