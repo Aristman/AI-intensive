@@ -130,6 +130,8 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
     if (_history.length > historyDepth) {
       _history.removeRange(0, _history.length - historyDepth);
     }
+    // Попробовать сжать историю, если превышены лимиты
+    await _maybeCompressHistory();
     await _store.save(conversationKey, _history);
 
     // 2. Анализ/Планирование
@@ -460,6 +462,78 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
     final re = RegExp(r"```(?:json)?\n([\s\S]*?)\n```", multiLine: true);
     final m = re.firstMatch(s);
     return m?.group(1)?.trim();
+  }
+
+  // ===== Context compression via LLM =====
+  Future<void> _maybeCompressHistory() async {
+    if (!_settings.enableContextCompression) return;
+    if (_history.length < _settings.compressAfterMessages) return;
+
+    // Сохраняем последние K пар реплик (user+assistant)
+    final keepPairs = max(0, _settings.compressKeepLastTurns);
+    final keepMsgs = min(_history.length, keepPairs * 2);
+    final headLen = _history.length - keepMsgs;
+    if (headLen <= 0) return;
+
+    final head = _history.sublist(0, headLen);
+    final tail = _history.sublist(headLen);
+
+    // Формируем компактное представление головы
+    final maxTokensForContext = (_modelMaxTokens() * 0.6).floor();
+    final charBudget = max(1000, maxTokensForContext * 4); // грубая оценка 1 токен ≈ 4 символа
+    final sb = StringBuffer();
+    int used = 0;
+    for (final m in head) {
+      final role = (m['role'] ?? 'user');
+      final content = (m['content'] ?? '').toString();
+      final line = '$role: ${_truncate(content, 600)}\n';
+      if (used + line.length > charBudget) break;
+      sb.write(line);
+      used += line.length;
+    }
+
+    final usecase = resolveLlmUseCase(_settings);
+    final sys = '''Ты — компрессор контекста диалога. Сожми историю в краткую фактологическую выжимку для продолжения работы. Сохрани:
+— цель пользователя,
+— ключевые факты/решения/ссылки,
+— ограничения и предпочтения,
+— открытые вопросы.
+Верни чистый текст на русском без преамбулы.''';
+    final messages = [
+      {'role': 'system', 'content': sys},
+      {'role': 'user', 'content': 'История (усечённая):\n$sb'}
+    ];
+    String summary;
+    try {
+      summary = await usecase.complete(messages: messages, settings: _settings);
+    } catch (_) {
+      // В случае сбоя — не модифицируем историю
+      return;
+    }
+    final fenced = _extractFencedJson(summary);
+    final clean = (fenced ?? summary).trim();
+
+    // Заменяем голову одним системным сообщением
+    _history
+      ..clear()
+      ..add({'role': 'system', 'content': 'Сжатая память:\n$clean'})
+      ..addAll(tail);
+
+    // Дополнительная подрезка под historyDepth, если нужно
+    if (_history.length > historyDepth) {
+      _history.removeRange(0, _history.length - historyDepth);
+    }
+  }
+
+  int _modelMaxTokens() {
+    switch (_settings.selectedNetwork) {
+      case NeuralNetwork.yandexgpt:
+        return _settings.yandexMaxTokens;
+      case NeuralNetwork.deepseek:
+        return _settings.deepseekMaxTokens;
+      case NeuralNetwork.tinylama:
+        return _settings.tinylamaMaxTokens;
+    }
   }
 
   // ===== Compact helpers =====
