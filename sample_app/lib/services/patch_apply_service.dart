@@ -46,7 +46,10 @@ class PatchApplyService {
               if (llmResult != null) {
                 newContent = llmResult;
               }
-            } catch (e) {}
+            } catch (e) {
+              // Intentionally ignored: if LLM-based diff application fails,
+              // we leave `newContent` as null so the patch is skipped.
+            }
           }
         }
         if (newContent == null) continue;
@@ -78,7 +81,9 @@ class PatchApplyService {
           final original = entry.value.originalContent;
           try {
             await File(path).writeAsString(original);
-          } catch (_) {}
+          } catch (_) {
+            // Best-effort restore. Ignore failures during rollback on error.
+          }
         }
       }
       rethrow;
@@ -97,7 +102,9 @@ class PatchApplyService {
       try {
         await File(path).writeAsString(original);
         restored++;
-      } catch (_) {}
+      } catch (_) {
+        // Best-effort restore for rollback; ignore individual file failures.
+      }
       // удалим .bak
       try {
         final bakPath = entry.value.bakPath;
@@ -107,7 +114,9 @@ class PatchApplyService {
             await bak.delete();
           }
         }
-      } catch (_) {}
+      } catch (_) {
+        // Best-effort cleanup of .bak file; safe to ignore.
+      }
     }
     _lastBackup = null;
     return restored;

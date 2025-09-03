@@ -46,6 +46,27 @@ samples, guidance on mobile development, and a full API reference.
 - Реализация и утилиты: `sample_app/lib/agents/code_ops_builder_agent.dart`, `sample_app/lib/utils/code_utils.dart`.
 - Тесты: `sample_app/test/code_ops_builder_agent_yandex_fallback_test.dart` (проверка генерации кода/тестов и запуска JUnit с fallback).
 
+## Голосовые функции (Yandex SpeechKit)
+
+В приложении реализована поддержка речевых функций для провайдера YandexGPT:
+
+- STT (распознавание речи): запись аудио в WAV 16kHz с использованием `record` v5 (`AudioRecorder` + `RecordConfig`).
+- TTS (синтез речи): генерация аудио, сохранение во временный файл и воспроизведение через `audioplayers`.
+- UI: кнопки записи и воспроизведения отображаются только при включённом «reasoning» режиме и выбранном провайдере `YandexGPT`.
+- Права: Android — `RECORD_AUDIO` в `AndroidManifest.xml`; iOS — `NSMicrophoneUsageDescription` в `Info.plist`.
+- Переменные окружения (`assets/.env`): `YANDEX_IAM_TOKEN` или `YC_IAM_TOKEN`, `YANDEX_API_KEY` (fallback), `YANDEX_FOLDER_ID`.
+- Заметка: поддержка OGG формата отложена и будет добавлена позже (см. `ROADMAP.md`).
+
+Быстрый старт по голосу:
+1) Убедитесь, что заданы переменные окружения и выданы права на микрофон.
+2) В настройках выберите провайдера `YandexGPT` и включите reasoning‑режим.
+3) На экране чата нажмите кнопку записи, продиктуйте реплику → произойдёт STT; ответ ассистента можно озвучить через TTS.
+
+Ключевые файлы:
+- Агент: `lib/agents/reasoning_agent.dart` (методы STT/TTS и сжатие истории).
+- Сервис: `lib/services/yandex_speech_service.dart` (REST вызовы SpeechKit, IAM/API‑Key аутентификация).
+- UI: `lib/screens/chat_screen.dart` (кнопки записи/воспроизведения, интеграция `record`/`audioplayers`).
+
 ## MCP GitHub интеграция
 
 Примечание: cейчас MCP сервер расположен на верхнем уровне проекта в папке `mcp_server/` (раньше был в `sample_app/mcp_server/`).
@@ -53,6 +74,7 @@ samples, guidance on mobile development, and a full API reference.
 Этот проект включает поддержку работы с GitHub через внешний MCP сервер (Node.js) по WebSocket JSON-RPC. Это позволяет безопасно выносить GitHub‑токен на сервер и вызывать инструменты (`get_repo`, `search_repos`, `create_issue`) из Flutter‑приложения.
 
 ### 1) Установка и запуск MCP сервера
+
 - Код сервера: `mcp_server/` (см. подробный `README.md` в этой папке)
 - Шаги:
   1. Установите зависимости:
