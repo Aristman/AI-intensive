@@ -85,3 +85,53 @@ test('REST: missing folderId -> config error', async () => {
   );
   assert.equal(fetchCalled, false, 'fetch must not be called');
 });
+
+// 4) FORMAT_XML: проверяем декодирование Base64 и нормализацию XML
+test('REST: FORMAT_XML decoding and normalization', async () => {
+  config.env.useHttpMode = true;
+  config.env.baseUrl = 'https://searchapi.api.cloud.yandex.net/v2/web/search';
+  config.env.folderId = 'test-folder';
+  config.env.apiKey = 'test-api-key';
+  config.env.iamToken = '';
+
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+  <yandexsearch>
+    <response>
+      <results>
+        <grouping>
+          <group>
+            <doc count="1">
+              <url>https://example.org/page</url>
+              <title>Example Org Title</title>
+              <snippet>Some snippet text</snippet>
+            </doc>
+          </group>
+        </grouping>
+      </results>
+    </response>
+  </yandexsearch>`;
+  const raw = Buffer.from(xml, 'base64');
+  // Intentionally ensure we pass a base64 string
+  const rawB64 = Buffer.from(xml).toString('base64');
+
+  global.fetch = async (_url, init) => {
+    const req = JSON.parse(init.body);
+    assert.equal(req.responseFormat, 'FORMAT_XML');
+    const body = JSON.stringify({ rawData: rawB64 });
+    return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  const res = await callTool('yandex_search_web', {
+    queryText: 'xml test',
+    responseFormat: 'FORMAT_XML',
+  });
+
+  const jsonPart = res.content.find(x => x.type === 'json');
+  assert.ok(jsonPart, 'json part present');
+  assert.equal(jsonPart.json.responseFormat, 'FORMAT_XML');
+  assert.ok(Array.isArray(jsonPart.json.normalizedResults));
+  assert.ok(jsonPart.json.normalizedResults.length >= 1, 'normalized results not empty');
+  const first = jsonPart.json.normalizedResults[0];
+  assert.equal(first.url, 'https://example.org/page');
+  assert.ok(first.title.includes('Example'));
+});

@@ -63,7 +63,7 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
 
   @override
   Stream<AgentEvent>? start(AgentRequest req) {
-    return _runPipeline(req).asStream().expand((events) => events);
+    return _runPipeline(req);
   }
 
   @override
@@ -104,13 +104,14 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
   }
 
   // ===== Internal pipeline =====
-  Future<List<AgentEvent>> _runPipeline(AgentRequest req) async {
+  Stream<AgentEvent> _runPipeline(AgentRequest req) async* {
     final runId = DateTime.now().millisecondsSinceEpoch.toString();
-    final events = <AgentEvent>[];
+    var eventCount = 0;
 
-    void emit(AgentStage stage, String msg, {double? progress, int? step, int? total, Map<String, dynamic>? meta}) {
-      events.add(AgentEvent(
-        id: '${stage.name}-${events.length + 1}',
+    AgentEvent ev(AgentStage stage, String msg, {double? progress, int? step, int? total, Map<String, dynamic>? meta}) {
+      eventCount += 1;
+      return AgentEvent(
+        id: '${stage.name}-$eventCount',
         runId: runId,
         stage: stage,
         message: msg,
@@ -118,10 +119,11 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
         stepIndex: step,
         totalSteps: total,
         meta: meta,
-      ));
+      );
     }
 
-    emit(AgentStage.pipeline_start, 'Старт конвейера', progress: 0.0);
+    // Старт
+    yield ev(AgentStage.pipeline_start, 'Старт конвейера', progress: 0.0);
 
     // 1. Прием/история
     _history.add({'role': 'user', 'content': req.input});
@@ -131,16 +133,30 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
     await _store.save(conversationKey, _history);
 
     // 2. Анализ/Планирование
-    emit(AgentStage.analysis_started, '🤔 Анализ запроса', progress: 0.1, step: 1, total: 5);
+    yield ev(AgentStage.analysis_started, '🤔 Анализ запроса', progress: 0.1, step: 1, total: 5);
     final plan = await _analyzeAndPlan(req);
-    emit(AgentStage.analysis_result, 'Сформирован план из ${plan.steps.length} шаг(ов) и инструменты: ${plan.tools.join(', ')}', progress: 0.2, step: 1, total: 5, meta: plan.toJson());
+    yield ev(
+      AgentStage.analysis_result,
+      'Сформирован план из ${plan.steps.length} шаг(ов) и инструменты: ${plan.tools.join(', ')}',
+      progress: 0.2,
+      step: 1,
+      total: 5,
+      meta: plan.toJson(),
+    );
 
     // 3. Исполнение + 4. Валидация
     final validated = <Map<String, dynamic>>[];
     var mcpUsed = false;
     for (var i = 0; i < plan.steps.length; i++) {
       final s = plan.steps[i];
-      emit(AgentStage.docker_exec_started, '🔍 Исполнение шага ${i + 1}: ${s['title'] ?? s['tool']}', progress: 0.2 + (0.6 * i / max(1, plan.steps.length)), step: 2, total: 5, meta: s);
+      yield ev(
+        AgentStage.docker_exec_started,
+        '🔍 Исполнение шага ${i + 1}: ${s['title'] ?? s['tool']}',
+        progress: 0.2 + (0.6 * i / max(1, plan.steps.length)),
+        step: 2,
+        total: 5,
+        meta: s,
+      );
       Map<String, dynamic> toolRes = {};
       try {
         final args = _normalizeToolArgs(s['tool'] as String, s['input']);
@@ -150,27 +166,33 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
         toolRes = {'error': e.toString()};
       }
 
-      emit(AgentStage.docker_exec_result, 'Результат шага ${i + 1} получен', meta: {'step': s, 'result': toolRes});
+      yield ev(AgentStage.docker_exec_result, 'Результат шага ${i + 1} получен', meta: {'step': s, 'result': toolRes});
 
       // Верификация
-      emit(AgentStage.refine_tests_started, '✅ Проверка шага ${i + 1}', meta: {'step': s});
+      yield ev(AgentStage.refine_tests_started, '✅ Проверка шага ${i + 1}', meta: {'step': s});
       final v = await _validateStep(req, s, toolRes);
-      emit(AgentStage.refine_tests_result, v['isRelevant'] == true ? 'Шаг ${i + 1}: валиден (conf=${v['confidence']})' : 'Шаг ${i + 1}: невалиден — будет пропущен', meta: v);
+      yield ev(
+        AgentStage.refine_tests_result,
+        v['isRelevant'] == true
+            ? 'Шаг ${i + 1}: валиден (conf=${v['confidence']})'
+            : 'Шаг ${i + 1}: невалиден — будет пропущен',
+        meta: v,
+      );
       if (v['isRelevant'] == true) {
         validated.add({'step': s, 'result': toolRes, 'validation': v});
       }
     }
 
     // 5. Синтез
-    emit(AgentStage.test_generation_started, '📝 Синтез ответа', progress: 0.85, step: 4, total: 5);
+    yield ev(AgentStage.test_generation_started, '📝 Синтез ответа', progress: 0.85, step: 4, total: 5);
     final finalText = await _synthesize(req, plan, validated);
 
     // 6. Рефлексия
-    emit(AgentStage.code_generation_started, '♻️ Рефлексия', progress: 0.95, step: 5, total: 5);
+    yield ev(AgentStage.code_generation_started, '♻️ Рефлексия', progress: 0.95, step: 5, total: 5);
     final reflection = await _reflect(req, finalText, plan, validated);
 
     // Финал
-    emit(AgentStage.pipeline_complete, 'Готово', progress: 1.0, meta: {
+    yield ev(AgentStage.pipeline_complete, 'Готово', progress: 1.0, meta: {
       'finalText': finalText,
       'reflection': reflection,
       'mcpUsed': mcpUsed,
@@ -182,8 +204,6 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
       _history.removeRange(0, _history.length - historyDepth);
     }
     await _store.save(conversationKey, _history);
-
-    return events;
   }
 
   // ===== Steps impl =====
@@ -221,9 +241,17 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
   Future<Map<String, dynamic>> _validateStep(AgentRequest req, Map<String, dynamic> step, Map<String, dynamic> toolRes) async {
     final usecase = resolveLlmUseCase(_settings);
     final sys = 'Ты — валидатор фактов. На вход: исходный запрос пользователя, описание шага и результат инструмента. Верни СТРОГИЙ JSON: {"isRelevant": bool, "confidence": number, "reason": string}.';
+    final stepInfo = {
+      'title': step['title'] ?? step['tool'],
+      'tool': step['tool'],
+    };
+    final compact = _compactResults(toolRes);
     final messages = [
       {'role': 'system', 'content': sys},
-      {'role': 'user', 'content': 'Запрос: ${req.input}\nШаг: ${step}\nРезультат: ${toolRes}'}
+      {
+        'role': 'user',
+        'content': 'Запрос: ${req.input}\nШаг: ${jsonEncode(stepInfo)}\nРезультат (топ ${compact.length}): ${jsonEncode(compact)}',
+      }
     ];
     try {
       final raw = await usecase.complete(messages: messages, settings: _settings);
@@ -236,9 +264,30 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
   Future<String> _synthesize(AgentRequest req, _Plan plan, List<Map<String, dynamic>> validated) async {
     final usecase = resolveLlmUseCase(_settings);
     final sys = 'Ты — синтезатор ответа. На вход: исходный запрос, итоговый план и проверенные данные. Верни краткий структурированный ответ на русском. Используй Markdown (заголовки, списки, ссылки).';
+    final compactPlan = {
+      'steps': plan.steps
+          .map((s) => {
+                'title': s['title'] ?? s['tool'],
+                'tool': s['tool'],
+              })
+          .toList(),
+      'tools': plan.tools,
+    };
+    final compactValidated = validated
+        .map((e) => {
+              'step': {
+                'title': e['step']?['title'] ?? e['step']?['tool'],
+                'tool': e['step']?['tool'],
+              },
+              'results': _compactResults(e['result'] as Map<String, dynamic>?),
+            })
+        .toList();
     final messages = [
       {'role': 'system', 'content': sys},
-      {'role': 'user', 'content': 'Запрос: ${req.input}\nПлан: ${plan.toJson()}\nДанные: ${validated}'}
+      {
+        'role': 'user',
+        'content': 'Запрос: ${req.input}\nПлан: ${jsonEncode(compactPlan)}\nДанные: ${jsonEncode(compactValidated)}'
+      }
     ];
     try {
       return await usecase.complete(messages: messages, settings: _settings);
@@ -290,7 +339,42 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
         if (args.containsKey('queryText')) 'queryText': args['queryText'],
         if (args.containsKey('query')) 'query': args['query'],
       }, timeout: timeout ?? const Duration(seconds: 15));
-      return {'result': result};
+      // Extract compact normalized results only (avoid huge decodedPreview/raw HTML)
+      final contents = (result is Map<String, dynamic>) ? (result['content'] as List?) : null;
+      List<Map<String, dynamic>> normalized = [];
+      String? responseFormat;
+      if (contents != null) {
+        for (final c in contents) {
+          if (c is Map && c['type'] == 'json' && c['json'] is Map) {
+            final j = c['json'] as Map;
+            responseFormat = (j['responseFormat'] as String?)?.toString();
+            final items = j['normalizedResults'];
+            if (items is List) {
+              for (final it in items) {
+                if (it is Map) {
+                  final title = (it['title'] ?? '').toString();
+                  final urlStr = (it['url'] ?? '').toString();
+                  final snippet = _truncate((it['snippet'] ?? '').toString(), 220);
+                  if (title.isNotEmpty || urlStr.isNotEmpty || snippet.isNotEmpty) {
+                    normalized.add({'title': title, 'url': urlStr, 'snippet': snippet});
+                  }
+                }
+              }
+            }
+            break; // use first json part
+          }
+        }
+      }
+      final desired = _parseDesiredLimit(args, defaultLimit: 5);
+      if (normalized.length > desired) normalized = normalized.sublist(0, desired);
+      return {
+        'source': 'yandex',
+        'format': responseFormat,
+        'query': args['queryText'] ?? args['query'],
+        'results': normalized,
+        'count': normalized.length,
+        'limitApplied': desired,
+      };
     } catch (e) {
       return {'error': e.toString()};
     } finally {
@@ -376,6 +460,44 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
     final re = RegExp(r"```(?:json)?\n([\s\S]*?)\n```", multiLine: true);
     final m = re.firstMatch(s);
     return m?.group(1)?.trim();
+  }
+
+  // ===== Compact helpers =====
+  int _parseDesiredLimit(Map<String, dynamic> args, {int defaultLimit = 5}) {
+    int? take;
+    for (final key in const ['limit', 'top', 'count', 'n', 'topN']) {
+      final v = args[key];
+      if (v == null) continue;
+      if (v is int) { take = v; break; }
+      final s = v.toString();
+      final parsed = int.tryParse(s);
+      if (parsed != null) { take = parsed; break; }
+    }
+    take ??= defaultLimit;
+    if (take < 1) take = 1;
+    if (take > 20) take = 20; // safety cap
+    return take;
+  }
+  List<Map<String, String>> _compactResults(Map<String, dynamic>? toolRes) {
+    final list = <Map<String, String>>[];
+    if (toolRes == null) return list;
+    final results = toolRes['results'];
+    if (results is List) {
+      for (final r in results.take(5)) {
+        if (r is Map) {
+          final title = (r['title'] ?? '').toString();
+          final url = (r['url'] ?? '').toString();
+          final snippet = _truncate((r['snippet'] ?? '').toString(), 220);
+          list.add({'title': title, 'url': url, 'snippet': snippet});
+        }
+      }
+    }
+    return list;
+  }
+
+  String _truncate(String s, int maxLen) {
+    if (s.length <= maxLen) return s;
+    return s.substring(0, maxLen) + '…';
   }
 }
 

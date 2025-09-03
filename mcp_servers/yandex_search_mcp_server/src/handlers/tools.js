@@ -45,6 +45,30 @@ export async function listTools() {
   };
 }
 
+function normalizeResultsFromXml(xml) {
+  const out = [];
+  if (!xml || typeof xml !== 'string') return out;
+  try {
+    // Very naive XML extraction without external deps
+    const itemRe = /<item[\s\S]*?>[\s\S]*?<\/item>/gi;
+    const urlRe = /<url>([\s\S]*?)<\/url>/i;
+    const titleRe = /<title>([\s\S]*?)<\/title>/i;
+    const linkRe = /<link>([\s\S]*?)<\/link>/i;
+    const snippetRe = /<snippet>([\s\S]*?)<\/snippet>/i;
+    const items = xml.match(itemRe) || [xml];
+    for (const block of items) {
+      const url = (block.match(urlRe)?.[1] || block.match(linkRe)?.[1] || '').trim();
+      const title = collapseWhitespace(decodeEntities(stripTags((block.match(titleRe)?.[1] || '').toString())));
+      const snippet = collapseWhitespace(decodeEntities(stripTags((block.match(snippetRe)?.[1] || '').toString())));
+      if (isRealHttpUrl(url) && (title || snippet)) out.push({ title, url, snippet });
+      if (out.length >= 10) break;
+    }
+  } catch (e) {
+    console.error('[normalizeResultsFromXml] parse error:', e?.message || e);
+  }
+  return out;
+}
+
 // Call a tool by name (MCP tools/call)
 export async function callTool(name, args = {}) {
   switch (name) {
@@ -126,6 +150,8 @@ async function yandexSearchWeb(args) {
       return json;
     }, { attempts: 3, baseDelayMs: 400, maxDelayMs: 3000 });
 
+    // Decode Base64 depending on requested format
+    const respFormat = (body.responseFormat || 'FORMAT_HTML');
     let decoded = null;
     try {
       const b64 = httpResult?.rawData;
@@ -136,11 +162,15 @@ async function yandexSearchWeb(args) {
       console.error('[yandex_search_web][decode_error]', e?.message || e);
     }
 
-    const textSummary = decoded ? 'Search raw data decoded (truncated to 500 chars):\n' + truncate(decoded, 500) : 'No rawData in response';
+    const isXml = respFormat === 'FORMAT_XML';
+    const textSummary = decoded
+      ? `${isXml ? 'XML' : 'HTML'} decoded (truncated to 500 chars):\n` + truncate(decoded, 500)
+      : 'No rawData in response';
+    const normalized = isXml ? normalizeResultsFromXml(decoded) : normalizeResults(httpResult, decoded);
     return {
       content: [
         { type: 'text', text: textSummary },
-        { type: 'json', json: { request: body, response: httpResult, decodedPreview: decoded ? truncate(decoded, 2000) : null, normalizedResults: normalizeResults(httpResult, decoded) } },
+        { type: 'json', json: { request: body, response: httpResult, decodedPreview: decoded ? truncate(decoded, 2000) : null, normalizedResults: normalized, responseFormat: respFormat } },
       ],
     };
   }
@@ -176,6 +206,8 @@ async function yandexSearchWeb(args) {
     return parsed;
   }, { attempts: 3, baseDelayMs: 400, maxDelayMs: 3000 });
 
+  // Decode Base64 depending on requested format
+  const respFormat = (body.responseFormat || 'FORMAT_HTML');
   let decoded = null;
   try {
     const b64 = grpcResult?.rawData;
@@ -186,11 +218,15 @@ async function yandexSearchWeb(args) {
     console.error('[yandex_search_web][decode_error]', e?.message || e);
   }
 
-  const textSummary = decoded ? 'Search raw data decoded (truncated to 500 chars):\n' + truncate(decoded, 500) : 'No rawData in response';
+  const isXml = respFormat === 'FORMAT_XML';
+  const textSummary = decoded
+    ? `${isXml ? 'XML' : 'HTML'} decoded (truncated to 500 chars):\n` + truncate(decoded, 500)
+    : 'No rawData in response';
+  const normalized = isXml ? normalizeResultsFromXml(decoded) : normalizeResults(grpcResult, decoded);
   return {
     content: [
       { type: 'text', text: textSummary },
-      { type: 'json', json: { request: body, response: grpcResult, decodedPreview: decoded ? truncate(decoded, 2000) : null, normalizedResults: normalizeResults(grpcResult, decoded) } },
+      { type: 'json', json: { request: body, response: grpcResult, decodedPreview: decoded ? truncate(decoded, 2000) : null, normalizedResults: normalized, responseFormat: respFormat } },
     ],
   };
 }
