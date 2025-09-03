@@ -10,14 +10,16 @@ export const config = {
   env: {
     apiKey: process.env.YANDEX_API_KEY || '',
     folderId: process.env.YANDEX_FOLDER_ID || '',
-    baseUrl: process.env.YANDEX_SEARCH_BASE_URL || 'https://api.search.yandexcloud.net/v2/web/search',
+    baseUrl: process.env.YANDEX_SEARCH_BASE_URL || 'https://searchapi.api.cloud.yandex.net/v2/web/search',
     requestTimeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || 15000),
+    // HTTP mode toggle (REST instead of grpcurl). 'true' to enable
+    useHttpMode: String(process.env.USE_HTTP_MODE || '').toLowerCase() === 'true',
     // gRPC settings
     iamToken: process.env.YANDEX_IAM_TOKEN || '',
     oauthToken: process.env.YANDEX_OAUTH_TOKEN || '',
     grpcEndpoint: process.env.YANDEX_SEARCH_GRPC_ENDPOINT || 'searchapi.api.cloud.yandex.net:443',
     grpcMethod: process.env.YANDEX_SEARCH_GRPC_METHOD || 'yandex.cloud.searchapi.v2.WebSearchService/Search',
-    grpcurlPath: process.env.GRPCURL_PATH || 'grpcurl',
+    grpcurlPath: process.env.GRPCURL_PATH || 'D:/projects',
     _iamTokenExpiresAt: null, // ISO string or null
   },
 };

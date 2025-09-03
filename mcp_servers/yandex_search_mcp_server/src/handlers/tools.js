@@ -97,7 +97,55 @@ async function yandexSearchWeb(args) {
   // Remove undefined fields to keep payload clean
   pruneUndefined(body);
 
-  // Ensure IAM token (may be obtained via OAuth exchange)
+  // If HTTP mode enabled, call REST API; otherwise use grpcurl
+  if (config.env.useHttpMode) {
+    // Ensure we have credentials and folder
+    if (!config.env.folderId) {
+      const msg = 'Server config error: требуется YANDEX_FOLDER_ID для REST режима';
+      console.error('[yandex_search_web][http] ', msg);
+      const e = new Error(msg);
+      e.code = -32000;
+      throw e;
+    }
+    // If API key не указан, пробуем получить IAM токен из OAuth (или проверяем существующий)
+    if (!config.env.apiKey) {
+      await ensureIamToken();
+      if (!config.env.iamToken) {
+        const msg = 'Server config error: требуется один из: YANDEX_API_KEY или YANDEX_IAM_TOKEN (или YANDEX_OAUTH_TOKEN для обмена)';
+        console.error('[yandex_search_web][http] ', msg);
+        const e = new Error(msg);
+        e.code = -32000;
+        throw e;
+      }
+    }
+    const httpResult = await withRetries(async () => {
+      console.error('[yandex_search_web][http.request]', JSON.stringify({ url: config.env.baseUrl, headers: { Authorization: '***', 'x-folder-id': '[set]' }, body }));
+      const { json } = await callHttpSearch(body, {
+        timeoutMs: config.env.requestTimeoutMs,
+      });
+      return json;
+    }, { attempts: 3, baseDelayMs: 400, maxDelayMs: 3000 });
+
+    let decoded = null;
+    try {
+      const b64 = httpResult?.rawData;
+      if (typeof b64 === 'string' && b64.length > 0) {
+        decoded = Buffer.from(b64, 'base64').toString('utf8');
+      }
+    } catch (e) {
+      console.error('[yandex_search_web][decode_error]', e?.message || e);
+    }
+
+    const textSummary = decoded ? 'Search raw data decoded (truncated to 500 chars):\n' + truncate(decoded, 500) : 'No rawData in response';
+    return {
+      content: [
+        { type: 'text', text: textSummary },
+        { type: 'json', json: { request: body, response: httpResult, decodedPreview: decoded ? truncate(decoded, 2000) : null, normalizedResults: normalizeResults(httpResult, decoded) } },
+      ],
+    };
+  }
+
+  // gRPC mode
   await ensureIamToken();
   if (!config.env.iamToken || !config.env.folderId) {
     const msg = 'Server config error: требуется YANDEX_FOLDER_ID и один из: YANDEX_IAM_TOKEN или YANDEX_OAUTH_TOKEN (для обмена на IAM)';
@@ -107,7 +155,6 @@ async function yandexSearchWeb(args) {
     throw e;
   }
 
-  // Execute grpcurl with retries
   const grpcResult = await withRetries(async () => {
     console.error('[yandex_search_web][grpcurl.request]', JSON.stringify({ endpoint: config.env.grpcEndpoint, method: config.env.grpcMethod, headers: { Authorization: 'Bearer ***', 'x-folder-id': '[set]' }, body }));
     const { stdout } = await runGrpcurl(JSON.stringify(body), {
@@ -129,7 +176,6 @@ async function yandexSearchWeb(args) {
     return parsed;
   }, { attempts: 3, baseDelayMs: 400, maxDelayMs: 3000 });
 
-  // Decode rawData if present
   let decoded = null;
   try {
     const b64 = grpcResult?.rawData;
@@ -320,4 +366,47 @@ async function safeText(resp) {
 function truncate(s, n) {
   if (!s) return s;
   return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+// REST helper: POST search request with timeout and proper headers
+async function callHttpSearch(body, { timeoutMs = 15000 } = {}) {
+  const url = config.env.baseUrl;
+  const headers = {
+    'content-type': 'application/json',
+  };
+  if (config.env.folderId) headers['x-folder-id'] = config.env.folderId;
+
+  // Prefer Api-Key if provided; otherwise Bearer IAM
+  if (config.env.apiKey) {
+    headers['Authorization'] = `Api-Key ${config.env.apiKey}`;
+  } else if (config.env.iamToken) {
+    headers['Authorization'] = `Bearer ${config.env.iamToken}`;
+  }
+
+  const controller = new AbortController();
+  const to = setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs || 15000)));
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const text = await safeText(resp);
+    let json = null;
+    try { json = text ? JSON.parse(text) : null; } catch {}
+    if (!resp.ok) {
+      const err = new Error(`HTTP ${resp.status}: ${truncate(text || '', 500)}`);
+      err.code = -32000;
+      throw err;
+    }
+    if (!json) {
+      const err = new Error('Empty or invalid JSON response from REST API');
+      err.code = -32000;
+      throw err;
+    }
+    return { json, status: resp.status };
+  } finally {
+    clearTimeout(to);
+  }
 }

@@ -41,21 +41,6 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
     if (stream == null) {
       return const AgentResponse(text: 'Ошибка: streaming недоступен', isFinal: true);
     }
-
-  Map<String, dynamic> _normalizeToolArgs(String tool, dynamic input) {
-    // Привести вход шага к карте аргументов, учитывая частые случаи строкового ввода
-    if (input is Map<String, dynamic>) return input;
-    switch (tool) {
-      case 'search_web':
-        return {'queryText': input?.toString() ?? ''};
-      case 'calculate':
-        return {'expression': input?.toString() ?? ''};
-      case 'get_current_date':
-        return <String, dynamic>{};
-      default:
-        return {'input': input};
-    }
-  }
     late final Completer<AgentResponse> done = Completer();
     Map<String, dynamic>? synth;
     stream.listen((e) {
@@ -273,6 +258,21 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
       return await usecase.complete(messages: messages, settings: _settings);
     } catch (_) {
       return '';
+    }
+  }
+
+  // Приводит вход шага к ожидаемым аргументам инструмента.
+  Map<String, dynamic> _normalizeToolArgs(String tool, dynamic input) {
+    if (input is Map<String, dynamic>) return input;
+    switch (tool) {
+      case 'search_web':
+        return {'queryText': input?.toString() ?? ''};
+      case 'calculate':
+        return {'expression': input?.toString() ?? ''};
+      case 'get_current_date':
+        return <String, dynamic>{};
+      default:
+        return {'input': input};
     }
   }
 
