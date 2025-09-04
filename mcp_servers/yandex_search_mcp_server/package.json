@@ -1,0 +1,22 @@
+{
+  "name": "yandex_search_mcp_server",
+  "version": "0.1.0",
+  "description": "MCP server (STDIO) for Yandex Search API (ESM)",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node ./src/index.js",
+    "dev": "node --watch ./src/index.js",
+    "test:init": "node ./tests/init.js",
+    "test:list": "node ./tests/list.js",
+    "test:search": "node ./tests/search.js",
+    "test:all": "npm run test:init && npm run test:list && npm run test:search"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  }
+}

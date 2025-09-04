@@ -4,6 +4,7 @@ import 'package:sample_app/screens/multi_agents_screen.dart';
 import 'package:sample_app/screens/code_ops_screen.dart';
 import 'package:sample_app/screens/github_agent_screen.dart';
 import 'package:sample_app/screens/auto_fix_screen.dart';
+import 'package:sample_app/screens/reasoning_agent_screen.dart';
 
 enum Screen {
   chat(Icon(Icons.chat_bubble_outline), Icon(Icons.chat_bubble), 'Чат'),
@@ -11,7 +12,8 @@ enum Screen {
   multiAgent(Icon(Icons.groups_2_outlined), Icon(Icons.groups_2), 'Два агента'),
   codeOps(Icon(Icons.developer_board_outlined), Icon(Icons.developer_board), 'CodeOps'),
   autoFix(Icon(Icons.build_outlined), Icon(Icons.build), 'AutoFix'),
-  github(Icon(Icons.integration_instructions), Icon(Icons.integration_instructions), 'GitHub');
+  github(Icon(Icons.integration_instructions), Icon(Icons.integration_instructions), 'GitHub'),
+  multiStep(Icon(Icons.route_outlined), Icon(Icons.route), 'Многоэтапный');
 
   final Icon icon;
   final Icon selectedIcon;
@@ -30,4 +32,5 @@ final Map<Screen, ScreenFactory> screenFactories = <Screen, ScreenFactory>{
   Screen.codeOps: (v) => CodeOpsScreen(key: ValueKey('codeops-$v')),
   Screen.autoFix: (v) => AutoFixScreen(key: ValueKey('autofix-$v')),
   Screen.github: (v) => GitHubAgentScreen(key: ValueKey('github-$v')),
+  Screen.multiStep: (v) => const ReasoningAgentScreen(key: ValueKey('multistep')),
 };

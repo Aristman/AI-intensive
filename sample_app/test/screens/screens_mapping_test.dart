@@ -18,6 +18,7 @@ void main() {
           Screen.codeOps => const ValueKey('codeops-42'),
           Screen.autoFix => const ValueKey('autofix-42'),
           Screen.github => const ValueKey('github-42'),
+          Screen.multiStep =>  const ValueKey('multiStep-42'),
         };
 
         await tester.pumpWidget(MaterialApp(home: w));

@@ -20,7 +20,8 @@ class McpClient implements McpApi {
 
   Future<void> connect(String url) async {
     await close();
-    _channel = WebSocketChannel.connect(Uri.parse(url));
+    final uri = _normalizeWsUrl(url);
+    _channel = WebSocketChannel.connect(uri);
     _sub = _channel!.stream.listen(_onMessage, onError: (e) {
       // fail all pending
       for (final c in _pending.values) {
@@ -43,6 +44,24 @@ class McpClient implements McpApi {
     await _channel?.sink.close();
     _channel = null;
     _initialized = false;
+  }
+
+  Uri _normalizeWsUrl(String url) {
+    // Trim and parse; convert http->ws, https->wss; if no scheme, default to ws
+    final raw = url.trim();
+    Uri u = Uri.parse(raw);
+    if (u.scheme.isEmpty) {
+      // e.g., localhost:8000 or 127.0.0.1
+      return Uri.parse('ws://$raw');
+    }
+    if (u.scheme == 'http') {
+      return u.replace(scheme: 'ws');
+    }
+    if (u.scheme == 'https') {
+      return u.replace(scheme: 'wss');
+    }
+    // pass-through ws/wss and others
+    return u;
   }
 
   void _onMessage(dynamic raw) {

@@ -43,6 +43,7 @@ dependencies:
   audioplayers: ^6.0.0  # Воспроизведение аудио
   permission_handler: ^12.0.1  # Разрешения (микрофон)
   record: ^6.1.1  # Запись аудио
+  flutter_markdown: ^0.7.3  # Рендер Markdown
 
 dev_dependencies:
   flutter_test:
