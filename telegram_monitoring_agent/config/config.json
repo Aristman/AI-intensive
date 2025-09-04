@@ -1,23 +1,6 @@
 {
-  "telegram_api_id": "",
-  "telegram_api_hash": "",
-  "telegram_bot_token": "",
   "use_userbot": true,
-  "mcp_server_command": "telegram-mcp",
-  "mcp_transport": "http",
-  "mcp_ssh_tunnel": {
-    "enabled": false,
-    "host": "",
-    "port": 22,
-    "user": "",
-    "key_path": "",
-    "remote_command": ""
-  },
-  "mcp_http_remote": {
-    "enabled": true,
-    "url": ""
-  },
-  "mcp_env_vars": {},
+  "mcp_transport": "stdio",
   "chats": ["@SourceCraft", "@prog_tools", "@my_aigents"],
   "ui_theme": "light",
   "log_level": "DEBUG",

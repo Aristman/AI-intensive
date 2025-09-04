@@ -13,10 +13,10 @@ import os
 from pathlib import Path
 
 class MCPClient:
-    def __init__(self, command: str = "telegram-mcp", env_vars: Optional[Dict[str, str]] = None,
+    def __init__(self, command: str = None, env_vars: Optional[Dict[str, str]] = None,
                  transport: str = "stdio", ssh_config: Optional[Dict[str, Any]] = None,
                  http_config: Optional[Dict[str, Any]] = None):
-        self.command = command
+        self.command = command or self._get_default_command()
         self.env_vars = env_vars or {}
         self.transport = transport
         self.ssh_config = ssh_config or {}
@@ -29,6 +29,12 @@ class MCPClient:
 
         # Setup environment variables
         self._setup_environment()
+
+    def _get_default_command(self) -> str:
+        """Get the default command to run the Telegram MCP server"""
+        # Path to mcp_servers/telegram_mcp_server/src/index.js relative to this file
+        server_path = Path(__file__).parent.parent.parent / "mcp_servers" / "telegram_mcp_server" / "src" / "index.js"
+        return f"node {server_path}"
 
     def _setup_environment(self):
         """Setup environment variables for telegram-mcp"""
@@ -109,7 +115,9 @@ class MCPClient:
                 else:
                     # Local STDIO
                     self.logger.info(f"Starting local MCP server process: {self.command}")
-                    cmd = [self.command]
+                    # Split command string into list for subprocess
+                    import shlex
+                    cmd = shlex.split(self.command)
 
                 # Start the process
                 self.process = subprocess.Popen(
