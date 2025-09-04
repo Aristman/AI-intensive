@@ -6,6 +6,7 @@ import 'package:sample_app/agents/agent_interface.dart';
 import 'package:sample_app/agents/multi_step_reasoning_agent.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/settings_service.dart';
+import 'package:sample_app/services/auth_service.dart';
 
 class ReasoningAgentScreen extends StatefulWidget {
   const ReasoningAgentScreen({super.key});
@@ -27,6 +28,7 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
   final List<AgentEvent> _events = [];
   String _finalMd = '';
   bool _mcpUsed = false;
+  final AuthService _auth = AuthService();
 
   static const String _conversationKey = 'multi_step_reasoning_screen';
 
@@ -34,12 +36,22 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
   void initState() {
     super.initState();
     _loadSettings();
+    // Следим за изменениями глобальной аутентификации
+    _auth.addListener(_onAuthChanged);
   }
 
   Future<void> _loadSettings() async {
     final s = await _settingsService.getSettings();
     setState(() => _settings = s);
     _agent = MultiStepReasoningAgent(settings: s, conversationKey: _conversationKey);
+    // Устанавливаем режим в зависимости от глобального токена
+    final token = _auth.token;
+    if (token == null || token.isEmpty) {
+      _agent!.setGuest();
+      await _agent!.authenticate(null);
+    } else {
+      await _agent!.authenticate(token);
+    }
   }
 
   @override
@@ -47,6 +59,7 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
     _sub?.cancel();
     _controller.dispose();
     _agent?.dispose();
+    _auth.removeListener(_onAuthChanged);
     super.dispose();
   }
 
@@ -61,7 +74,11 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
       _mcpUsed = false;
     });
 
-    final req = AgentRequest(txt, timeout: const Duration(seconds: 30));
+    final req = AgentRequest(
+      txt,
+      timeout: const Duration(seconds: 30),
+      authToken: _auth.token,
+    );
     final stream = _agent!.start(req);
     _sub?.cancel();
     _sub = stream?.listen((e) {
@@ -94,11 +111,24 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
     setState(() => _busy = false);
   }
 
+  Future<void> _onAuthChanged() async {
+    if (_agent == null) return;
+    final token = _auth.token;
+    if (token == null || token.isEmpty) {
+      _agent!.setGuest();
+      await _agent!.authenticate(null);
+    } else {
+      await _agent!.authenticate(token);
+    }
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Многоэтапный агент'),
+        // По требованию: убрать текст "Многоэтапный агент"
+        title: const SizedBox.shrink(),
         actions: [
           if (_mcpUsed)
             Padding(
@@ -113,7 +143,7 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(12.0),
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             child: Row(
               children: [
                 Expanded(

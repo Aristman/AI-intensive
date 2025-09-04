@@ -69,6 +69,29 @@ class MultiStepReasoningAgent with AuthPolicyMixin implements IAgent, IStatefulA
     return _guardedStream(req, action: 'start', requiredRole: null);
   }
 
+  // ===== Auth overrides =====
+  /// Минимальные/большие лимиты в зависимости от роли.
+  AgentLimits get _guestLimits => const AgentLimits(requestsPerMinute: 3);
+  AgentLimits get _userLimits => const AgentLimits(requestsPerMinute: 60);
+
+  /// Установить гостевой режим явно (используется при «Выйти» или «Зайти гостем» в UI).
+  void setGuest() {
+    updateAuthPolicy(role: AgentRoles.guest, limits: _guestLimits);
+  }
+
+  @override
+  Future<bool> authenticate(String? token) async {
+    // Вызов базовой логики (поднимет до user при ненулевом токене)
+    final ok = await super.authenticate(token);
+    // Применить соответствующие лимиты
+    if (token != null && token.isNotEmpty) {
+      updateAuthPolicy(role: AgentRoles.user, limits: _userLimits);
+    } else {
+      updateAuthPolicy(role: AgentRoles.guest, limits: _guestLimits);
+    }
+    return ok;
+  }
+
   /// Wraps pipeline with auth/limits guard. On auth failure emits a single
   /// pipeline_error event and closes the stream instead of throwing.
   Stream<AgentEvent> _guardedStream(AgentRequest req, {required String action, String? requiredRole}) async* {
