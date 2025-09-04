@@ -54,3 +54,4 @@ node_modules
 telegram_monitoring_agent/logs/*.*
 telegram_monitoring_agent/.env
 /mcp_servers/telegram_mcp_server/package-lock.json
+/mcp_servers/telegram_mcp_server/src/session.txt
