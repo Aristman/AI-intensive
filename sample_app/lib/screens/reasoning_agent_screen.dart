@@ -7,6 +7,7 @@ import 'package:sample_app/agents/multi_step_reasoning_agent.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/settings_service.dart';
 import 'package:sample_app/services/auth_service.dart';
+import 'package:sample_app/widgets/safe_send_text_field.dart';
 
 class ReasoningAgentScreen extends StatefulWidget {
   const ReasoningAgentScreen({super.key});
@@ -154,15 +155,14 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: TextField(
+                  child: SafeSendTextField(
                     controller: _controller,
-                    minLines: 1,
-                    maxLines: 4,
-                    decoration: const InputDecoration(
-                      labelText: 'Ваш запрос',
-                      border: OutlineInputBorder(),
-                    ),
-                    onSubmitted: (_) => _run(),
+                    enabled: !_busy,
+                    hintText: 'Ваш запрос',
+                    border: const OutlineInputBorder(),
+                    filled: false,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                    onSend: (_) => _run(),
                   ),
                 ),
                 const SizedBox(width: 8),
