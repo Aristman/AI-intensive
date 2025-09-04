@@ -15,7 +15,7 @@ import 'package:sample_app/services/mcp_client.dart';
 /// 2) Ask user whether to create tests;
 /// 3) If confirmed and language is Java, run tests in Docker via MCP;
 /// 4) Analyze results and refine tests if necessary (bounded retries).
-class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
+class CodeOpsBuilderAgent with AuthPolicyMixin implements IAgent, IToolingAgent, IStatefulAgent {
   final CodeOpsAgent _inner;
   AppSettings _settings;
 
@@ -238,6 +238,8 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
   // ===== IAgent =====
   @override
   Future<AgentResponse> ask(AgentRequest req) async {
+    // AuthZ: проверка токена/лимитов (без строгих ролей для обратной совместимости)
+    await ensureAuthorized(req, action: 'ask');
     final userText = req.input.trim();
     if (userText.isNotEmpty) {
       _history.add(_BMsg('user', userText));
@@ -378,6 +380,21 @@ class CodeOpsBuilderAgent implements IAgent, IToolingAgent, IStatefulAgent {
     final runId = _genId('run');
 
     Future<void>(() async {
+      // AuthZ: проверка перед запуском пайплайна (стрим)
+      try {
+        await ensureAuthorized(req, action: 'start');
+      } catch (e) {
+        controller.add(AgentEvent(
+          id: _genId('evt'),
+          runId: runId,
+          stage: AgentStage.pipeline_error,
+          severity: AgentSeverity.error,
+          message: 'Authorization error: $e',
+          meta: {'action': 'start'},
+        ));
+        await controller.close();
+        return;
+      }
       void emit(AgentStage stage, String message, {AgentSeverity sev = AgentSeverity.info, double? prog, int? idx, int? total, Map<String, dynamic>? meta}) {
         controller.add(AgentEvent(
           id: _genId('evt'),

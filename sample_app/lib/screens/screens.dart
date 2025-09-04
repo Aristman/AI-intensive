@@ -32,5 +32,5 @@ final Map<Screen, ScreenFactory> screenFactories = <Screen, ScreenFactory>{
   Screen.codeOps: (v) => CodeOpsScreen(key: ValueKey('codeops-$v')),
   Screen.autoFix: (v) => AutoFixScreen(key: ValueKey('autofix-$v')),
   Screen.github: (v) => GitHubAgentScreen(key: ValueKey('github-$v')),
-  Screen.multiStep: (v) => const ReasoningAgentScreen(key: ValueKey('multistep')),
+  Screen.multiStep: (v) => ReasoningAgentScreen(key: ValueKey('multiStep-$v')),
 };

@@ -12,6 +12,7 @@ class AgentRequest {
   final Map<String, dynamic>? context; // external context variables
   final ResponseFormat? overrideFormat;
   final String? overrideJsonSchema;
+  final String? authToken; // optional auth token for per-request authentication
 
   const AgentRequest(
     this.input, {
@@ -19,6 +20,7 @@ class AgentRequest {
     this.context,
     this.overrideFormat,
     this.overrideJsonSchema,
+    this.authToken,
   });
 }
 
@@ -132,6 +134,24 @@ abstract class IAgent {
 
   /// Cleanup resources.
   void dispose();
+
+  // ===== Authorization & Limits (backward-compatible defaults) =====
+  /// Current authenticated role. Defaults to 'guest'.
+  String get role => 'guest';
+
+  /// True if authenticated (by default, no-op auth means true).
+  bool get isAuthenticated => true;
+
+  /// Get current limits. Null or unlimited by default.
+  AgentLimits? get limits => null;
+
+  /// Authenticate using an optional token. Default always succeeds.
+  /// Implementations may override and persist auth state.
+  Future<bool> authenticate(String? token) async => true;
+
+  /// Authorization check for an action with optional requiredRole.
+  /// Default allows everything for backward compatibility.
+  bool authorize(String action, {String? requiredRole}) => true;
 }
 
 /// Mixin for stateful agents that maintain a history.
@@ -179,5 +199,122 @@ class AgentTextUtils {
       return (text: text.replaceAll(stopToken, '').trim(), hadStop: true);
     }
     return (text: text, hadStop: false);
+  }
+}
+
+// ===== Auth / Roles / Limits utilities =====
+
+/// Simple role helpers. Order: guest < user < admin.
+class AgentRoles {
+  static const String guest = 'guest';
+  static const String user = 'user';
+  static const String admin = 'admin';
+
+  static int rank(String? role) {
+    switch (role) {
+      case admin:
+        return 3;
+      case user:
+        return 2;
+      case guest:
+      default:
+        return 1;
+    }
+  }
+
+  static bool allows(String actual, String? required) {
+    if (required == null || required.isEmpty) return true;
+    return rank(actual) >= rank(required);
+  }
+}
+
+/// Request/usage limits. By default unlimited.
+class AgentLimits {
+  final int? requestsPerMinute;
+
+  const AgentLimits({this.requestsPerMinute});
+
+  const AgentLimits.unlimited() : requestsPerMinute = null;
+
+  bool get isUnlimited => requestsPerMinute == null || requestsPerMinute! <= 0;
+}
+
+/// Minimal sliding window rate limiter (minute window).
+class SimpleRateLimiter {
+  final int? perMinute;
+  final List<DateTime> _hits = <DateTime>[];
+
+  SimpleRateLimiter(this.perMinute);
+
+  bool allow() {
+    if (perMinute == null || perMinute! <= 0) return true; // unlimited
+    final now = DateTime.now();
+    final windowStart = now.subtract(const Duration(minutes: 1));
+    // purge
+    _hits.removeWhere((t) => t.isBefore(windowStart));
+    if (_hits.length >= perMinute!) return false;
+    _hits.add(now);
+    return true;
+  }
+}
+
+/// Drop-in mixin to add basic auth/role/limits behavior to agents.
+/// Implements IAgent's auth-related members so that classes can `with` this
+/// mixin and satisfy the interface without needing a specific superclass.
+mixin AuthPolicyMixin implements IAgent {
+  String? _authToken;
+  String _role = AgentRoles.guest;
+  AgentLimits _limits = const AgentLimits.unlimited();
+  SimpleRateLimiter _limiter = SimpleRateLimiter(null);
+  bool _authed = false; // backward-compat: treat unauth as guest until authenticate called
+
+  @override
+  String get role => _role;
+
+  @override
+  bool get isAuthenticated => _authed;
+
+  @override
+  AgentLimits get limits => _limits;
+
+  /// Configure policy (e.g., from app settings or server side)
+  void updateAuthPolicy({String? role, AgentLimits? limits}) {
+    if (role != null) _role = role;
+    if (limits != null) {
+      _limits = limits;
+      _limiter = SimpleRateLimiter(limits.requestsPerMinute);
+    }
+  }
+
+  @override
+  Future<bool> authenticate(String? token) async {
+    // Default token acceptance: if token provided, mark as authenticated user; otherwise stay guest but authed.
+    _authToken = token;
+    _authed = true;
+    // Simple heuristic role assignment: if token present, elevate to 'user' by default.
+    if (token != null && token.isNotEmpty && AgentRoles.rank(_role) < AgentRoles.rank(AgentRoles.user)) {
+      _role = AgentRoles.user;
+    }
+    return true;
+  }
+
+  @override
+  bool authorize(String action, {String? requiredRole}) {
+    // Default policy: allow if role satisfies requiredRole (if provided).
+    return AgentRoles.allows(_role, requiredRole);
+  }
+
+  /// Ensures authentication, role authorization and rate limits.
+  /// Throws StateError on violation.
+  Future<void> ensureAuthorized(AgentRequest req, {required String action, String? requiredRole}) async {
+    if (!isAuthenticated) {
+      await authenticate(req.authToken);
+    }
+    if (!authorize(action, requiredRole: requiredRole)) {
+      throw StateError('Access denied: role "$role" is insufficient for action "$action" (required: ${requiredRole ?? 'none'}).');
+    }
+    if (!_limiter.allow()) {
+      throw StateError('Rate limit exceeded for action "$action" (limit: ${_limits.requestsPerMinute}/min).');
+    }
   }
 }

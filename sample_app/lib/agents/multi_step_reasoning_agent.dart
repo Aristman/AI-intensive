@@ -11,7 +11,7 @@ import 'package:sample_app/services/conversation_storage_service.dart';
 /// Минимальная реализация многоэтапного агента по схеме:
 /// Анализ -> План -> Исполнение/Проверка -> Синтез -> Рефлексия
 /// С фокусом на неблокирующий UI и безопасные фолбэки.
-class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
+class MultiStepReasoningAgent with AuthPolicyMixin implements IAgent, IStatefulAgent, IToolingAgent {
   final ConversationStorageService _store = ConversationStorageService();
   final List<Map<String, String>> _history = [];
   AppSettings _settings;
@@ -36,6 +36,8 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
 
   @override
   Future<AgentResponse> ask(AgentRequest req) async {
+    // AuthZ: ensure token/role/rate limit for single-shot ask
+    await ensureAuthorized(req, action: 'ask', requiredRole: null);
     // Одношаговый режим: запустить конвейер и дождаться финального результата
     final stream = start(req);
     if (stream == null) {
@@ -63,7 +65,28 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
 
   @override
   Stream<AgentEvent>? start(AgentRequest req) {
-    return _runPipeline(req);
+    // AuthZ: ensure token/rate limit for streaming (no role requirement for backward compatibility)
+    return _guardedStream(req, action: 'start', requiredRole: null);
+  }
+
+  /// Wraps pipeline with auth/limits guard. On auth failure emits a single
+  /// pipeline_error event and closes the stream instead of throwing.
+  Stream<AgentEvent> _guardedStream(AgentRequest req, {required String action, String? requiredRole}) async* {
+    try {
+      await ensureAuthorized(req, action: action, requiredRole: requiredRole);
+    } catch (e) {
+      final runId = DateTime.now().millisecondsSinceEpoch.toString();
+      yield AgentEvent(
+        id: 'auth-error',
+        runId: runId,
+        stage: AgentStage.pipeline_error,
+        severity: AgentSeverity.error,
+        message: 'Authorization error: $e',
+        meta: {'action': action, 'requiredRole': requiredRole},
+      );
+      return;
+    }
+    yield* _runPipeline(req);
   }
 
   @override
