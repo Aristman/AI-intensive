@@ -301,6 +301,6 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
 
   String _shorten(String s, {int max = 240}) {
     if (s.length <= max) return s;
-    return s.substring(0, max) + '…';
+    return '${s.substring(0, max)}…';
   }
 }

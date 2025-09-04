@@ -8,7 +8,7 @@ void main() {
     test('ask() respects rate limit (>=2 within 1 minute throws)', () async {
       final agent = AutoFixAgent();
       // 1 запрос в минуту
-      agent.updateAuthPolicy(limits: const AgentLimits(requestsPerMinute: 1));
+      agent.updateAuthPolicy(limits: const AgentLimits(requestsPerHour: 1));
 
       // Первый — ок
       final r1 = await agent.ask(const AgentRequest('hi'));
@@ -23,7 +23,7 @@ void main() {
 
     test('start() second run within limit window yields pipeline_error', () async {
       final agent = AutoFixAgent();
-      agent.updateAuthPolicy(limits: const AgentLimits(requestsPerMinute: 1));
+      agent.updateAuthPolicy(limits: const AgentLimits(requestsPerHour: 1));
 
       // Первый запуск пайплайна — ок
       final evts1 = await agent.start(const AgentRequest('go')).toList();
@@ -48,7 +48,7 @@ void main() {
   group('CodeOpsBuilderAgent auth/rate-limit integration', () {
     test('start() rate limit triggers pipeline_error on repeated start', () async {
       final agent = CodeOpsBuilderAgent();
-      agent.updateAuthPolicy(limits: const AgentLimits(requestsPerMinute: 1));
+      agent.updateAuthPolicy(limits: const AgentLimits(requestsPerHour: 1));
 
       final s1 = agent.start(const AgentRequest('run tests'))!;
       final evts1 = await s1.toList();

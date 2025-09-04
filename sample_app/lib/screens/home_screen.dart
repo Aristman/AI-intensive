@@ -80,15 +80,13 @@ class _HomeScreenState extends State<HomeScreen> {
       final list = await client.toolsList(timeout: const Duration(seconds: 6));
       // ожидаем { tools: [ { name, description? }, ... ] }
       final tools = <String>[];
-      if (list is Map<String, dynamic>) {
-        final arr = list['tools'];
-        if (arr is List) {
-          for (final t in arr) {
-            if (t is Map && t['name'] is String) tools.add(t['name'] as String);
-          }
+      final arr = list['tools'];
+      if (arr is List) {
+        for (final t in arr) {
+          if (t is Map && t['name'] is String) tools.add(t['name'] as String);
         }
       }
-      if (!mounted) return;
+          if (!mounted) return;
       setState(() {
         _mcpChecking = false;
         _mcpReady = true;
@@ -127,14 +125,14 @@ class _HomeScreenState extends State<HomeScreen> {
       border = Colors.amber.shade200;
       fg = Colors.amber.shade700;
       label = 'MCP checking';
-      tooltip = 'Проверка MCP по адресу: ${s!.mcpServerUrl}';
+      tooltip = 'Проверка MCP по адресу: ${s.mcpServerUrl}';
     } else if (_mcpReady) {
       bg = Colors.blue.shade50;
       border = Colors.blue.shade200;
       fg = Colors.blue.shade700;
       label = 'MCP ready';
       final toolsStr = _mcpTools.isEmpty ? 'нет доступных инструментов' : _mcpTools.join(', ');
-      tooltip = 'MCP: ${s!.mcpServerUrl}\nИнструменты: $toolsStr';
+      tooltip = 'MCP: ${s.mcpServerUrl}\nИнструменты: $toolsStr';
     } else {
       bg = Colors.red.shade50;
       border = Colors.red.shade200;

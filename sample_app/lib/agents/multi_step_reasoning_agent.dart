@@ -349,7 +349,7 @@ class MultiStepReasoningAgent with AuthPolicyMixin implements IAgent, IStatefulA
     final sys = 'Короткая рефлексия: оцени полноту ответа (кратко) и возможные улучшения. 1-2 предложения. Русский язык.';
     final messages = [
       {'role': 'system', 'content': sys},
-      {'role': 'user', 'content': 'Запрос: ${req.input}\nОтвет: ${finalText}'}
+      {'role': 'user', 'content': 'Запрос: ${req.input}\nОтвет: $finalText'}
     ];
     try {
       return await usecase.complete(messages: messages, settings: _settings);
@@ -476,7 +476,9 @@ class MultiStepReasoningAgent with AuthPolicyMixin implements IAgent, IStatefulA
         out.add(x);
       }
     }
-    while (ops.isNotEmpty) out.add(ops.removeLast());
+    while (ops.isNotEmpty) {
+      out.add(ops.removeLast());
+    }
 
     // Evaluate RPN
     final st = <num>[];
@@ -617,7 +619,7 @@ class MultiStepReasoningAgent with AuthPolicyMixin implements IAgent, IStatefulA
 
   String _truncate(String s, int maxLen) {
     if (s.length <= maxLen) return s;
-    return s.substring(0, maxLen) + '…';
+    return '${s.substring(0, maxLen)}…';
   }
 }
 

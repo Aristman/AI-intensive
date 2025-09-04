@@ -116,7 +116,7 @@ void main() {
 
     test('rate limit: allow N then block', () async {
       final a = _DummyAgent();
-      a.updateAuthPolicy(limits: const AgentLimits(requestsPerMinute: 3));
+      a.updateAuthPolicy(limits: const AgentLimits(requestsPerHour: 3));
       // 3 allowed
       await a.ensureAuthorized(const AgentRequest('1'), action: 'ask');
       await a.ensureAuthorized(const AgentRequest('2'), action: 'ask');
