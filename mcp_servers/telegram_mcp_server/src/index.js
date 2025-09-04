@@ -1,5 +1,5 @@
-import { Server } from '@modelcontextprotocol/sdk';
-import { StdioTransport } from '@modelcontextprotocol/sdk';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { config } from './config.js';
 import { setupTelegramClient } from './utils.js';
 import { list as listResources, read as readResource } from './handlers/resources.js';
@@ -26,7 +26,7 @@ async function main() {
     server.setRequestHandler('tools/call', tools.call);
 
     // Инициализируем транспорт Stdio
-    const transport = new StdioTransport();
+    const transport = new StdioServerTransport();
     await server.connect(transport);
 
     console.error('MCP server started successfully.');
