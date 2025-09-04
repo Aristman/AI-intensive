@@ -71,8 +71,8 @@ class MultiStepReasoningAgent with AuthPolicyMixin implements IAgent, IStatefulA
 
   // ===== Auth overrides =====
   /// Минимальные/большие лимиты в зависимости от роли.
-  AgentLimits get _guestLimits => const AgentLimits(requestsPerMinute: 3);
-  AgentLimits get _userLimits => const AgentLimits(requestsPerMinute: 60);
+  AgentLimits get _guestLimits => const AgentLimits(requestsPerHour: 1);
+  AgentLimits get _userLimits => const AgentLimits(requestsPerHour: 60);
 
   /// Установить гостевой режим явно (используется при «Выйти» или «Зайти гостем» в UI).
   void setGuest() {

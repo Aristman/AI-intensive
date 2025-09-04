@@ -230,29 +230,29 @@ class AgentRoles {
 
 /// Request/usage limits. By default unlimited.
 class AgentLimits {
-  final int? requestsPerMinute;
+  final int? requestsPerHour;
 
-  const AgentLimits({this.requestsPerMinute});
+  const AgentLimits({this.requestsPerHour});
 
-  const AgentLimits.unlimited() : requestsPerMinute = null;
+  const AgentLimits.unlimited() : requestsPerHour = null;
 
-  bool get isUnlimited => requestsPerMinute == null || requestsPerMinute! <= 0;
+  bool get isUnlimited => requestsPerHour == null || requestsPerHour! <= 0;
 }
 
 /// Minimal sliding window rate limiter (minute window).
 class SimpleRateLimiter {
-  final int? perMinute;
+  final int? perHour;
   final List<DateTime> _hits = <DateTime>[];
 
-  SimpleRateLimiter(this.perMinute);
+  SimpleRateLimiter(this.perHour);
 
   bool allow() {
-    if (perMinute == null || perMinute! <= 0) return true; // unlimited
+    if (perHour == null || perHour! <= 0) return true; // unlimited
     final now = DateTime.now();
-    final windowStart = now.subtract(const Duration(minutes: 1));
+    final windowStart = now.subtract(const Duration(hours: 1));
     // purge
     _hits.removeWhere((t) => t.isBefore(windowStart));
-    if (_hits.length >= perMinute!) return false;
+    if (_hits.length >= perHour!) return false;
     _hits.add(now);
     return true;
   }
@@ -282,7 +282,7 @@ mixin AuthPolicyMixin implements IAgent {
     if (role != null) _role = role;
     if (limits != null) {
       _limits = limits;
-      _limiter = SimpleRateLimiter(limits.requestsPerMinute);
+      _limiter = SimpleRateLimiter(limits.requestsPerHour);
     }
   }
 
@@ -314,7 +314,7 @@ mixin AuthPolicyMixin implements IAgent {
       throw StateError('Access denied: role "$role" is insufficient for action "$action" (required: ${requiredRole ?? 'none'}).');
     }
     if (!_limiter.allow()) {
-      throw StateError('Rate limit exceeded for action "$action" (limit: ${_limits.requestsPerMinute}/min).');
+      throw StateError('Rate limit exceeded for action "$action" (limit: ${_limits.requestsPerHour}/hour).');
     }
   }
 }

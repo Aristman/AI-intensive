@@ -126,24 +126,31 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        // По требованию: убрать текст "Многоэтапный агент"
-        title: const SizedBox.shrink(),
-        actions: [
-          if (_mcpUsed)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0),
-              child: Tooltip(
-                message: 'MCP: использован поиск',
-                child: Icon(Icons.cloud_done, color: Theme.of(context).colorScheme.tertiary),
-              ),
-            ),
-        ],
-      ),
       body: Column(
         children: [
+          if (_mcpUsed)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Tooltip(
+                  message: 'MCP: использован поиск',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.cloud_done, color: Theme.of(context).colorScheme.tertiary),
+                      const SizedBox(width: 8),
+                      Text(
+                        'MCP использован',
+                        style: TextStyle(color: Theme.of(context).colorScheme.tertiary),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            padding: const EdgeInsets.all(12),
             child: Row(
               children: [
                 Expanded(
