@@ -263,7 +263,7 @@ class SimpleRateLimiter {
 /// Implements IAgent's auth-related members so that classes can `with` this
 /// mixin and satisfy the interface without needing a specific superclass.
 mixin AuthPolicyMixin implements IAgent {
-  String? _authToken;
+  
   String _role = AgentRoles.guest;
   AgentLimits _limits = const AgentLimits.unlimited();
   SimpleRateLimiter _limiter = SimpleRateLimiter(null);
@@ -290,7 +290,6 @@ mixin AuthPolicyMixin implements IAgent {
   @override
   Future<bool> authenticate(String? token) async {
     // Default token acceptance: if token provided, mark as authenticated user; otherwise stay guest but authed.
-    _authToken = token;
     _authed = true;
     // Simple heuristic role assignment: if token present, elevate to 'user' by default.
     if (token != null && token.isNotEmpty && AgentRoles.rank(_role) < AgentRoles.rank(AgentRoles.user)) {
@@ -310,6 +309,15 @@ mixin AuthPolicyMixin implements IAgent {
   Future<void> ensureAuthorized(AgentRequest req, {required String action, String? requiredRole}) async {
     if (!isAuthenticated) {
       await authenticate(req.authToken);
+    }
+    // Опционально повышаем роль из профиля пользователя, если передан в контексте
+    final ctx = req.context;
+    final p = ctx != null ? ctx['user_profile'] : null;
+    final pr = (p is Map && p['role'] is String) ? (p['role'] as String) : null;
+    if (pr != null && pr.isNotEmpty) {
+      if (AgentRoles.rank(pr) > AgentRoles.rank(_role)) {
+        _role = pr;
+      }
     }
     if (!authorize(action, requiredRole: requiredRole)) {
       throw StateError('Access denied: role "${role}" is insufficient for action "${action}" (required: ${requiredRole ?? 'none'}).');

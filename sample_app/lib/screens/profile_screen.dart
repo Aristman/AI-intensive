@@ -20,17 +20,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final p = widget.controller.profile;
     _nameCtrl = TextEditingController(text: p.name);
     _roleCtrl = TextEditingController(text: p.role);
-    if (!widget.controller.isLoading) {
-      // ensure loaded
-      widget.controller.load();
-    }
+    widget.controller.addListener(_onControllerChanged);
   }
 
   @override
   void dispose() {
+    widget.controller.removeListener(_onControllerChanged);
     _nameCtrl.dispose();
     _roleCtrl.dispose();
     super.dispose();
+  }
+
+  void _onControllerChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<void> _saveBasics() async {
@@ -50,20 +53,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(initial == null ? 'Добавить запись' : 'Редактировать запись'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: titleCtrl,
-              decoration: const InputDecoration(labelText: 'Название'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: titleCtrl,
+                  decoration: const InputDecoration(labelText: 'Название'),
+                ),
+                TextField(
+                  controller: descCtrl,
+                  decoration: const InputDecoration(labelText: 'Описание'),
+                  minLines: 1,
+                  maxLines: 4,
+                ),
+              ],
             ),
-            TextField(
-              controller: descCtrl,
-              decoration: const InputDecoration(labelText: 'Описание'),
-              minLines: 1,
-              maxLines: 4,
-            ),
-          ],
+          ),
         ),
         actions: [
           TextButton(
@@ -81,17 +89,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ],
       ),
     );
-    titleCtrl.dispose();
-    descCtrl.dispose();
+    // Не освобождаем контроллеры вручную: диалог и поля закрыты, GC их соберёт.
+    // Это защищает от состояния, когда Overlay ещё анимируется, а контроллеры уже disposed.
     return result;
   }
 
   Widget _section(
     String title,
     List<ProfileEntry> items, {
-    required VoidCallback onAdd,
-    required void Function(int) onDelete,
-    required void Function(int) onEdit,
+    Future<void> Function()? onAdd,
+    Future<void> Function(int index)? onDelete,
+    Future<void> Function(int index)? onEdit,
   }) {
     return Card(
       child: Padding(
@@ -103,10 +111,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(title, style: Theme.of(context).textTheme.titleMedium),
-                ElevatedButton.icon(
-                  onPressed: onAdd,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Добавить запись'),
+                Tooltip(
+                  message: onAdd == null ? 'Недоступно для гостевого профиля' : 'Добавить запись',
+                  child: ElevatedButton(
+                    onPressed: onAdd == null ? null : onAdd,
+                    child: const Text('Добавить запись'),
+                  ),
                 ),
               ],
             ),
@@ -129,13 +139,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       children: [
                         IconButton(
                           icon: const Icon(Icons.edit),
-                          tooltip: 'Редактировать',
-                          onPressed: () => onEdit(index),
+                          tooltip: onEdit == null ? 'Недоступно для гостевого профиля' : 'Редактировать',
+                          onPressed: onEdit == null ? null : () => onEdit(index),
                         ),
                         IconButton(
                           icon: const Icon(Icons.delete_outline),
-                          tooltip: 'Удалить',
-                          onPressed: () => onDelete(index),
+                          tooltip: onDelete == null ? 'Недоступно для гостевого профиля' : 'Удалить',
+                          onPressed: onDelete == null ? null : () => onDelete(index),
                         ),
                       ],
                     ),
@@ -150,21 +160,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: widget.controller,
-      builder: (context, _) {
-        final p = widget.controller.profile;
-        _nameCtrl.value = _nameCtrl.value.copyWith(text: p.name, selection: TextSelection.collapsed(offset: p.name.length));
-        _roleCtrl.value = _roleCtrl.value.copyWith(text: p.role, selection: TextSelection.collapsed(offset: p.role.length));
-        return Scaffold(
-          appBar: AppBar(
-            title: const Text('Профиль пользователя'),
-          ),
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
+    final p = widget.controller.profile;
+    final bool isGuest = p.role == 'guest';
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Профиль пользователя'),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
                 TextField(
                   controller: _nameCtrl,
                   decoration: const InputDecoration(labelText: 'Имя'),
@@ -177,59 +183,87 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 const SizedBox(height: 12),
                 Align(
                   alignment: Alignment.centerLeft,
-                  child: ElevatedButton.icon(
+                  child: ElevatedButton(
                     onPressed: _saveBasics,
-                    icon: const Icon(Icons.save),
-                    label: const Text('Сохранить профиль'),
+                    child: const Text('Сохранить профиль'),
                   ),
                 ),
+                if (isGuest) ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Гостевой профиль: редактирование предпочтений и исключений недоступно',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 _section(
                   'Предпочтения',
                   p.preferences,
-                  onAdd: () async {
-                    final entry = await _openEntryDialog();
-                    if (entry != null) {
-                      await widget.controller.addPreference(entry);
-                    }
-                  },
-                  onDelete: (i) async {
-                    await widget.controller.removePreference(i);
-                  },
-                  onEdit: (i) async {
-                    final current = p.preferences[i];
-                    final edited = await _openEntryDialog(initial: current);
-                    if (edited != null) {
-                      await widget.controller.editPreference(i, edited);
-                    }
-                  },
+                  onAdd: isGuest
+                      ? null
+                      : () async {
+                          final entry = await _openEntryDialog();
+                          if (entry != null) {
+                            if (!mounted) return;
+                            await WidgetsBinding.instance.endOfFrame;
+                            await widget.controller.addPreference(entry);
+                          }
+                        },
+                  onDelete: isGuest
+                      ? null
+                      : (i) async {
+                          if (!mounted) return;
+                          await WidgetsBinding.instance.endOfFrame;
+                          await widget.controller.removePreference(i);
+                        },
+                  onEdit: isGuest
+                      ? null
+                      : (i) async {
+                          final current = p.preferences[i];
+                          final edited = await _openEntryDialog(initial: current);
+                          if (edited != null) {
+                            if (!mounted) return;
+                            await WidgetsBinding.instance.endOfFrame;
+                            await widget.controller.editPreference(i, edited);
+                          }
+                        },
                 ),
                 const SizedBox(height: 16),
                 _section(
                   'Исключения',
                   p.exclusions,
-                  onAdd: () async {
-                    final entry = await _openEntryDialog();
-                    if (entry != null) {
-                      await widget.controller.addExclusion(entry);
-                    }
-                  },
-                  onDelete: (i) async {
-                    await widget.controller.removeExclusion(i);
-                  },
-                  onEdit: (i) async {
-                    final current = p.exclusions[i];
-                    final edited = await _openEntryDialog(initial: current);
-                    if (edited != null) {
-                      await widget.controller.editExclusion(i, edited);
-                    }
-                  },
+                  onAdd: isGuest
+                      ? null
+                      : () async {
+                          final entry = await _openEntryDialog();
+                          if (entry != null) {
+                            if (!mounted) return;
+                            await WidgetsBinding.instance.endOfFrame;
+                            await widget.controller.addExclusion(entry);
+                          }
+                        },
+                  onDelete: isGuest
+                      ? null
+                      : (i) async {
+                          if (!mounted) return;
+                          await WidgetsBinding.instance.endOfFrame;
+                          await widget.controller.removeExclusion(i);
+                        },
+                  onEdit: isGuest
+                      ? null
+                      : (i) async {
+                          final current = p.exclusions[i];
+                          final edited = await _openEntryDialog(initial: current);
+                          if (edited != null) {
+                            if (!mounted) return;
+                            await WidgetsBinding.instance.endOfFrame;
+                            await widget.controller.editExclusion(i, edited);
+                          }
+                        },
                 ),
-              ],
-            ),
-          ),
-        );
-      },
+          ],
+        ),
+      ),
     );
   }
 }

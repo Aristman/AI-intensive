@@ -43,7 +43,7 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
     // Следим за изменениями глобальной аутентификации
     _auth.addListener(_onAuthChanged);
     // Загрузка и подписка на изменения профиля
-    _profile.load();
+    _profile.setCurrentLogin(_auth.login);
     _profileListener = () {
       if (mounted) setState(() {});
     };
@@ -53,14 +53,24 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
   Future<void> _loadSettings() async {
     final s = await _settingsService.getSettings();
     setState(() => _settings = s);
+    // Обновляем контекст профиля под текущий login
+    await _profile.setCurrentLogin(_auth.login);
     _agent = MultiStepReasoningAgent(settings: s, conversationKey: _conversationKey);
     // Устанавливаем режим в зависимости от глобального токена
     final token = _auth.token;
     if (token == null || token.isEmpty) {
       _agent!.setGuest();
       await _agent!.authenticate(null);
+      // Гостевой режим в профиле
+      await _profile.updateRole('guest');
     } else {
       await _agent!.authenticate(token);
+      // Логин есть — проставим роль user и имя из AuthService, если доступно
+      await _profile.updateRole('user');
+      final loginName = _auth.login;
+      if (loginName != null && loginName.isNotEmpty) {
+        await _profile.updateName(loginName);
+      }
     }
   }
 
@@ -86,6 +96,10 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
       _finalMd = '';
       _mcpUsed = false;
     });
+
+    // Важно: перезагружаем профиль из SharedPreferences перед каждым запуском,
+    // чтобы учесть последние изменения предпочтений/исключений для текущего пользователя.
+    await _profile.load();
 
     final req = AgentRequest(
       txt,
@@ -130,11 +144,22 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
   Future<void> _onAuthChanged() async {
     if (_agent == null) return;
     final token = _auth.token;
+    // Переключаем контекст профиля согласно текущему логину
+    await _profile.setCurrentLogin(_auth.login);
     if (token == null || token.isEmpty) {
       _agent!.setGuest();
       await _agent!.authenticate(null);
+      // Синхронизируем профиль: гостевая роль и пустое имя отображается как "Гость"
+      await _profile.updateRole('guest');
+      await _profile.updateName('');
     } else {
       await _agent!.authenticate(token);
+      // Авторизован: роль user и имя из _auth.login, если есть
+      await _profile.updateRole('user');
+      final loginName = _auth.login;
+      if (loginName != null && loginName.isNotEmpty) {
+        await _profile.updateName(loginName);
+      }
     }
     if (mounted) setState(() {});
   }
