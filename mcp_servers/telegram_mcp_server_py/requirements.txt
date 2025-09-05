@@ -1,0 +1,3 @@
+modelcontextprotocol==0.1.0; python_version>='3.9'  # optional, we implement raw JSON-RPC, but keep for future
+telethon==1.35.0
+python-dotenv==1.0.1

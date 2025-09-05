@@ -35,7 +35,6 @@ class TelegramAgent:
         )
 
         self.ui = TelegramUI(self)
-        self.telegram_client = None  # Will be initialized if using direct connection
         self.mcp_transport = mcp_transport
         # Track last seen message id per chat for "new messages" logging
         self.last_seen_ids: Dict[str, int] = {}
@@ -56,38 +55,7 @@ class TelegramAgent:
         # Load persisted last_seen_ids
         self._load_last_seen()
 
-        # Initialize Telegram connection only if not using HTTP MCP transport
-        if self.mcp_transport != "http":
-            if self.config.get("use_userbot", True):
-                self.init_userbot()
-            else:
-                self.init_bot()
-        else:
-            self.logger.info("Skipping local Telethon init (HTTP MCP in use)")
-        
-    def init_userbot(self):
-        """Initialize Telegram Userbot connection"""
-        try:
-            from telethon import TelegramClient
-            self.telegram_client = TelegramClient(
-                'session_name',
-                self.config['telegram_api_id'],
-                self.config['telegram_api_hash']
-            )
-        except ImportError:
-            self.logger.warning("Telethon not installed. Using MCP only.")
-        
-    def init_bot(self):
-        """Initialize Telegram Bot connection"""
-        try:
-            from telethon import TelegramClient
-            self.telegram_client = TelegramClient(
-                'bot_session',
-                self.config['telegram_bot_token'],
-                None
-            )
-        except ImportError:
-            self.logger.warning("Telethon not installed. Using MCP only.")
+        # No direct Telegram connection: only MCP stdio transport is used
         
     def load_config(self, path: str) -> Dict[str, Any]:
         try:
@@ -166,15 +134,7 @@ class TelegramAgent:
             except Exception:
                 self.config[cfg_key] = val
 
-        # Telegram creds
-        _ovr('telegram_api_id', 'TG_APP_ID', cast=lambda x: int(str(x)))
-        _ovr('telegram_api_hash', 'TG_API_HASH')
-        _ovr('telegram_bot_token', 'TG_BOT_TOKEN')
-
-        # LLM providers
-        _ovr('deepseek_api_key', 'DEEPSEEK_API_KEY')
-        _ovr('yandex_api_key', 'YANDEX_API_KEY')
-        _ovr('yandex_iam_token', 'YANDEX_IAM_TOKEN')
+        # No Telegram direct creds or LLM secrets here; kept only in secure envs of respective services
 
         # Transport/settings
         _ovr('mcp_transport', 'MCP_TRANSPORT')
@@ -187,22 +147,10 @@ class TelegramAgent:
         _ovr('key_path', 'MCP_SSH_KEY_PATH', path=['mcp_ssh_tunnel'])
         _ovr('remote_command', 'MCP_SSH_REMOTE_COMMAND', path=['mcp_ssh_tunnel'])
 
-        # Build/override mcp_env_vars from TG_* if present
-        tg_env = {}
-        for k in ('TG_APP_ID', 'TG_API_HASH', 'TG_BOT_TOKEN'):
-            if env.get(k):
-                tg_env[k] = env.get(k)
-        if tg_env:
-            base = self.config.get('mcp_env_vars', {}) or {}
-            base.update(tg_env)
-            self.config['mcp_env_vars'] = base
+        # Do not propagate Telegram creds into child process from this agent
 
     def default_config(self) -> Dict[str, Any]:
         return {
-            "llm_api_key": "your_api_key_here",
-            "telegram_api_id": "your_api_id",
-            "telegram_api_hash": "your_api_hash",
-            "telegram_bot_token": "your_bot_token_if_using_bot",
             "use_userbot": True,
             "mcp_server_url": "http://localhost:3000",
             "chats": ["@telegram"],
@@ -213,7 +161,7 @@ class TelegramAgent:
     def setup_logging(self):
         """Setup logging configuration"""
         import logging
-        log_level = getattr(logging, self.config.get('log_level', 'INFO').upper())
+        log_level = getattr(logging, self.config.get('log_level', 'DEBUG').upper())
         
         # Create logs directory before attaching FileHandler
         import os
@@ -527,10 +475,14 @@ class TelegramAgent:
         return True
 
     async def test_connection(self) -> bool:
-        """Test MCP and Telegram connections"""
+        """Test MCP stdio connection (initialize, tools/list, resolve a test chat)."""
         try:
-            # Test MCP connection using STDIO
             async with self.mcp_client:
+                # initialize and tools/list
+                await self.mcp_client.initialize()
+                tools = await self.mcp_client.list_tools()
+                if tools:
+                    self.logger.info(f"MCP tools: {[t.get('name') for t in tools if isinstance(t, dict)]}")
                 test_chat = self.config.get('chats', [])[0] if self.config.get('chats') else '@telegram'
                 chat_info = await self.mcp_client.resolve_chat(test_chat)
                 if not chat_info:
@@ -538,16 +490,6 @@ class TelegramAgent:
                     return False
                 
                 print(f"MCP connection OK: Resolved {test_chat} to {chat_info.get('title', 'Unknown')}")
-                
-                # Test Telegram connection if using telethon
-                if self.telegram_client:
-                    await self.telegram_client.start()
-                    me = await self.telegram_client.get_me()
-                    print(f"Telegram connection OK: Logged in as {me.username}")
-                    await self.telegram_client.disconnect()
-                else:
-                    print("Using MCP only - no direct Telegram connection")
-                    
                 return True
                 
         except Exception as e:

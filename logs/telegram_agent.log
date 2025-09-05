@@ -1,0 +1,11 @@
+2025-09-05 23:20:55,026 - TelegramAgent - INFO - Telegram Monitoring Agent initialized with stdio transport
+2025-09-05 23:20:55,263 - telethon.crypto.libssl - INFO - Failed to load SSL library: <class 'OSError'> (no library called "ssl" found)
+2025-09-05 23:20:55,264 - telethon.crypto.aes - INFO - cryptg module not installed and libssl not found, falling back to (slower) Python encryption
+2025-09-05 23:20:59,472 - src.mcp_client - INFO - Starting local MCP server process: telegram-mcp
+2025-09-05 23:20:59,474 - src.mcp_client - ERROR - Failed to start MCP server process: [WinError 2] Не удается найти указанный файл
+2025-09-06 00:27:30,958 - TelegramAgent - INFO - Telegram Monitoring Agent initialized with stdio transport
+2025-09-06 00:27:30,959 - src.mcp_client - INFO - Starting local MCP server process: telegram-mcp
+2025-09-06 00:27:30,962 - src.mcp_client - ERROR - Failed to start MCP server process: [WinError 2] Не удается найти указанный файл
+2025-09-06 01:46:15,489 - TelegramAgent - INFO - Telegram Monitoring Agent initialized with stdio transport
+2025-09-06 01:46:15,491 - src.mcp_client - INFO - Starting local MCP server process: telegram-mcp
+2025-09-06 01:46:15,494 - src.mcp_client - ERROR - Failed to start MCP server process: [WinError 2] Не удается найти указанный файл
