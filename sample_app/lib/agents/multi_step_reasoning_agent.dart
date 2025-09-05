@@ -11,7 +11,7 @@ import 'package:sample_app/services/conversation_storage_service.dart';
 /// Минимальная реализация многоэтапного агента по схеме:
 /// Анализ -> План -> Исполнение/Проверка -> Синтез -> Рефлексия
 /// С фокусом на неблокирующий UI и безопасные фолбэки.
-class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
+class MultiStepReasoningAgent with AuthPolicyMixin implements IAgent, IStatefulAgent, IToolingAgent {
   final ConversationStorageService _store = ConversationStorageService();
   final List<Map<String, String>> _history = [];
   AppSettings _settings;
@@ -36,6 +36,8 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
 
   @override
   Future<AgentResponse> ask(AgentRequest req) async {
+    // AuthZ: ensure token/role/rate limit for single-shot ask
+    await ensureAuthorized(req, action: 'ask', requiredRole: null);
     // Одношаговый режим: запустить конвейер и дождаться финального результата
     final stream = start(req);
     if (stream == null) {
@@ -63,7 +65,51 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
 
   @override
   Stream<AgentEvent>? start(AgentRequest req) {
-    return _runPipeline(req);
+    // AuthZ: ensure token/rate limit for streaming (no role requirement for backward compatibility)
+    return _guardedStream(req, action: 'start', requiredRole: null);
+  }
+
+  // ===== Auth overrides =====
+  /// Минимальные/большие лимиты в зависимости от роли.
+  AgentLimits get _guestLimits => const AgentLimits(requestsPerHour: 1);
+  AgentLimits get _userLimits => const AgentLimits(requestsPerHour: 60);
+
+  /// Установить гостевой режим явно (используется при «Выйти» или «Зайти гостем» в UI).
+  void setGuest() {
+    updateAuthPolicy(role: AgentRoles.guest, limits: _guestLimits);
+  }
+
+  @override
+  Future<bool> authenticate(String? token) async {
+    // Вызов базовой логики (поднимет до user при ненулевом токене)
+    final ok = await super.authenticate(token);
+    // Применить соответствующие лимиты
+    if (token != null && token.isNotEmpty) {
+      updateAuthPolicy(role: AgentRoles.user, limits: _userLimits);
+    } else {
+      updateAuthPolicy(role: AgentRoles.guest, limits: _guestLimits);
+    }
+    return ok;
+  }
+
+  /// Wraps pipeline with auth/limits guard. On auth failure emits a single
+  /// pipeline_error event and closes the stream instead of throwing.
+  Stream<AgentEvent> _guardedStream(AgentRequest req, {required String action, String? requiredRole}) async* {
+    try {
+      await ensureAuthorized(req, action: action, requiredRole: requiredRole);
+    } catch (e) {
+      final runId = DateTime.now().millisecondsSinceEpoch.toString();
+      yield AgentEvent(
+        id: 'auth-error',
+        runId: runId,
+        stage: AgentStage.pipeline_error,
+        severity: AgentSeverity.error,
+        message: 'Authorization error: $e',
+        meta: {'action': action, 'requiredRole': requiredRole},
+      );
+      return;
+    }
+    yield* _runPipeline(req);
   }
 
   @override
@@ -303,7 +349,7 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
     final sys = 'Короткая рефлексия: оцени полноту ответа (кратко) и возможные улучшения. 1-2 предложения. Русский язык.';
     final messages = [
       {'role': 'system', 'content': sys},
-      {'role': 'user', 'content': 'Запрос: ${req.input}\nОтвет: ${finalText}'}
+      {'role': 'user', 'content': 'Запрос: ${req.input}\nОтвет: $finalText'}
     ];
     try {
       return await usecase.complete(messages: messages, settings: _settings);
@@ -430,7 +476,9 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
         out.add(x);
       }
     }
-    while (ops.isNotEmpty) out.add(ops.removeLast());
+    while (ops.isNotEmpty) {
+      out.add(ops.removeLast());
+    }
 
     // Evaluate RPN
     final st = <num>[];
@@ -571,7 +619,7 @@ class MultiStepReasoningAgent implements IAgent, IStatefulAgent, IToolingAgent {
 
   String _truncate(String s, int maxLen) {
     if (s.length <= maxLen) return s;
-    return s.substring(0, maxLen) + '…';
+    return '${s.substring(0, maxLen)}…';
   }
 }
 

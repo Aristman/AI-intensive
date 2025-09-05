@@ -11,11 +11,20 @@ class SettingsScreen extends StatefulWidget {
   static const Key settingsScreenKey = Key('settings_screen');
   final AppSettings initialSettings;
   final Function(AppSettings) onSettingsChanged;
+  // Optional DI for tests and customization
+  final SettingsService? settingsService;
+  final GithubMcpService? githubMcpService;
+  final McpClient? mcpClient;
+  final bool enableEnvChecks;
 
   const SettingsScreen({
     super.key,
     required this.initialSettings,
     required this.onSettingsChanged,
+    this.settingsService,
+    this.githubMcpService,
+    this.mcpClient,
+    this.enableEnvChecks = true,
   });
 
   @override
@@ -24,8 +33,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   late AppSettings _currentSettings;
-  final _settingsService = SettingsService();
-  final _githubMcpService = GithubMcpService();
+  late final SettingsService _settingsService;
+  late final GithubMcpService _githubMcpService;
   final _jsonSchemaController = TextEditingController();
   final _systemPromptController = TextEditingController();
   final _yandexTokensController = TextEditingController();
@@ -33,7 +42,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _tinylamaTokensController = TextEditingController();
   bool _isGithubTokenValid = false;
   // MCP client and state
-  final McpClient _mcpClient = McpClient();
+  late final McpClient _mcpClient;
   bool _mcpConnected = false;
   bool _mcpInitialized = false;
   bool _isCheckingMcp = false;
@@ -47,6 +56,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    _settingsService = widget.settingsService ?? SettingsService();
+    _githubMcpService = widget.githubMcpService ?? GithubMcpService();
+    _mcpClient = widget.mcpClient ?? McpClient();
     _currentSettings = widget.initialSettings;
     _jsonSchemaController.text = _currentSettings.customJsonSchema ?? '';
     _systemPromptController.text = _currentSettings.systemPrompt;
@@ -64,7 +76,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         widget.onSettingsChanged(_currentSettings);
       }
     });
-    _checkGithubTokenValidity();
+    if (widget.enableEnvChecks) {
+      _checkGithubTokenValidity();
+    }
   }
 
   Future<void> _checkGithubTokenValidity() async {

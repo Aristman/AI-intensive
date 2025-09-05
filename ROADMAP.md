@@ -10,6 +10,13 @@
   - [x] Обновлены README (root, `sample_app/README.md`) и `docs/github_agent_screen_plan.md`: добавлены примеры JSON‑RPC (initialize, tools/list, tools/call), актуализирован список MCP‑инструментов (удалён `list_issues`), описан локальный диалог настроек GitHubAgentScreen и тестовые ключи
  - [x] Унифицированный интерфейс агентов (IAgent, IStatefulAgent, IToolingAgent, DTOs и утилиты),
        добавлены юнит-тесты; документация: `docs/agent_interface.md`
+ - [x] Аутентификация, роли и лимиты агентов
+   - [x] Расширен `IAgent`: `authenticate(token)`, `role`, `limits` (обратная совместимость по умолчанию)
+   - [x] Миксин `AuthPolicyMixin`: базовая аутентификация, авторизация по ролям (`guest` < `user` < `admin`), rate‑limit per minute (`AgentLimits` + `SimpleRateLimiter`)
+   - [x] Обновлены реализации агентов: `AutoFixAgent`, `MultiStepReasoningAgent`, `CodeOpsBuilderAgent` — используют `with AuthPolicyMixin` и выполняют `ensureAuthorized(...)` в `ask()`/`start()`
+   - [x] Подключение агентов: токен обязателен при установке соединения (через `authenticate()` или `AgentRequest.authToken`); роль проверяется на действие; лимиты учитываются (ошибка при превышении)
+   - [x] Тесты: проверка аутентификации (валидный/невалидный токен), ролей (`admin/user/guest`), лимитов (rate‑limit). См. `sample_app/test/agent_interface_test.dart` и тесты агентов
+   - [x] Документация: добавлена секция «Аутентификация, роли и лимиты агентов» в `README.md`
 
 ## mcp_server/
 - [ ] Dockerfile + docker-compose (node:lts-alpine, healthcheck)
@@ -55,6 +62,11 @@
   - [x] Обновлен LLM resolver для поддержки TinyLlama
   - [x] Добавлены unit-тесты для TinyLlamaUseCase и обновлены тесты resolver
   - [x] Обновлена документация в README.md с описанием новой модели
+ - [x] Стабилизация виджет‑тестов SettingsScreen
+   - [x] Внедрён DI в `lib/screens/settings_screen.dart` (параметры: `settingsService`, `githubMcpService`, `mcpClient`, `enableEnvChecks`)
+   - [x] Тесты `test/screens/settings_screen_test.dart` передают `enableEnvChecks: false` и мок `SettingsService` для изоляции `SharedPreferences`
+   - [x] Фоновые проверки окружения (валидность GitHub токена) отключены в тестах флагом `enableEnvChecks`, что устранило флаковость из‑за асинхронных `setState`
+   - [x] Добавлены стабильные ожидания (`pumpAndSettle`) после интеракций; полный прогон тестов проходит стабильно
  - [ ] Интеграция `McpGithubService` в `GitHubAgentScreen` (создание релиза, управление PR) и покрытие виджет/юнит‑тестами
    - [x] Убран ввод owner/repo из основного UI; добавлен локальный диалог настроек с валидацией и персистентностью
    - [x] Ключи для тестов диалога: `github_local_owner_field`, `github_local_repo_field`, `github_local_repos_limit_field`, `github_local_issues_limit_field`, `github_local_other_limit_field`, `github_local_save_btn`; кнопка `github_local_settings_btn`; лейбл контекста `github_repo_context_label`
@@ -67,6 +79,10 @@
    - [ ] Verbose‑логирование MCP: настройка в Settings и документация, где смотреть логи (dev.log)
    - [ ] Улучшения мок‑клиента MCP: кэш `tools/list` по URL, preflight‑проверки доступности инструментов
    - [ ] Предупреждение в UI при отключённом MCP (tooltip/snackbar) и покрытие тестами
+ - [x] Многоэтапный агент: мок‑аутентификация и роли
+   - [x] Экран `lib/screens/reasoning_agent_screen.dart`: диалог входа при открытии (логин/пароль), кнопка «Зайти гостем», кнопка AppBar «Войти/Выйти», токен хранится в состоянии экрана и передаётся в `AgentRequest.authToken`
+   - [x] Агент `lib/agents/multi_step_reasoning_agent.dart`: переопределён `authenticate()` с лимитами — роль `guest` (3 req/min) без токена и роль `user` (60 req/min) с любым непустым токеном; добавлен `setGuest()`
+   - [x] UI: убран заголовок «Многоэтапный агент» из AppBar
 - [x] AutoFix (MVP): базовый агент и экран `AutoFix`
   - [x] Стриминг событий: `pipeline_start` → `analysis_started` → `analysis_result` (warning при пустом пути/нет файлов) → `pipeline_complete`
   - [x] Базовые фиксы: удаление хвостовых пробелов, добавление финальной новой строки

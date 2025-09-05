@@ -8,7 +8,7 @@ import 'package:sample_app/utils/unified_diff_utils.dart';
 
 /// AutoFixAgent: анализ и предложение исправлений для файла или директории.
 /// MVP каркас: возвращает заглушки и стримит базовые события пайплайна.
-class AutoFixAgent implements IAgent {
+class AutoFixAgent with AuthPolicyMixin implements IAgent {
   AppSettings? _settings;
 
   AutoFixAgent({AppSettings? initialSettings}) : _settings = initialSettings;
@@ -28,6 +28,8 @@ class AutoFixAgent implements IAgent {
 
   @override
   Future<AgentResponse> ask(AgentRequest req) async {
+    // AuthZ: проверка токена/лимитов (без строгих ролей для обратной совместимости)
+    await ensureAuthorized(req, action: 'ask');
     // MVP: просто подтверждаем получение запроса
     final u = AgentTextUtils.extractUncertainty(req.input);
     return AgentResponse(
@@ -60,6 +62,21 @@ class AutoFixAgent implements IAgent {
     ));
 
     Timer.run(() async {
+      // AuthZ: проверка перед запуском пайплайна (стрим)
+      try {
+        await ensureAuthorized(req, action: 'start');
+      } catch (e) {
+        ctrl.add(AgentEvent(
+          id: 'auth-error',
+          runId: runId,
+          stage: AgentStage.pipeline_error,
+          severity: AgentSeverity.error,
+          message: 'Authorization error: $e',
+          meta: {'action': 'start'},
+        )) ;
+        await ctrl.close();
+        return;
+      }
       ctrl.add(AgentEvent(
         id: 'e1',
         runId: runId,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/screens/settings_screen.dart';
 import 'package:sample_app/services/settings_service.dart';
@@ -33,6 +34,16 @@ void main() {
     registerFallbackValue(const AppSettings());
   });
 
+  setUp(() {
+    // Изолируем состояние хранилища между тестами
+    SharedPreferences.setMockInitialValues({});
+  });
+
+  tearDown(() {
+    // Сбрасываем состояние после каждого теста
+    SharedPreferences.setMockInitialValues({});
+  });
+
   group('SettingsScreen', () {
     late AppSettings initialSettings;
     late MockNavigatorObserver mockObserver;
@@ -58,6 +69,8 @@ void main() {
           home: SettingsScreen(
             initialSettings: initialSettings,
             onSettingsChanged: (_) {},
+            enableEnvChecks: false,
+            settingsService: mockSettingsService,
           ),
           navigatorObservers: [mockObserver],
         ),
@@ -79,6 +92,8 @@ void main() {
           home: SettingsScreen(
             initialSettings: initialSettings,
             onSettingsChanged: (settings) => savedSettings = settings,
+            enableEnvChecks: false,
+            settingsService: mockSettingsService,
           ),
           navigatorObservers: [mockObserver],
         ),
@@ -109,6 +124,8 @@ void main() {
           home: SettingsScreen(
             initialSettings: initialSettings,
             onSettingsChanged: (_) {},
+            enableEnvChecks: false,
+            settingsService: mockSettingsService,
           ),
           navigatorObservers: [mockObserver],
         ),
@@ -147,6 +164,8 @@ void main() {
           home: SettingsScreen(
             initialSettings: initialSettings,
             onSettingsChanged: (settings) => savedSettings = settings,
+            enableEnvChecks: false,
+            settingsService: mockSettingsService,
           ),
           navigatorObservers: [mockObserver],
         ),

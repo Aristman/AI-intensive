@@ -6,6 +6,8 @@ import 'package:sample_app/agents/agent_interface.dart';
 import 'package:sample_app/agents/multi_step_reasoning_agent.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/settings_service.dart';
+import 'package:sample_app/services/auth_service.dart';
+import 'package:sample_app/widgets/safe_send_text_field.dart';
 
 class ReasoningAgentScreen extends StatefulWidget {
   const ReasoningAgentScreen({super.key});
@@ -27,6 +29,7 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
   final List<AgentEvent> _events = [];
   String _finalMd = '';
   bool _mcpUsed = false;
+  final AuthService _auth = AuthService();
 
   static const String _conversationKey = 'multi_step_reasoning_screen';
 
@@ -34,12 +37,22 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
   void initState() {
     super.initState();
     _loadSettings();
+    // Следим за изменениями глобальной аутентификации
+    _auth.addListener(_onAuthChanged);
   }
 
   Future<void> _loadSettings() async {
     final s = await _settingsService.getSettings();
     setState(() => _settings = s);
     _agent = MultiStepReasoningAgent(settings: s, conversationKey: _conversationKey);
+    // Устанавливаем режим в зависимости от глобального токена
+    final token = _auth.token;
+    if (token == null || token.isEmpty) {
+      _agent!.setGuest();
+      await _agent!.authenticate(null);
+    } else {
+      await _agent!.authenticate(token);
+    }
   }
 
   @override
@@ -47,6 +60,7 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
     _sub?.cancel();
     _controller.dispose();
     _agent?.dispose();
+    _auth.removeListener(_onAuthChanged);
     super.dispose();
   }
 
@@ -61,7 +75,11 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
       _mcpUsed = false;
     });
 
-    final req = AgentRequest(txt, timeout: const Duration(seconds: 30));
+    final req = AgentRequest(
+      txt,
+      timeout: const Duration(seconds: 30),
+      authToken: _auth.token,
+    );
     final stream = _agent!.start(req);
     _sub?.cancel();
     _sub = stream?.listen((e) {
@@ -94,38 +112,57 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
     setState(() => _busy = false);
   }
 
+  Future<void> _onAuthChanged() async {
+    if (_agent == null) return;
+    final token = _auth.token;
+    if (token == null || token.isEmpty) {
+      _agent!.setGuest();
+      await _agent!.authenticate(null);
+    } else {
+      await _agent!.authenticate(token);
+    }
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Многоэтапный агент'),
-        actions: [
-          if (_mcpUsed)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0),
-              child: Tooltip(
-                message: 'MCP: использован поиск',
-                child: Icon(Icons.cloud_done, color: Theme.of(context).colorScheme.tertiary),
-              ),
-            ),
-        ],
-      ),
       body: Column(
         children: [
+          if (_mcpUsed)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Tooltip(
+                  message: 'MCP: использован поиск',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.cloud_done, color: Theme.of(context).colorScheme.tertiary),
+                      const SizedBox(width: 8),
+                      Text(
+                        'MCP использован',
+                        style: TextStyle(color: Theme.of(context).colorScheme.tertiary),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           Padding(
-            padding: const EdgeInsets.all(12.0),
+            padding: const EdgeInsets.all(12),
             child: Row(
               children: [
                 Expanded(
-                  child: TextField(
+                  child: SafeSendTextField(
                     controller: _controller,
-                    minLines: 1,
-                    maxLines: 4,
-                    decoration: const InputDecoration(
-                      labelText: 'Ваш запрос',
-                      border: OutlineInputBorder(),
-                    ),
-                    onSubmitted: (_) => _run(),
+                    enabled: !_busy,
+                    hintText: 'Ваш запрос',
+                    border: const OutlineInputBorder(),
+                    filled: false,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                    onSend: (_) => _run(),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -264,6 +301,6 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
 
   String _shorten(String s, {int max = 240}) {
     if (s.length <= max) return s;
-    return s.substring(0, max) + '…';
+    return '${s.substring(0, max)}…';
   }
 }

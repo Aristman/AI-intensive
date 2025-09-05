@@ -137,6 +137,14 @@ samples, guidance on mobile development, and a full API reference.
 - Асинхронность UI: после нажатия «Отправить» добавляйте `await tester.pump(const Duration(milliseconds: 50));` и затем `pumpAndSettle()` для стабильного ожидания MCP.
 - Мок MCP‑клиента: разделяйте `tools/list` и `tools/call`; для отсутствующих handlers возвращайте JSON‑RPC `-32601` ("Tool not found").
 
+### Стабилизация виджет‑тестов SettingsScreen
+
+- Для устранения флаков в тестах `SettingsScreen` добавлены параметры конструктора: `settingsService`, `githubMcpService`, `mcpClient` и флаг `enableEnvChecks` (по умолчанию `true`). См. `lib/screens/settings_screen.dart`.
+- В тестах передавайте `enableEnvChecks: false`, чтобы отключить фоновые проверки окружения (например, валидацию GitHub‑токена из `.env`), которые могли вызывать неожиданные асинхронные `setState`.
+- Инжектируйте мок `SettingsService` через параметр `settingsService`, чтобы изолировать доступ к `SharedPreferences` и избежать протечек состояния между тестами.
+- Рекомендуется после пользовательских действий вызывать `await tester.pumpAndSettle()` для стабильного ожидания всех анимаций/асинхронных задач.
+- Примеры смотрите в `test/screens/settings_screen_test.dart`.
+
 ## AutoFix (MVP)
 
 Экран и агент для базового автоматического исправления файлов.

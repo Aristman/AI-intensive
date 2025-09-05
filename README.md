@@ -92,6 +92,12 @@ This repository contains multiple projects that showcase and integrate AI-assist
 - Flutter: `cd sample_app && flutter test`
 - JVM modules: `./gradlew test`
 
+ Примечание по стабильности тестов SettingsScreen:
+ - Виджет‑тесты экрана настроек стабилизированы за счёт внедрения DI и флага `enableEnvChecks`.
+ - В тестах передавайте `enableEnvChecks: false` в конструктор `SettingsScreen`, чтобы отключить фоновые проверки окружения (например, валидацию GitHub‑токена из `.env`).
+ - Инжектируйте мок `SettingsService` через параметр конструктора `settingsService`, чтобы изолировать доступ к `SharedPreferences` и избежать протечек состояния между тестами.
+ - См. `sample_app/test/screens/settings_screen_test.dart` для примеров.
+
 ---
 
 ## Development Notes / Заметки разработки
@@ -118,6 +124,54 @@ This repository contains multiple projects that showcase and integrate AI-assist
  пайплайна.
 
 - Совместимость с YandexGPT: для повышения соблюдения строгого JSON в `sample_app/lib/data/llm/yandexgpt_usecase.dart` системные инструкции переносятся в первое `user`‑сообщение. В `sample_app/lib/agents/code_ops_builder_agent.dart` добавлен fallback при отсутствии JSON — извлечение кода и тестов из fenced‑блоков и формирование минимального валидного JSON для продолжения пайплайна. Покрыто тестами: `sample_app/test/code_ops_builder_agent_yandex_fallback_test.dart`. Подробности: раздел «Совместимость с YandexGPT» в `docs/code_ops_builder_agent.md`.
+
+---
+
+## Аутентификация, роли и лимиты агентов
+
+В проекте реализована единая система авторизации и политик доступа для всех агентов.
+
+- Файлы и ключевые сущности:
+  - `sample_app/lib/agents/agent_interface.dart`
+    - Интерфейс `IAgent` (единая точка интеграции в приложении)
+    - DTO: `AgentRequest` (поле `authToken`), `AgentResponse`, `AgentEvent`, `AgentCapabilities`, `AgentLimits`
+    - Роли: `AgentRoles` (`guest` < `user` < `admin`)
+    - Миксин `AuthPolicyMixin`: базовая аутентификация/авторизация/лимиты (rate‑limit per minute)
+  - Реализации агентов используют `with AuthPolicyMixin` и выполняют проверки через `ensureAuthorized(...)`:
+    - `sample_app/lib/agents/auto_fix/auto_fix_agent.dart`
+    - `sample_app/lib/agents/multi_step_reasoning_agent.dart`
+    - `sample_app/lib/agents/code_ops_builder_agent.dart`
+
+- Использование в коде:
+  - Аутентификация: вызовите `agent.authenticate(token)` один раз при подключении, либо передавайте `authToken` в `AgentRequest`.
+  - Роли и доступ: методы агентов выполняют `ensureAuthorized(req, action: 'ask'|'start', requiredRole: null|"user"|"admin")`.
+  - Лимиты: задаются через `AgentLimits(requestsPerMinute: N)`, rate‑limit применяется автоматически на каждое действие (`ask`/`start`).
+
+- Обратная совместимость:
+  - По умолчанию (`authenticate` не вызывали) агент остаётся в состоянии гостя, но с «мягкой» политикой — действия разрешены, лимиты не ограничивают (unlimited).
+  - Явное использование токена поднимает роль минимум до `user` (поведение можно переопределить), при необходимости можно требовать `requiredRole` на методах.
+
+- Расширяемость:
+  - Роли можно расширять, добавив новые значения и логику сравнения в `AgentRoles`.
+  - Политики лимитов можно кастомизировать, заменив простую реализацию `SimpleRateLimiter`.
+
+Пример передачи токена на запрос:
+
+```dart
+final res = await agent.ask(AgentRequest(
+  'Сгенерируй класс ...',
+  authToken: '<YOUR_TOKEN>',
+));
+```
+
+Инициализация лимитов и роли (например, при настройке агента в приложении):
+
+```dart
+(agent as AuthPolicyMixin).updateAuthPolicy(
+  role: AgentRoles.user,
+  limits: const AgentLimits(requestsPerMinute: 60),
+);
+```
 
 ---
 

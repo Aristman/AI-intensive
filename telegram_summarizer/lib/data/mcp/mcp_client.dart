@@ -86,7 +86,9 @@ class McpClient {
         int? id;
         if (idRaw is int) {
           id = idRaw;
-        } else if (idRaw is String) id = int.tryParse(idRaw);
+        } else if (idRaw is String) {
+          id = int.tryParse(idRaw);
+        }
         if (id != null) {
           final completer = _pending.remove(id);
           if (completer != null) {
