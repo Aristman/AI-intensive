@@ -8,6 +8,7 @@ import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/settings_service.dart';
 import 'package:sample_app/services/auth_service.dart';
 import 'package:sample_app/widgets/safe_send_text_field.dart';
+import 'package:sample_app/services/user_profile_controller.dart';
 
 class ReasoningAgentScreen extends StatefulWidget {
   const ReasoningAgentScreen({super.key});
@@ -30,6 +31,8 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
   String _finalMd = '';
   bool _mcpUsed = false;
   final AuthService _auth = AuthService();
+  final UserProfileController _profile = UserProfileController();
+  VoidCallback? _profileListener;
 
   static const String _conversationKey = 'multi_step_reasoning_screen';
 
@@ -39,19 +42,35 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
     _loadSettings();
     // Следим за изменениями глобальной аутентификации
     _auth.addListener(_onAuthChanged);
+    // Загрузка и подписка на изменения профиля
+    _profile.setCurrentLogin(_auth.login);
+    _profileListener = () {
+      if (mounted) setState(() {});
+    };
+    _profile.addListener(_profileListener!);
   }
 
   Future<void> _loadSettings() async {
     final s = await _settingsService.getSettings();
     setState(() => _settings = s);
+    // Обновляем контекст профиля под текущий login
+    await _profile.setCurrentLogin(_auth.login);
     _agent = MultiStepReasoningAgent(settings: s, conversationKey: _conversationKey);
     // Устанавливаем режим в зависимости от глобального токена
     final token = _auth.token;
     if (token == null || token.isEmpty) {
       _agent!.setGuest();
       await _agent!.authenticate(null);
+      // Гостевой режим в профиле
+      await _profile.updateRole('guest');
     } else {
       await _agent!.authenticate(token);
+      // Логин есть — проставим роль user и имя из AuthService, если доступно
+      await _profile.updateRole('user');
+      final loginName = _auth.login;
+      if (loginName != null && loginName.isNotEmpty) {
+        await _profile.updateName(loginName);
+      }
     }
   }
 
@@ -61,6 +80,9 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
     _controller.dispose();
     _agent?.dispose();
     _auth.removeListener(_onAuthChanged);
+    if (_profileListener != null) {
+      _profile.removeListener(_profileListener!);
+    }
     super.dispose();
   }
 
@@ -75,10 +97,17 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
       _mcpUsed = false;
     });
 
+    // Важно: перезагружаем профиль из SharedPreferences перед каждым запуском,
+    // чтобы учесть последние изменения предпочтений/исключений для текущего пользователя.
+    await _profile.load();
+
     final req = AgentRequest(
       txt,
       timeout: const Duration(seconds: 30),
       authToken: _auth.token,
+      context: {
+        'user_profile': _profile.profile.toJson(),
+      },
     );
     final stream = _agent!.start(req);
     _sub?.cancel();
@@ -115,11 +144,22 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
   Future<void> _onAuthChanged() async {
     if (_agent == null) return;
     final token = _auth.token;
+    // Переключаем контекст профиля согласно текущему логину
+    await _profile.setCurrentLogin(_auth.login);
     if (token == null || token.isEmpty) {
       _agent!.setGuest();
       await _agent!.authenticate(null);
+      // Синхронизируем профиль: гостевая роль и пустое имя отображается как "Гость"
+      await _profile.updateRole('guest');
+      await _profile.updateName('');
     } else {
       await _agent!.authenticate(token);
+      // Авторизован: роль user и имя из _auth.login, если есть
+      await _profile.updateRole('user');
+      final loginName = _auth.login;
+      if (loginName != null && loginName.isNotEmpty) {
+        await _profile.updateName(loginName);
+      }
     }
     if (mounted) setState(() {});
   }
@@ -154,6 +194,19 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
             padding: const EdgeInsets.all(12),
             child: Row(
               children: [
+                // Профиль пользователя слева от поля ввода
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.person, size: 18),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${_profile.profile.name} (${_profile.profile.role})',
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(width: 12),
+                  ],
+                ),
                 Expanded(
                   child: SafeSendTextField(
                     controller: _controller,

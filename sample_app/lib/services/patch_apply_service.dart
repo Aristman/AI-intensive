@@ -33,12 +33,15 @@ class PatchApplyService {
         final diff = p['diff'] as String?;
         if (newContent == null && diff == null) {}
         if (newContent == null && diff is String) {
-          // Всегда используем LLM-агента для применения диффа
+          // Сначала пробуем простой парсер полного unified diff (по всему файлу)
           final file = File(path);
           final existed = await file.exists();
           final original = existed ? await file.readAsString() : '';
-          if (settings == null) {
-          } else {
+          final simple = _tryApplySimpleFullFileUnifiedDiff(original, diff);
+          if (simple != null) {
+            newContent = simple;
+          } else if (settings != null) {
+            // Если простой парсер не сработал — пробуем LLM-агента (как раньше)
             try {
               final agent = DiffApplyAgent();
               final llmResult = await agent.apply(
@@ -120,6 +123,58 @@ class PatchApplyService {
     }
     _lastBackup = null;
     return restored;
+  }
+
+  /// Простой парсер полного unified diff по всему файлу.
+  /// Возвращает новое содержимое файла или null, если формат не распознан.
+  /// Поддерживаемый формат (один hunk, только замены без контекстных строк):
+  /// --- a/...
+  /// +++ b/...
+  /// @@ -X,Y +U,V @@
+  /// -old
+  /// +new
+  String? _tryApplySimpleFullFileUnifiedDiff(String original, String diff) {
+    final lines = diff.split('\n');
+    if (lines.length < 4) return null;
+    // Проверка заголовков
+    if (!lines[0].startsWith('--- a/') || !lines[1].startsWith('+++ b/')) return null;
+    // Минимум один hunk
+    final hasHunk = lines.any((l) => l.startsWith('@@'));
+    if (!hasHunk) return null;
+
+    final plus = <String>[];
+    var insideHunk = false;
+    for (final l in lines.skip(2)) {
+      if (l.startsWith('@@')) {
+        insideHunk = true;
+        continue;
+      }
+      if (!insideHunk) continue; // пропускаем всё до первого @@
+      if (l.isEmpty) continue;
+      if (l.startsWith(' ')) {
+        // контекстные строки — не поддерживаем в простом парсере
+        return null;
+      }
+      if (l.startsWith('+++') || l.startsWith('---')) {
+        // вторые заголовки — считаем сложным кейсом
+        return null;
+      }
+      if (l.startsWith('+')) {
+        // Исключаем заголовок +++
+        if (l.startsWith('+++')) return null;
+        plus.add(l.substring(1));
+      } else if (l.startsWith('-')) {
+        // удаляемые строки — игнорируем, результат строим из плюсов
+        continue;
+      } else {
+        // что-то иное — не поддерживаем
+        return null;
+      }
+    }
+    if (plus.isEmpty) return null;
+    // Собираем новое содержимое, добавляем завершающую новую строку
+    final content = plus.join('\n');
+    return content.endsWith('\n') ? content : '$content\n';
   }
 }
 

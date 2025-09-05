@@ -48,6 +48,7 @@ This repository contains multiple projects that showcase and integrate AI-assist
   - Global AppBar (`HomeScreen`) contains an MCP status chip: `MCP off`/`MCP ready`/`MCP active`; tooltip shows MCP URL or fallback note.
   - Navigation is driven by the `Screen` enum as the single source of truth (icons, labels, bottom navigation destinations, and page factory) — see `sample_app/lib/screens/screens.dart`.
   - GitHubAgentScreen: repository context (owner/repo) is driven by app settings, not text fields. The screen has a local settings dialog to configure owner, repo, and list limits (repos/issues/other). UI shows the current repo context in the header; MCP tool calls and summaries respect these settings and limits. Keys are provided for tests: `github_local_settings_btn`, `github_repo_context_label`, fields like `github_local_owner_field` and `github_local_save_btn`.
+  - User Profile feature: editable user profile (name, role, preferences, exclusions) with persistence and agent integration. See section "User Profile / Профиль пользователя" in `sample_app/README.md`.
   - See `sample_app/README.md` for details.
 
 - `issue-monitor/`

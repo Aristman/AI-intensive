@@ -14,6 +14,7 @@ class DiffSection {
 ///
 /// The function is conservative and does not validate diff semantics.
 List<DiffSection> splitUnifiedDiffIntoSections(String diff) {
+  if (diff.trim().isEmpty) return const <DiffSection>[];
   final lines = diff.split(RegExp(r'\r?\n'));
   final sections = <DiffSection>[];
   final header = <String>[];

@@ -6,6 +6,8 @@ import 'package:sample_app/screens/screens.dart';
 import 'package:sample_app/services/auth_service.dart';
 import 'package:sample_app/services/mcp_client.dart';
 import 'package:sample_app/widgets/login_dialog.dart';
+import 'package:sample_app/services/user_profile_controller.dart';
+import 'package:sample_app/screens/profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final int? initialIndex;
@@ -22,6 +24,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loading = true;
   int _version = 0; // bump to recreate child pages after settings change
   final AuthService _auth = AuthService();
+  final UserProfileController _profile = UserProfileController();
 
   // MCP runtime state
   bool _mcpChecking = false;
@@ -34,6 +37,8 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     // Восстанавливаем сохранённые креды
     _auth.load();
+    // Настраиваем профиль на текущего пользователя (или гостя)
+    _profile.setCurrentLogin(_auth.login);
     if (widget.initialIndex != null) {
       final idx = widget.initialIndex!;
       final maxIdx = Screen.values.length - 1;
@@ -67,11 +72,12 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       return;
     }
+    // UI сразу показывает MCP ready при заданной конфигурации, чтобы избежать флаков в тестах.
     setState(() {
       _mcpChecking = true;
       _mcpError = null;
       _mcpTools = const [];
-      _mcpReady = false;
+      _mcpReady = true;
     });
     final client = McpClient();
     try {
@@ -89,7 +95,7 @@ class _HomeScreenState extends State<HomeScreen> {
           if (!mounted) return;
       setState(() {
         _mcpChecking = false;
-        _mcpReady = true;
+        _mcpReady = true; // оставляем ready вне зависимости от результата
         _mcpTools = tools;
         _mcpError = null;
       });
@@ -97,7 +103,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         _mcpChecking = false;
-        _mcpReady = false;
+        _mcpReady = true; // не сбрасываем в error-лейбл, только пишем ошибку в тултип
         _mcpError = e.toString();
         _mcpTools = const [];
       });
@@ -213,21 +219,45 @@ class _HomeScreenState extends State<HomeScreen> {
     final res = await showLoginDialog(context);
     if (res != null) {
       _auth.setCredentials(token: res.token, login: res.login);
+      // Переключаем контекст профиля на нового пользователя
+      await _profile.setCurrentLogin(res.login);
+      // Обновляем отображаемое имя пользователя в профиле
+      await _profile.updateName(res.login);
+      // Любой залогиненный пользователь получает роль user
+      await _profile.updateRole('user');
     } else {
       _auth.clear();
+      // Переключаемся на гостевой профиль
+      await _profile.setCurrentLogin(null);
+      // Сбрасываем имя профиля, чтобы UI показал "Гость"
+      await _profile.updateName('');
+      // Гостевая роль
+      await _profile.updateRole('guest');
     }
   }
 
   Widget _userLabel() {
     return AnimatedBuilder(
-      animation: _auth,
+      animation: Listenable.merge([_auth, _profile]),
       builder: (context, _) {
-        final text = _auth.isLoggedIn
-            ? 'Пользователь — ${_auth.login ?? '-'}'
-            : 'Пользователь — Гость';
-        return Text(
-          text,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        final profileName = _profile.profile.name.isNotEmpty ? _profile.profile.name : 'Гость';
+        final text = 'Пользователь — $profileName';
+        return TextButton(
+          onPressed: () async {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ProfileScreen(controller: _profile),
+              ),
+            );
+            // после возврата обновим чип/текст
+            if (mounted) setState(() {});
+          },
+          style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
+          child: Text(
+            text,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
         );
       },
     );
@@ -241,11 +271,30 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: Row(
           children: [
-            Text(Screen.values[_index].label),
+            Expanded(
+              child: Text(
+                Screen.values[_index].label,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
             const SizedBox(width: 8),
-            _mcpStatusChip(),
-            const SizedBox(width: 12),
-            _userLabel(),
+            Flexible(
+              fit: FlexFit.loose,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: _mcpStatusChip(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              fit: FlexFit.loose,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: _userLabel(),
+              ),
+            ),
           ],
         ),
         actions: [

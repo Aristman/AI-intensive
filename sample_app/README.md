@@ -67,6 +67,40 @@ samples, guidance on mobile development, and a full API reference.
 - Сервис: `lib/services/yandex_speech_service.dart` (REST вызовы SpeechKit, IAM/API‑Key аутентификация).
 - UI: `lib/screens/chat_screen.dart` (кнопки записи/воспроизведения, интеграция `record`/`audioplayers`).
 
+## User Profile / Профиль пользователя
+
+Фича профиля пользователя добавляет персонализацию и доступ к данным пользователя для агентов.
+
+- Модель данных: `lib/models/user_profile.dart`
+  - `UserProfile { name, role, preferences[], exclusions[] }`
+  - `ProfileEntry { title, description }`
+  - JSON сериализация: `toJson()/fromJson()`, строки: `toJsonString()/fromJsonString()`
+
+- Хранилище: `lib/services/user_profile_repository.dart`
+  - Локальное сохранение в `SharedPreferences` (ключ `user_profile_json`)
+  - Методы: `loadProfile()`, `saveProfile(profile)`
+
+- Контроллер: `lib/services/user_profile_controller.dart`
+  - `ChangeNotifier` с API: `load()`, `updateName()`, `updateRole()`, `add/edit/removePreference()`, `add/edit/removeExclusion()`
+
+- Экран профиля: `lib/screens/profile_screen.dart`
+  - Редактирование имени и роли
+  - CRUD для списков «Предпочтения» и «Исключения» через модальные диалоги («Название», «Описание»)
+
+- Интеграция в UI:
+  - `lib/screens/home_screen.dart`: в AppBar отображается кнопка c именем пользователя; по нажатию — переход на `ProfileScreen`.
+  - `lib/screens/chat_screen.dart`: в режиме рассуждений показывает имя и роль; профиль прокидывается в `ReasoningAgent`.
+  - `lib/screens/reasoning_agent_screen.dart`: имя и роль рядом с полем ввода; профиль добавляется в `AgentRequest.context.user_profile`.
+
+- Интеграция в агентов:
+  - `lib/agents/reasoning_agent.dart`: метод `setUserProfile(UserProfile?)`; профиль добавляется в системный промпт (JSON‑секция) и в обогащённый контекст.
+  - `lib/agents/multi_step_reasoning_agent.dart`: читает `req.context.user_profile` и добавляет JSON профиля в сообщения этапов (`analyze/plan`, `validate`, `synthesize`, `reflect`). Лимиты/авторизация не изменялись.
+
+Тесты профиля:
+- Юнит‑тесты: см. `test/models/user_profile_test.dart`, `test/services/user_profile_repository_test.dart`.
+- Виджет‑тесты: см. `test/screens/profile_screen_test.dart`.
+- Запуск: `cd sample_app && flutter test`.
+
 ## MCP GitHub интеграция
 
 Примечание: cейчас MCP сервер расположен на верхнем уровне проекта в папке `mcp_server/` (раньше был в `sample_app/mcp_server/`).

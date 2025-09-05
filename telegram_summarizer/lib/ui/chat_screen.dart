@@ -102,13 +102,15 @@ class _ChatScreenState extends State<ChatScreen> {
               icon: const Icon(Icons.refresh),
               onPressed: () async {
                 await context.read<ChatState>().reconnectMcp();
-                if (!mounted) return;
+                if (!context.mounted) return;
                 final cs = context.read<ChatState>();
                 if (cs.mcpError != null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  final messenger = ScaffoldMessenger.of(context);
+                  final colorScheme = Theme.of(context).colorScheme;
+                  messenger.showSnackBar(
                     SnackBar(
                       content: Text('Не удалось подключиться к MCP: ${cs.mcpError}'),
-                      backgroundColor: Theme.of(context).colorScheme.error,
+                      backgroundColor: colorScheme.error,
                     ),
                   );
                 }

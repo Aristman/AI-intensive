@@ -13,6 +13,7 @@ import 'package:sample_app/widgets/safe_send_text_field.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:sample_app/services/user_profile_controller.dart';
 
 class ChatScreen extends StatefulWidget {
   final String title;
@@ -43,6 +44,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isTtsLoading = false;
   bool _autoVoiceReply = false; // автоозвучивание ответов (только для Яндекс GPT)
+  // Профиль пользователя
+  final UserProfileController _profile = UserProfileController();
+  VoidCallback? _profileListener;
 
   bool get _useReasoning => widget.reasoningOverride == true;
 
@@ -50,6 +54,14 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _loadSettings();
+    // Загрузим профиль и подпишемся на изменения
+    _profile.load();
+    _profileListener = () {
+      // при изменении профиля обновляем профиль в агенте
+      _reasoningAgent?.setUserProfile(_profile.profile);
+      if (mounted) setState(() {});
+    };
+    _profile.addListener(_profileListener!);
   }
 
   bool get _isYandexReasoning =>
@@ -384,6 +396,8 @@ class _ChatScreenState extends State<ChatScreen> {
       // Инициализируем ReasoningAgent с ключом беседы и подгружаем историю из хранилища
       _reasoningAgent = ReasoningAgent(baseSettings: _appSettings, conversationKey: _conversationKey);
       _simpleAgent = null;
+      // Прокидываем профиль в агента
+      _reasoningAgent!.setUserProfile(_profile.profile);
       final loaded = await _reasoningAgent!.setConversationKey(_conversationKey);
       if (mounted) {
         setState(() {
@@ -423,6 +437,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _textController.dispose();
     _scrollController.dispose();
     _mcpIndicatorTimer?.cancel();
+    if (_profileListener != null) {
+      _profile.removeListener(_profileListener!);
+    }
     // SimpleAgent/ReasoningAgent не требуют dispose
     _audioPlayer.dispose();
     _recorder.dispose();
@@ -449,6 +466,17 @@ class _ChatScreenState extends State<ChatScreen> {
               padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
               child: Row(
                 children: [
+                  // Отображение профиля пользователя
+                  Row(
+                    children: [
+                      const Icon(Icons.person, size: 18),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${_profile.profile.name} (${_profile.profile.role})',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
                   const Spacer(),
                   if (_isYandexReasoning)
                     Row(
