@@ -1,10 +1,12 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:sample_app/agents/agent.dart' show Agent; // for stopSequence
 import 'package:sample_app/domain/llm_resolver.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/yandex_speech_service.dart';
 import 'package:sample_app/services/mcp_integration_service.dart';
 import 'package:sample_app/services/conversation_storage_service.dart';
+import 'package:sample_app/models/user_profile.dart';
 
 class ReasoningResult {
   final String text;
@@ -35,6 +37,8 @@ class ReasoningAgent {
   String? _conversationKey;
   // Ленивая инициализация сервиса речи только для YandexGPT
   YandexSpeechService? _speech;
+  // Профиль пользователя (опционально)
+  UserProfile? _userProfile;
 
   ReasoningAgent({AppSettings? baseSettings, this.extraSystemPrompt, this.summarizerOverride, String? conversationKey})
       : _settings = (baseSettings ?? const AppSettings()).copyWith(
@@ -47,6 +51,11 @@ class ReasoningAgent {
 
   void updateSettings(AppSettings settings) {
     _settings = settings.copyWith(reasoningMode: true);
+  }
+
+  /// Установить профиль пользователя (может быть null)
+  void setUserProfile(UserProfile? profile) {
+    _userProfile = profile;
   }
 
   void clearHistory() => _history.clear();
@@ -139,7 +148,13 @@ class ReasoningAgent {
     final extras = (extraSystemPrompt != null && extraSystemPrompt!.trim().isNotEmpty)
         ? '\n\n${extraSystemPrompt!.trim()}'
         : '';
-    return '${_settings.systemPrompt}\n\n$uncertaintyPolicy$extras';
+    final base = '${_settings.systemPrompt}\n\n$uncertaintyPolicy$extras';
+    // Добавим секцию профиля, если он есть (как часть системного промпта)
+    if (_userProfile != null) {
+      final profileJson = jsonEncode(_userProfile!.toJson());
+      return '$base\n\n=== Профиль пользователя (JSON) ===\n$profileJson\n=== Конец профиля ===';
+    }
+    return base;
   }
 
   Future<Map<String, dynamic>> ask(String userText) async {
@@ -163,6 +178,10 @@ class ReasoningAgent {
 
     // Обогащаем контекст через MCP сервис
     final enrichedContext = await _mcpIntegrationService.enrichContext(userText, _settings);
+    // Подмешиваем профиль в контекст (как json), если доступен
+    if (_userProfile != null) {
+      enrichedContext['user_profile'] = _userProfile!.toJson();
+    }
     
     // Формируем системный промпт с учетом MCP данных
     final baseSystem = _buildSystemContent();

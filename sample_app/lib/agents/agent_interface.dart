@@ -4,6 +4,7 @@
 // by future or adapted agents. Existing agents can migrate gradually.
 
 import 'package:sample_app/models/app_settings.dart';
+import 'package:sample_app/models/user_profile.dart';
 
 /// Request for an agent inference.
 class AgentRequest {
@@ -311,10 +312,22 @@ mixin AuthPolicyMixin implements IAgent {
       await authenticate(req.authToken);
     }
     if (!authorize(action, requiredRole: requiredRole)) {
-      throw StateError('Access denied: role "$role" is insufficient for action "$action" (required: ${requiredRole ?? 'none'}).');
+      throw StateError('Access denied: role "${role}" is insufficient for action "${action}" (required: ${requiredRole ?? 'none'}).');
     }
     if (!_limiter.allow()) {
-      throw StateError('Rate limit exceeded for action "$action" (limit: ${_limits.requestsPerHour}/hour).');
+      throw StateError('Rate limit exceeded for action "${action}" (limit: ${_limits.requestsPerHour}/hour).');
     }
   }
+}
+
+// ===== User Profile awareness (optional) =====
+
+/// Optional interface for agents that can utilize user profile data.
+/// Implementations are free to ignore it; existing agents remain compatible.
+abstract class IUserProfileAware {
+  /// Returns current user profile snapshot used by the agent (if any).
+  UserProfile? get userProfile;
+
+  /// Allows updating user profile used by the agent (no-op by default).
+  void setUserProfile(UserProfile? profile);
 }

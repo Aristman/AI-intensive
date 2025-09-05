@@ -6,6 +6,8 @@ import 'package:sample_app/screens/screens.dart';
 import 'package:sample_app/services/auth_service.dart';
 import 'package:sample_app/services/mcp_client.dart';
 import 'package:sample_app/widgets/login_dialog.dart';
+import 'package:sample_app/services/user_profile_controller.dart';
+import 'package:sample_app/screens/profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final int? initialIndex;
@@ -22,6 +24,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loading = true;
   int _version = 0; // bump to recreate child pages after settings change
   final AuthService _auth = AuthService();
+  final UserProfileController _profile = UserProfileController();
 
   // MCP runtime state
   bool _mcpChecking = false;
@@ -34,6 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     // Восстанавливаем сохранённые креды
     _auth.load();
+    _profile.load();
     if (widget.initialIndex != null) {
       final idx = widget.initialIndex!;
       final maxIdx = Screen.values.length - 1;
@@ -220,14 +224,26 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _userLabel() {
     return AnimatedBuilder(
-      animation: _auth,
+      animation: Listenable.merge([_auth, _profile]),
       builder: (context, _) {
-        final text = _auth.isLoggedIn
-            ? 'Пользователь — ${_auth.login ?? '-'}'
-            : 'Пользователь — Гость';
-        return Text(
-          text,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        final profileName = _profile.profile.name.isNotEmpty ? _profile.profile.name : 'Гость';
+        final text = 'Пользователь — $profileName';
+        return TextButton(
+          onPressed: () async {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ProfileScreen(controller: _profile),
+              ),
+            );
+            // после возврата обновим чип/текст
+            if (mounted) setState(() {});
+          },
+          style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
+          child: Text(
+            text,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
         );
       },
     );

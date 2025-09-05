@@ -8,6 +8,7 @@ import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/settings_service.dart';
 import 'package:sample_app/services/auth_service.dart';
 import 'package:sample_app/widgets/safe_send_text_field.dart';
+import 'package:sample_app/services/user_profile_controller.dart';
 
 class ReasoningAgentScreen extends StatefulWidget {
   const ReasoningAgentScreen({super.key});
@@ -30,6 +31,8 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
   String _finalMd = '';
   bool _mcpUsed = false;
   final AuthService _auth = AuthService();
+  final UserProfileController _profile = UserProfileController();
+  VoidCallback? _profileListener;
 
   static const String _conversationKey = 'multi_step_reasoning_screen';
 
@@ -39,6 +42,12 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
     _loadSettings();
     // Следим за изменениями глобальной аутентификации
     _auth.addListener(_onAuthChanged);
+    // Загрузка и подписка на изменения профиля
+    _profile.load();
+    _profileListener = () {
+      if (mounted) setState(() {});
+    };
+    _profile.addListener(_profileListener!);
   }
 
   Future<void> _loadSettings() async {
@@ -61,6 +70,9 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
     _controller.dispose();
     _agent?.dispose();
     _auth.removeListener(_onAuthChanged);
+    if (_profileListener != null) {
+      _profile.removeListener(_profileListener!);
+    }
     super.dispose();
   }
 
@@ -79,6 +91,9 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
       txt,
       timeout: const Duration(seconds: 30),
       authToken: _auth.token,
+      context: {
+        'user_profile': _profile.profile.toJson(),
+      },
     );
     final stream = _agent!.start(req);
     _sub?.cancel();
@@ -154,6 +169,19 @@ class _ReasoningAgentScreenState extends State<ReasoningAgentScreen> {
             padding: const EdgeInsets.all(12),
             child: Row(
               children: [
+                // Профиль пользователя слева от поля ввода
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.person, size: 18),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${_profile.profile.name} (${_profile.profile.role})',
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(width: 12),
+                  ],
+                ),
                 Expanded(
                   child: SafeSendTextField(
                     controller: _controller,
