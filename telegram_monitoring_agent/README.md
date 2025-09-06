@@ -132,7 +132,34 @@ telegram_monitoring_agent/
 5. **Запустите агента**
    ```bash
    python main.py
-   ```
+  ```
+
+## Деплой на удалённый сервер (вместе с MCP сервером)
+
+Подробная инструкция: см. `telegram_monitoring_agent/docs/deploy_remote.md`.
+
+Кратко:
+- Развернуть репозиторий на удалённом хосте.
+- Создать venv и установить зависимости:
+  - `pip install -r telegram_monitoring_agent/requirements.txt`
+  - `pip install -r mcp_servers/telegram_mcp_server_py/requirements.txt`
+- Настроить `mcp_servers/telegram_mcp_server_py/.env` (рекомендуется бот‑токен) и выполнить `python -m mcp_servers.telegram_mcp_server_py.cli_login` для создания `session.txt`.
+- Проверить связь: `python telegram_monitoring_agent/main.py --list-tools`.
+
+Запуск в фоне:
+- Linux/macOS (nohup):
+  ```bash
+  nohup python -u telegram_monitoring_agent/main.py > logs/agent.out 2>&1 &
+  echo $! > logs/agent.pid
+  # Остановка:
+  kill $(cat logs/agent.pid)
+  ```
+- Linux (systemd) — пример `ai-agent.service` и `ai-mcp.service` см. в `docs/deploy_remote.md`.
+- Windows (PowerShell):
+  ```powershell
+  $logDir = "logs"; if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
+  Start-Process -FilePath "python" -ArgumentList "-u", "telegram_monitoring_agent/main.py" -WindowStyle Hidden -RedirectStandardOutput "logs/agent.out" -RedirectStandardError "logs/agent.err"
+  ```
 
 ## API ключи и настройки
 
