@@ -289,6 +289,32 @@ class MCPClient:
         else:
             raise ValueError(f"Unsupported transport: {self.transport}")
 
+    async def _call_tool_stdio(self, tool_name: str, args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Call a tool via stdio MCP server using JSON-RPC tools/call."""
+        if not self.process:
+            await self.start()
+        # Ensure server readiness and initialize once
+        await self._wait_ready(timeout=20.0)
+        if not self._initialized:
+            try:
+                await self.initialize()
+            except Exception:
+                # Continue best-effort
+                pass
+        request = {
+            "jsonrpc": "2.0",
+            "id": self.request_id,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": args or {}
+            }
+        }
+        self.request_id += 1
+        # Use a slightly larger timeout to allow network I/O against Telegram
+        result = await self._send_and_read(request, timeout_sec=30.0)
+        return result
+
     async def initialize(self) -> Optional[Dict[str, Any]]:
         """Send MCP initialize request (stdio transport). Safe to call multiple times."""
         if self.transport != "stdio":
@@ -375,7 +401,7 @@ class MCPClient:
                                     except json.JSONDecodeError:
                                         return {"text": text}
                         except Exception:
-                            # Fall back to returning raw result
+                            # Fall back to returning a raw result
                             pass
                         return result
                     else:
@@ -385,7 +411,7 @@ class MCPClient:
                         except Exception:
                             body = ""
                         self.logger.error(f"HTTP request failed: status={resp.status}, body={body[:300]}")
-                        # If result contains error about unknown tool, try aliases
+                        # If a result contains an error about unknown tool, try aliases
                         if isinstance(result, dict) and result.get("error") in ("Unknown tool", "Tool not found"):
                             for alt in self._alternate_tool_names(tool_name):
                                 payload_alt = {"tool": alt, "input": args}

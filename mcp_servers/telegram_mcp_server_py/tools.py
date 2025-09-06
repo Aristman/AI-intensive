@@ -1,6 +1,7 @@
 import json
 from typing import Any, Dict, List, Optional
 from telethon import TelegramClient
+from datetime import datetime
 
 
 class ToolsHandler:
@@ -114,6 +115,14 @@ class ToolsHandler:
             page_size = params.get("page_size", params.get("limit"))
             min_id = params.get("min_id", params.get("minId"))
             max_id = params.get("max_id", params.get("maxId"))
+            
+            def _to_iso(v: Any) -> Any:
+                if isinstance(v, datetime):
+                    try:
+                        return v.isoformat()
+                    except Exception:
+                        return v.strftime("%Y-%m-%dT%H:%M:%S")
+                return v
 
             if name == "tg.resolve_chat":
                 entity = await self.client.get_entity(chat_arg)
@@ -157,7 +166,7 @@ class ToolsHandler:
                     out.append({
                         "id": getattr(m, "id", None),
                         "text": getattr(m, "message", None) or getattr(m, "text", None) or "",
-                        "date": getattr(m, "date", None),
+                        "date": _to_iso(getattr(m, "date", None)),
                         "from": {
                             "id": getattr(m, "sender_id", None),
                             "display": display or (str(getattr(m, "sender_id", "Unknown")))

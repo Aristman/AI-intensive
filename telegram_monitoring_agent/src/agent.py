@@ -705,8 +705,12 @@ class TelegramAgent:
         # Check MCP connection
         try:
             test_chat = self.config.get('chats', [])[0] if self.config.get('chats') else '@telegram'
-            async with self.mcp_client:
+            # If MCP stdio session is already open, reuse it to avoid extra start/stop cycles
+            if getattr(self.mcp_client, "process", None):
                 chat_info = await self.mcp_client.resolve_chat(test_chat)
+            else:
+                async with self.mcp_client:
+                    chat_info = await self.mcp_client.resolve_chat(test_chat)
             health_status["checks"]["mcp_connection"] = "healthy" if chat_info else "unhealthy"
         except Exception as e:
             health_status["checks"]["mcp_connection"] = f"error: {str(e)}"
@@ -840,6 +844,40 @@ class TelegramAgent:
     def get_monitored_chats(self) -> list:
         """Get list of monitored chats"""
         return self.config.get('chats', [])
+
+    async def _monitor_once(self) -> None:
+        """Perform a single monitoring pass over configured chats using an already-open MCP session."""
+        chats = self.get_monitored_chats()
+        page_size = int(self.config.get('page_size', 10))
+        for chat in chats:
+            try:
+                # Read recent messages
+                data = await self.mcp_client.read_messages(chat, page_size=page_size)
+                messages = (data or {}).get('messages', []) if isinstance(data, dict) else []
+                # Optionally process/analyze messages here. For now, just log counts.
+                self.logger.debug(f"Fetched {len(messages)} messages from {chat}")
+            except asyncio.TimeoutError:
+                self.logger.error(f"Timeout monitoring chat {chat}")
+            except Exception as e:
+                self.logger.error(f"Error monitoring chat {chat}: {e}")
+
+    async def start_continuous_monitoring(self) -> None:
+        """Run continuous monitoring loop keeping a single MCP stdio connection open."""
+        interval = int(self.config.get('monitor_interval_sec', 3600))
+        # Open one long-lived MCP session for the whole loop
+        async with self.mcp_client:
+            # Ensure server is initialized once
+            try:
+                await self.mcp_client.initialize()
+            except Exception:
+                # proceed best-effort; methods will init on demand
+                pass
+            while True:
+                await self._monitor_once()
+                try:
+                    await asyncio.sleep(interval)
+                except asyncio.CancelledError:
+                    break
 
     def run(self):
         """Run the agent"""
