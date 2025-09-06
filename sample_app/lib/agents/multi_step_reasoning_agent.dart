@@ -43,6 +43,7 @@ class MultiStepReasoningAgent with AuthPolicyMixin implements IAgent, IStatefulA
     if (stream == null) {
       return const AgentResponse(text: 'Ошибка: streaming недоступен', isFinal: true);
     }
+
     late final Completer<AgentResponse> done = Completer();
     Map<String, dynamic>? synth;
     stream.listen((e) {
@@ -258,8 +259,11 @@ class MultiStepReasoningAgent with AuthPolicyMixin implements IAgent, IStatefulA
   Future<_Plan> _analyzeAndPlan(AgentRequest req) async {
     final usecase = resolveLlmUseCase(_settings);
     final sys = 'Ты — планировщик. Разбери пользовательский запрос на интент, тип, потребности и составь JSON с полями: intent, type, needs[], plan[], tools[]. plan[] — массив шагов вида {id, title, description, tool, input}. Разрешённые tool: search_web, calculate, get_current_date.';
+    final profileJson = _profileJsonFromReq(req);
     final messages = [
       {'role': 'system', 'content': sys},
+      if (profileJson.isNotEmpty)
+        {'role': 'system', 'content': 'Профиль пользователя (JSON):\n$profileJson'},
       ..._history,
     ];
     String raw;
@@ -294,11 +298,13 @@ class MultiStepReasoningAgent with AuthPolicyMixin implements IAgent, IStatefulA
       'tool': step['tool'],
     };
     final compact = _compactResults(toolRes);
+    final profileJson = _profileJsonFromReq(req);
     final messages = [
       {'role': 'system', 'content': sys},
       {
         'role': 'user',
-        'content': 'Запрос: ${req.input}\nШаг: ${jsonEncode(stepInfo)}\nРезультат (топ ${compact.length}): ${jsonEncode(compact)}',
+        'content': 'Запрос: ${req.input}\nШаг: ${jsonEncode(stepInfo)}\nРезультат (топ ${compact.length}): ${jsonEncode(compact)}' +
+            (profileJson.isNotEmpty ? '\nПрофиль пользователя: ' + profileJson : ''),
       }
     ];
     try {
@@ -330,11 +336,13 @@ class MultiStepReasoningAgent with AuthPolicyMixin implements IAgent, IStatefulA
               'results': _compactResults(e['result'] as Map<String, dynamic>?),
             })
         .toList();
+    final profileJson = _profileJsonFromReq(req);
     final messages = [
       {'role': 'system', 'content': sys},
       {
         'role': 'user',
-        'content': 'Запрос: ${req.input}\nПлан: ${jsonEncode(compactPlan)}\nДанные: ${jsonEncode(compactValidated)}'
+        'content': 'Запрос: ${req.input}\nПлан: ${jsonEncode(compactPlan)}\nДанные: ${jsonEncode(compactValidated)}' +
+            (profileJson.isNotEmpty ? '\nПрофиль пользователя: ' + profileJson : ''),
       }
     ];
     try {
@@ -347,12 +355,31 @@ class MultiStepReasoningAgent with AuthPolicyMixin implements IAgent, IStatefulA
   Future<String> _reflect(AgentRequest req, String finalText, _Plan plan, List<Map<String, dynamic>> validated) async {
     final usecase = resolveLlmUseCase(_settings);
     final sys = 'Короткая рефлексия: оцени полноту ответа (кратко) и возможные улучшения. 1-2 предложения. Русский язык.';
+    final profileJson = _profileJsonFromReq(req);
     final messages = [
       {'role': 'system', 'content': sys},
-      {'role': 'user', 'content': 'Запрос: ${req.input}\nОтвет: $finalText'}
+      {
+        'role': 'user',
+        'content': 'Запрос: ${req.input}\nОтвет: $finalText' +
+            (profileJson.isNotEmpty ? '\nПрофиль пользователя: ' + profileJson : ''),
+      }
     ];
     try {
       return await usecase.complete(messages: messages, settings: _settings);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  // ===== Profile helpers =====
+  String _profileJsonFromReq(AgentRequest req) {
+    final ctx = req.context;
+    if (ctx == null) return '';
+    final p = ctx['user_profile'];
+    try {
+      if (p is Map<String, dynamic>) return jsonEncode(p);
+      if (p is Map) return jsonEncode(Map<String, dynamic>.from(p));
+      return '';
     } catch (_) {
       return '';
     }

@@ -18,7 +18,7 @@ class StructuredContentParseResult {
 /// Простой парсер structuredContent.
 /// MVP: допускает произвольные JSON-совместимые объекты.
 /// Если вход — строка, пытается выполнить jsonDecode.
-/// Если вход не Map<String, dynamic>, возвращает ошибку.
+/// Если вход не `Map<String, dynamic>`, возвращает ошибку.
 class StructuredContentParser {
   const StructuredContentParser();
 
