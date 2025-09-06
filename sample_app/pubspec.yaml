@@ -44,6 +44,8 @@ dependencies:
   permission_handler: ^12.0.1  # Разрешения (микрофон)
   record: ^6.1.1  # Запись аудио
   flutter_markdown: ^0.7.3  # Рендер Markdown
+  file_selector: ^1.0.3  # Диалоги выбора файла/папки
+  path: ^1.9.0  # Path utils для анализа файлов
 
 dev_dependencies:
   flutter_test:
