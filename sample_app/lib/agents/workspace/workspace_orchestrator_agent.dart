@@ -8,7 +8,7 @@ import 'package:sample_app/domain/llm_resolver.dart';
 import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/conversation_storage_service.dart';
 import 'package:sample_app/agents/workspace/workspace_plan.dart';
-import 'package:sample_app/agents/workspace/workspace_file_entities.dart';
+import 'package:sample_app/agents/workspace/file_system_service.dart';
 
 // Intents are defined at top level
 enum IntentType { 
@@ -20,7 +20,8 @@ enum IntentType {
   general_chat, 
   read_file, 
   list_dir, 
-  write_file 
+  write_file,
+  delete_path,
 }
 
 /// Workspace Orchestrator Agent (MVP)
@@ -35,6 +36,7 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
   final ConversationStorageService _store = ConversationStorageService();
   String? _conversationKey;
   final Plan _plan = Plan();
+  final FileSystemService _fs = FileSystemService(Directory.current.path);
 
   WorkspaceOrchestratorAgent({AppSettings? baseSettings, String? conversationKey})
       : _settings = baseSettings ?? const AppSettings() {
@@ -68,6 +70,9 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
     }
     if (RegExp(r'^(?:запиши\s+файл|write\s+file)\b', caseSensitive: false).hasMatch(text)) {
       return IntentType.write_file;
+    }
+    if (RegExp(r'^(?:удали|delete)\b', caseSensitive: false).hasMatch(text)) {
+      return IntentType.delete_path;
     }
     return IntentType.general_chat;
   }
@@ -276,6 +281,7 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
       case IntentType.read_file:
       case IntentType.list_dir:
       case IntentType.write_file:
+      case IntentType.delete_path:
         // Делегируем обработчику файловых команд
         return await _maybeHandleFileCommand(text);
       case IntentType.general_chat:
@@ -293,7 +299,7 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
     final rm = readRe.firstMatch(t);
     if (rm != null) {
       final path = rm.group(1)!.trim();
-      final res = await _readFilePreview(path);
+      final res = await _fs.readFile(path);
       final md = res.message;
       _appendHistory('assistant', md);
       await _persistIfPossible();
@@ -305,7 +311,7 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
     final lm = listRe.firstMatch(t);
     if (lm != null) {
       final path = lm.group(1)!.trim();
-      final listing = await _listDir(path);
+      final listing = await _fs.list(path);
       final md = listing.toMarkdown();
       _appendHistory('assistant', md);
       await _persistIfPossible();
@@ -318,72 +324,28 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
     if (wm != null) {
       final path = wm.group(1)!.trim();
       final content = wm.group(2) ?? '';
-      final res = await _writeFile(path, content);
+      final res = await _fs.writeFile(path: path, content: content, createDirs: true, overwrite: false);
       final textOut = res.message;
       _appendHistory('assistant', textOut);
       await _persistIfPossible();
       return AgentResponse(text: textOut, isFinal: true, meta: {'fileOp': 'write', 'path': path, 'bytesWritten': res.bytesWritten});
     }
 
+    // delete path: "удали [-r] <path>" | "delete [-r] <path>"
+    final delRe = RegExp(r'^(?:удали|delete)\s+(.+)$', caseSensitive: false);
+    final dm = delRe.firstMatch(t);
+    if (dm != null) {
+      final cmd = dm.group(1)!.trim();
+      final recursive = cmd.startsWith('-r ');
+      final path = recursive ? cmd.substring(3).trim() : cmd;
+      final res = await _fs.deletePath(path, recursive: recursive);
+      final md = res.message;
+      _appendHistory('assistant', md);
+      await _persistIfPossible();
+      return AgentResponse(text: md, isFinal: true, meta: {'fileOp': 'delete', 'path': path, 'recursive': recursive});
+    }
+
     return null;
-  }
-
-  static const int _maxPreviewBytes = 64 * 1024; // 64 KB
-
-  Future<FilePreview> _readFilePreview(String path) async {
-    try {
-      final f = File(path);
-      if (!await f.exists()) {
-        return FilePreview(path: path, exists: false, isDir: false, size: 0, contentSnippet: '', message: 'Файл не найден: $path');
-      }
-      final length = await f.length();
-      final stream = f.openRead(0, length > _maxPreviewBytes ? _maxPreviewBytes : null);
-      final bytes = await stream.fold<List<int>>(<int>[], (p, e) => (p..addAll(e)));
-      final content = String.fromCharCodes(bytes);
-      final snippet = content.length > 2000 ? content.substring(0, 2000) + '\n…' : content;
-      final msg = 'Файл: $path\nРазмер: $length байт\n\n--- Содержимое (превью) ---\n$snippet';
-      return FilePreview(path: path, exists: true, isDir: false, size: length, contentSnippet: snippet, message: msg);
-    } catch (e) {
-      return FilePreview(path: path, exists: false, isDir: false, size: 0, contentSnippet: '', message: 'Ошибка чтения файла: $e');
-    }
-  }
-
-  Future<FileOpResult> _writeFile(String path, String content) async {
-    try {
-      final f = File(path);
-      await f.create(recursive: true);
-      final bytes = content.codeUnits.length;
-      await f.writeAsString(content);
-      return FileOpResult(success: true, path: path, bytesWritten: bytes, message: 'Записано $bytes байт в $path');
-    } catch (e) {
-      return FileOpResult(success: false, path: path, bytesWritten: 0, message: 'Ошибка записи: $e');
-    }
-  }
-
-  Future<DirListing> _listDir(String path) async {
-    try {
-      final d = Directory(path);
-      if (!await d.exists()) {
-        return DirListing(path: path, entries: [], message: 'Директория не найдена: $path');
-      }
-      final children = await d.list().toList();
-      final entries = <DirEntry>[];
-      for (final e in children) {
-        if (e is Directory) {
-          entries.add(DirEntry(name: e.path.split(Platform.pathSeparator).last, isDir: true, size: null));
-        } else if (e is File) {
-          final size = await e.length();
-          entries.add(DirEntry(name: e.path.split(Platform.pathSeparator).last, isDir: false, size: size));
-        }
-      }
-      entries.sort((a, b) {
-        if (a.isDir != b.isDir) return a.isDir ? -1 : 1;
-        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-      });
-      return DirListing(path: path, entries: entries);
-    } catch (e) {
-      return DirListing(path: path, entries: [], message: 'Ошибка чтения директории: $e');
-    }
   }
 
   Future<String> _buildPlanFromLLM({required String context}) async {
