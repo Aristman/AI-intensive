@@ -1,6 +1,16 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:code_text_field/code_text_field.dart';
+import 'package:flutter_highlight/themes/github.dart';
+import 'package:highlight/languages/dart.dart' as dart_lang;
+import 'package:highlight/languages/javascript.dart' as js_lang;
+import 'package:highlight/languages/typescript.dart' as ts_lang;
+import 'package:highlight/languages/json.dart' as json_lang;
+import 'package:highlight/languages/yaml.dart' as yaml_lang;
+import 'package:highlight/languages/markdown.dart' as md_lang;
+import 'package:highlight/languages/kotlin.dart' as kt_lang;
+import 'package:highlight/languages/java.dart' as java_lang;
 
 /// WorkspaceScreen — трехпанельное окно:
 /// - Левая панель: проводник (Desktop)
@@ -22,7 +32,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   int _activeTab = -1;
   final Map<String, String> _content = {}; // path -> text
   final Map<String, String> _saved = {}; // path -> last saved text
-  final Map<String, TextEditingController> _controllers = {}; // path -> controller
+  final Map<String, CodeController> _controllers = {}; // path -> controller
   final Map<String, FocusNode> _focusNodes = {}; // path -> focus node
 
   // Состояние дерева
@@ -37,7 +47,10 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       _content[path] = data;
       _saved[path] = data;
       // Инициализируем контроллер и FocusNode один раз на файл
-      _controllers.putIfAbsent(path, () => TextEditingController(text: data));
+      _controllers.putIfAbsent(path, () => CodeController(
+            text: data,
+            language: _languageForPath(path),
+          ));
       _focusNodes.putIfAbsent(path, () => FocusNode());
       final idx = _tabs.indexOf(path);
       setState(() {
@@ -60,8 +73,32 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     }
   }
 
-  void _closeTab(int index) {
+  Future<void> _closeTab(int index) async {
     if (index < 0 || index >= _tabs.length) return;
+    final path = _tabs[index];
+    final dirty = (_content[path] != _saved[path]);
+    var allowClose = true;
+    if (dirty) {
+      allowClose = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Несохранённые изменения'),
+              content: Text('Закрыть вкладку и потерять изменения в «${path.split(RegExp(r"[\\/]")).last}»?'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Отмена'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Закрыть'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+    }
+    if (!allowClose) return;
     setState(() {
       _tabs.removeAt(index);
       // Не удаляем содержимое из кэша намеренно — на будущее
@@ -143,7 +180,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           child: _rootLoaded
               ? ListView(
                   padding: const EdgeInsets.symmetric(vertical: 4),
-                  children: [_buildDirNode(_rootPath)],
+                  children: [_buildDirNode(_rootPath, 0)],
                 )
               : const Center(child: CircularProgressIndicator()),
         ),
@@ -151,7 +188,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     );
   }
 
-  Widget _buildDirNode(String dirPath) {
+  Widget _buildDirNode(String dirPath, int depth) {
     final name = dirPath == _rootPath
         ? dirPath
         : dirPath.split(RegExp(r'[\\/]')).where((e) => e.isNotEmpty).last;
@@ -164,6 +201,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         key: PageStorageKey(dirPath),
         title: Row(
           children: [
+            SizedBox(width: (depth * 12).toDouble()),
             const Icon(Icons.folder),
             const SizedBox(width: 8),
             Expanded(child: Text(name, overflow: TextOverflow.ellipsis)),
@@ -186,11 +224,12 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           else
             ...items.map((e) {
               if (e is Directory) {
-                return _buildDirNode(e.path);
+                return _buildDirNode(e.path, depth + 1);
               } else if (e is File) {
                 final fname = e.path.split(RegExp(r'[\\/]')).last;
                 return ListTile(
                   dense: true,
+                  contentPadding: EdgeInsets.only(left: ((depth + 1) * 12).toDouble(), right: 8),
                   leading: const Icon(Icons.insert_drive_file_outlined),
                   title: Text(fname, overflow: TextOverflow.ellipsis),
                   onTap: () => _openFile(e.path),
@@ -204,12 +243,29 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     );
   }
 
+  // Определение языка подсветки по расширению файла
+  dynamic _languageForPath(String path) {
+    final p = path.toLowerCase();
+    if (p.endsWith('.dart')) return dart_lang.dart;
+    if (p.endsWith('.js')) return js_lang.javascript;
+    if (p.endsWith('.ts')) return ts_lang.typescript;
+    if (p.endsWith('.json')) return json_lang.json;
+    if (p.endsWith('.yaml') || p.endsWith('.yml')) return yaml_lang.yaml;
+    if (p.endsWith('.md')) return md_lang.markdown;
+    if (p.endsWith('.kt')) return kt_lang.kotlin;
+    if (p.endsWith('.java')) return java_lang.java;
+    return null; // без подсветки
+  }
+
   Widget _buildCenterPane(BuildContext context) {
     final hasTabs = _tabs.isNotEmpty && _activeTab >= 0;
     final path = hasTabs ? _tabs[_activeTab] : '';
     // Получаем (или создаём) контроллер для текущего файла, не пересоздавая его на каждый build
     final controller = hasTabs
-        ? (_controllers[path] ??= TextEditingController(text: _content[path] ?? ''))
+        ? (_controllers[path] ??= CodeController(
+              text: _content[path] ?? '',
+              language: _languageForPath(path),
+            ))
         : null;
     final focusNode = hasTabs ? (_focusNodes[path] ??= FocusNode()) : null;
     final isDirty = hasTabs ? (_content[path] != _saved[path]) : false;
@@ -310,19 +366,16 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           child: hasTabs
               ? Padding(
                   padding: const EdgeInsets.all(8.0),
-                  child: TextField(
-                    key: const ValueKey('workspace_editor'),
-                    controller: controller,
-                    focusNode: focusNode,
-                    onChanged: (v) => setState(() => _content[path] = v),
-                    expands: true,
-                    maxLines: null,
-                    minLines: null,
-                    decoration: InputDecoration(
-                      border: const OutlineInputBorder(),
-                      labelText: path,
+                  child: CodeTheme(
+                    data: CodeThemeData(styles: githubTheme),
+                    child: CodeField(
+                      key: const ValueKey('workspace_editor'),
+                      controller: controller!,
+                      focusNode: focusNode,
+                      textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                      expands: true,
+                      onChanged: (v) => setState(() => _content[path] = v),
                     ),
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
                   ),
                 )
               : const Center(

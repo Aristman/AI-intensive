@@ -46,6 +46,9 @@ dependencies:
   flutter_markdown: ^0.7.3  # Рендер Markdown
   file_selector: ^1.0.3  # Диалоги выбора файла/папки
   path: ^1.9.0  # Path utils для анализа файлов
+  code_text_field: ^1.0.2  # Редактор кода с подсветкой синтаксиса
+  highlight: ^0.7.0        # Языковые грамматики для подсветки
+  flutter_highlight: ^0.7.0 # Готовые темы подсветки
 
 dev_dependencies:
   flutter_test:
