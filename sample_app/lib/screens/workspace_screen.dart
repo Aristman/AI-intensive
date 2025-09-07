@@ -13,6 +13,11 @@ import 'package:highlight/languages/kotlin.dart' as kt_lang;
 import 'package:highlight/languages/java.dart' as java_lang;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path/path.dart' as p;
+import 'package:sample_app/models/app_settings.dart';
+import 'package:sample_app/services/settings_service.dart';
+import 'package:sample_app/agents/workspace/workspace_orchestrator_agent.dart';
+import 'package:sample_app/models/message.dart';
+import 'package:sample_app/agents/agent_interface.dart';
 
 /// WorkspaceScreen — трехпанельное окно:
 /// - Левая панель: проводник (Desktop)
@@ -48,9 +53,15 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   final Map<String, GlobalKey> _fileKeys = {}; // path -> key for ensureVisible
 
   // Правая панель — каркас ленты событий/сообщений
-  final List<String> _pipelineLog = [];
+  // Правая панель — чат оркестратора
   final TextEditingController _pipelineInput = TextEditingController();
   final ScrollController _pipelineScroll = ScrollController();
+  final List<Message> _chat = [];
+  bool _isSending = false;
+  final SettingsService _settingsService = SettingsService();
+  late AppSettings _appSettings;
+  bool _isLoadingSettings = true;
+  WorkspaceOrchestratorAgent? _wsAgent;
 
   Future<void> _openFile(String path, {bool requestFocus = true}) async {
     try {
@@ -243,6 +254,12 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _restoreState();
     });
+    // Инициализация настроек и оркестратора для правой панели
+    _initAgent();
+    // Слушатель ввода для активации/деактивации кнопки отправки
+    _pipelineInput.addListener(() {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -257,6 +274,52 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     _pipelineScroll.dispose();
     _treeScroll.dispose();
     super.dispose();
+  }
+
+  // Вставка пути в поле ввода Кодера в позицию курсора
+  void _insertIntoCoder(String path) {
+    final text = _pipelineInput.text;
+    final sel = _pipelineInput.selection;
+    final insertAt = sel.isValid ? sel.start : text.length;
+    final newText = text.replaceRange(insertAt, insertAt, path);
+    _pipelineInput.text = newText;
+    final newOffset = insertAt + path.length;
+    _pipelineInput.selection = TextSelection.collapsed(offset: newOffset);
+  }
+
+  Future<void> _showAddToCoderMenu(Offset globalPosition, String path) async {
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(globalPosition.dx, globalPosition.dy, globalPosition.dx, globalPosition.dy),
+      items: const [
+        PopupMenuItem<String>(
+          value: 'add_to_coder',
+          child: Text('Внести путь в Кодер'),
+        ),
+      ],
+    );
+    if (selected == 'add_to_coder') {
+      _insertIntoCoder(path);
+    }
+  }
+
+  Future<void> _initAgent() async {
+    setState(() => _isLoadingSettings = true);
+    _appSettings = await _settingsService.getSettings();
+    _wsAgent = WorkspaceOrchestratorAgent(
+      baseSettings: _appSettings,
+      conversationKey: WorkspaceOrchestratorAgent.defaultConversationKey,
+    );
+    _wsAgent!.updateSettings(_appSettings);
+    final stored = await _wsAgent!.setConversationKey(WorkspaceOrchestratorAgent.defaultConversationKey);
+    // Преобразуем историю в сообщения UI
+    _chat
+      ..clear()
+      ..addAll(stored.map((m) => Message(text: m['content'] ?? '', isUser: (m['role'] == 'user'))));
+    if (mounted) {
+      setState(() => _isLoadingSettings = false);
+      _scrollChatToEnd();
+    }
   }
 
   @override
@@ -276,9 +339,9 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
               child: _buildCenterPane(context),
             ),
             const VerticalDivider(width: 1),
-            // Правая панель — каркас под будущий пайплайн
+            // Правая панель — чат оркестратора (расширена в 2 раза)
             SizedBox(
-              width: 300,
+              width: 600,
               child: _buildRightPane(context),
             ),
           ],
@@ -321,62 +384,68 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 
     return Theme(
       data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-      child: ExpansionTile(
-        key: PageStorageKey(dirPath),
-        title: Row(
+      child: GestureDetector(
+        onSecondaryTapDown: (details) => _showAddToCoderMenu(details.globalPosition, dirPath),
+        child: ExpansionTile(
+          key: PageStorageKey(dirPath),
+          title: Row(
+            children: [
+              SizedBox(width: (depth * 12).toDouble()),
+              const Icon(Icons.folder),
+              const SizedBox(width: 8),
+              Expanded(child: Text(name, overflow: TextOverflow.ellipsis)),
+            ],
+          ),
+          initiallyExpanded: isExpanded,
+          onExpansionChanged: (v) async {
+            setState(() => _expanded[dirPath] = v);
+            if (v) {
+              await _ensureChildren(dirPath);
+              if (mounted) setState(() {});
+            }
+            _persistTree();
+          },
           children: [
-            SizedBox(width: (depth * 12).toDouble()),
-            const Icon(Icons.folder),
-            const SizedBox(width: 8),
-            Expanded(child: Text(name, overflow: TextOverflow.ellipsis)),
+            if (!_children.containsKey(dirPath))
+              const Padding(
+                padding: EdgeInsets.all(8.0),
+                child: LinearProgressIndicator(minHeight: 2),
+              )
+            else
+              ...items.map((e) {
+                if (e is Directory) {
+                  return _buildDirNode(e.path, depth + 1);
+                } else if (e is File) {
+                  final fname = e.path.split(RegExp(r'[\\/]')).last;
+                  final bool isActive = _tabs.isNotEmpty && _activeTab >= 0 && _tabs[_activeTab] == e.path;
+                  final key = _fileKeys.putIfAbsent(e.path, () => GlobalKey());
+                  return GestureDetector(
+                    onSecondaryTapDown: (details) => _showAddToCoderMenu(details.globalPosition, e.path),
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.only(left: ((depth + 1) * 12).toDouble(), right: 8),
+                      key: key,
+                      leading: Icon(Icons.insert_drive_file_outlined,
+                          color: isActive ? Theme.of(context).colorScheme.primary : null),
+                      selected: isActive,
+                      selectedTileColor: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.5),
+                      title: Text(
+                        fname,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                          color: isActive ? Theme.of(context).colorScheme.onPrimaryContainer : null,
+                        ),
+                      ),
+                      onTap: () => _openFile(e.path),
+                    ),
+                  );
+                } else {
+                  return const SizedBox.shrink();
+                }
+              }),
           ],
         ),
-        initiallyExpanded: isExpanded,
-        onExpansionChanged: (v) async {
-          setState(() => _expanded[dirPath] = v);
-          if (v) {
-            await _ensureChildren(dirPath);
-            if (mounted) setState(() {});
-          }
-          _persistTree();
-        },
-        children: [
-          if (!_children.containsKey(dirPath))
-            const Padding(
-              padding: EdgeInsets.all(8.0),
-              child: LinearProgressIndicator(minHeight: 2),
-            )
-          else
-            ...items.map((e) {
-              if (e is Directory) {
-                return _buildDirNode(e.path, depth + 1);
-              } else if (e is File) {
-                final fname = e.path.split(RegExp(r'[\\/]')).last;
-                final bool isActive = _tabs.isNotEmpty && _activeTab >= 0 && _tabs[_activeTab] == e.path;
-                final key = _fileKeys.putIfAbsent(e.path, () => GlobalKey());
-                return ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.only(left: ((depth + 1) * 12).toDouble(), right: 8),
-                  key: key,
-                  leading: Icon(Icons.insert_drive_file_outlined,
-                      color: isActive ? Theme.of(context).colorScheme.primary : null),
-                  selected: isActive,
-                  selectedTileColor: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.5),
-                  title: Text(
-                    fname,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
-                      color: isActive ? Theme.of(context).colorScheme.onPrimaryContainer : null,
-                    ),
-                  ),
-                  onTap: () => _openFile(e.path),
-                );
-              } else {
-                return const SizedBox.shrink();
-              }
-            }),
-        ],
       ),
     );
   }
@@ -417,46 +486,49 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           child: Row(
             children: [
               for (int i = 0; i < _tabs.length; i++)
-                Container(
-                  margin: const EdgeInsets.only(left: 8, top: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  decoration: BoxDecoration(
-                    color: i == _activeTab
-                        ? Theme.of(context).colorScheme.primaryContainer
-                        : Theme.of(context).colorScheme.surfaceContainer,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Theme.of(context).dividerColor),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      InkWell(
-                        onTap: () => _activateTabByIndex(i),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                          child: Text(
-                            (() {
-                              final tabPath = _tabs[i];
-                              final fileName = tabPath.split(RegExp(r'[\\/]')).last;
-                              final dirty = (_content[tabPath] != _saved[tabPath]);
-                              return dirty ? '$fileName ●' : fileName;
-                            })(),
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(context).colorScheme.onSurface,
+                GestureDetector(
+                  onSecondaryTapDown: (details) => _showAddToCoderMenu(details.globalPosition, _tabs[i]),
+                  child: Container(
+                    margin: const EdgeInsets.only(left: 8, top: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: i == _activeTab
+                          ? Theme.of(context).colorScheme.primaryContainer
+                          : Theme.of(context).colorScheme.surfaceContainer,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Theme.of(context).dividerColor),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        InkWell(
+                          onTap: () => _activateTabByIndex(i),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                            child: Text(
+                              (() {
+                                final tabPath = _tabs[i];
+                                final fileName = tabPath.split(RegExp(r'[\\/]')).last;
+                                final dirty = (_content[tabPath] != _saved[tabPath]);
+                                return dirty ? '$fileName ●' : fileName;
+                              })(),
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      InkWell(
-                        onTap: () => _closeTab(i),
-                        child: const Padding(
-                          padding: EdgeInsets.all(4.0),
-                          child: Icon(Icons.close, size: 16),
+                        const SizedBox(width: 8),
+                        InkWell(
+                          onTap: () => _closeTab(i),
+                          child: const Padding(
+                            padding: EdgeInsets.all(4.0),
+                            child: Icon(Icons.close, size: 16),
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
             ],
@@ -604,33 +676,60 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         Container(
           padding: const EdgeInsets.all(12),
           color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          child: const Text(
-            'Правая панель',
-            style: TextStyle(fontWeight: FontWeight.w700),
+          child: Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Кодер',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Tooltip(
+                message: 'Очистить историю',
+                child: IconButton(
+                  key: const ValueKey('workspace_clear_history_button'),
+                  onPressed: () async {
+                    await _wsAgent?.clearHistoryAndPersist();
+                    setState(() => _chat.clear());
+                  },
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 8),
         // Лента сообщений/событий (локальная, без агентов)
         Expanded(
-          child: _pipelineLog.isEmpty
+          child: _chat.isEmpty
               ? const Center(
-                  child: Text('Лента пуста. Введите сообщение ниже и нажмите Отправить.'),
+                  child: Text('Диалог пуст. Введите сообщение ниже и нажмите Отправить.'),
                 )
               : ListView.builder(
                   controller: _pipelineScroll,
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  itemCount: _pipelineLog.length,
+                  itemCount: _chat.length,
                   itemBuilder: (context, index) {
-                    final msg = _pipelineLog[index];
-                    return Container(
-                      margin: const EdgeInsets.symmetric(vertical: 4),
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainer,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Theme.of(context).dividerColor),
-                      ),
-                      child: Text(msg),
+                    final m = _chat[index];
+                    final align = m.isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+                    final bubbleColor = m.isUser
+                        ? Theme.of(context).colorScheme.primaryContainer
+                        : Theme.of(context).colorScheme.surfaceContainer;
+                    return Column(
+                      crossAxisAlignment: align,
+                      children: [
+                        Container(
+                          constraints: const BoxConstraints(maxWidth: 260),
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: bubbleColor,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Theme.of(context).dividerColor),
+                          ),
+                          child: Text(m.text),
+                        ),
+                      ],
                     );
                   },
                 ),
@@ -648,14 +747,21 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                     border: OutlineInputBorder(),
                     labelText: 'Сообщение',
                   ),
-                  onSubmitted: (_) => _sendPipelineMessage(),
+                  keyboardType: TextInputType.multiline,
+                  textInputAction: TextInputAction.newline,
+                  minLines: 1,
+                  maxLines: 6,
                 ),
               ),
               const SizedBox(width: 8),
-              ElevatedButton.icon(
-                onPressed: _pipelineInput.text.trim().isEmpty ? null : _sendPipelineMessage,
-                icon: const Icon(Icons.send),
-                label: const Text('Отправить'),
+              IconButton(
+                tooltip: 'Отправить',
+                onPressed: (_pipelineInput.text.trim().isEmpty || _isSending || _isLoadingSettings)
+                    ? null
+                    : _sendPipelineMessage,
+                icon: _isSending
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.send),
               ),
             ],
           ),
@@ -696,14 +802,32 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     }
   }
 
-  void _sendPipelineMessage() {
+  Future<void> _sendPipelineMessage() async {
     final text = _pipelineInput.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _wsAgent == null) return;
     setState(() {
-      _pipelineLog.add(text);
+      _isSending = true;
+      _chat.add(Message(text: text, isUser: true));
       _pipelineInput.clear();
     });
-    // Прокрутить к концу после добавления
+    _scrollChatToEnd();
+    try {
+      final resp = await _wsAgent!.ask(AgentRequest(text));
+      setState(() {
+        _chat.add(Message(text: resp.text, isUser: false, isFinal: resp.isFinal));
+        _isSending = false;
+      });
+      _scrollChatToEnd();
+    } catch (e) {
+      setState(() {
+        _chat.add(Message(text: 'Ошибка: $e', isUser: false));
+        _isSending = false;
+      });
+      _scrollChatToEnd();
+    }
+  }
+
+  void _scrollChatToEnd() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_pipelineScroll.hasClients) {
         _pipelineScroll.animateTo(

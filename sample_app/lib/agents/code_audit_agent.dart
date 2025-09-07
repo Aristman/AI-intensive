@@ -19,6 +19,7 @@ class CodeAuditAgent with AuthPolicyMixin implements IAgent {
   /// По умолчанию 6000 токенов → ~24 КБ на чанк.
   final int maxTokensPerChunk;
 
+  // ignore: unused_field
   AppSettings? _settings;
 
   CodeAuditAgent({

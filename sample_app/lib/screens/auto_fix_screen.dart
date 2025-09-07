@@ -30,12 +30,12 @@ class _AuditPrettyView extends StatelessWidget {
     final files = (result['files'] as List?)?.cast<Map>() ?? const [];
     final filteredFiles = files
         .where((m) {
-          final map = Map<String, dynamic>.from(m as Map);
+          final map = Map<String, dynamic>.from(m);
           final problems = (map['problems'] as List?)?.cast<String>() ?? const [];
           final suggestions = (map['suggestions'] as List?)?.cast<String>() ?? const [];
           return problems.isNotEmpty || suggestions.isNotEmpty;
         })
-        .map((m) => Map<String, dynamic>.from(m as Map))
+        .map((m) => Map<String, dynamic>.from(m))
         .toList(growable: false);
     final projectSuggestions = (result['project_suggestions'] as List?)?.cast<String>() ?? const [];
 
