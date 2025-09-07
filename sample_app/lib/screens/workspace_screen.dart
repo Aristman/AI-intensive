@@ -276,6 +276,15 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     super.dispose();
   }
 
+  // Копирование текста сообщения в буфёр обмена
+  void _copyMessageText(String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Скопировано в буфер обмена')),
+    );
+  }
+
   // Вставка пути в поле ввода Кодера в позицию курсора
   void _insertIntoCoder(String path) {
     final text = _pipelineInput.text;
@@ -309,6 +318,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     _wsAgent = WorkspaceOrchestratorAgent(
       baseSettings: _appSettings,
       conversationKey: WorkspaceOrchestratorAgent.defaultConversationKey,
+      useFsMcp: true,
     );
     _wsAgent!.updateSettings(_appSettings);
     final stored = await _wsAgent!.setConversationKey(WorkspaceOrchestratorAgent.defaultConversationKey);
@@ -718,16 +728,38 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                     return Column(
                       crossAxisAlignment: align,
                       children: [
-                        Container(
-                          constraints: const BoxConstraints(maxWidth: 260),
-                          margin: const EdgeInsets.symmetric(vertical: 4),
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: bubbleColor,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Theme.of(context).dividerColor),
+                        GestureDetector(
+                          onLongPress: () => _copyMessageText(m.text),
+                          child: Container(
+                            constraints: const BoxConstraints(maxWidth: 360),
+                            margin: const EdgeInsets.symmetric(vertical: 4),
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: bubbleColor,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Theme.of(context).dividerColor),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                // Делаем текст выделяемым для ручного копирования
+                                SelectableText(m.text),
+                                const SizedBox(height: 4),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Tooltip(
+                                    message: 'Копировать',
+                                    child: IconButton(
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                      icon: const Icon(Icons.copy, size: 16),
+                                      onPressed: () => _copyMessageText(m.text),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                          child: Text(m.text),
                         ),
                       ],
                     );

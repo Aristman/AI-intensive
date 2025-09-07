@@ -9,6 +9,8 @@ import 'package:sample_app/models/app_settings.dart';
 import 'package:sample_app/services/conversation_storage_service.dart';
 import 'package:sample_app/agents/workspace/workspace_plan.dart';
 import 'package:sample_app/agents/workspace/file_system_service.dart';
+import 'package:sample_app/services/mcp_stdio_client.dart';
+import 'package:sample_app/agents/workspace/workspace_fs_mcp_agent.dart';
 
 // Intents are defined at top level
 enum IntentType { 
@@ -37,12 +39,40 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
   String? _conversationKey;
   final Plan _plan = Plan();
   final FileSystemService _fs = FileSystemService(Directory.current.path);
+  final bool _useFsMcp;
+  WorkspaceFsMcpAgent? _fsMcpAgent;
+  // Ожидание подтверждения выполнения плана
+  bool _awaitingPlanConfirmation = false;
+  List<String> _pendingPlanSteps = const <String>[];
 
-  WorkspaceOrchestratorAgent({AppSettings? baseSettings, String? conversationKey})
-      : _settings = baseSettings ?? const AppSettings() {
+  WorkspaceOrchestratorAgent({
+    AppSettings? baseSettings,
+    String? conversationKey,
+    bool useFsMcp = false,
+    WorkspaceFsMcpAgent? fsMcpAgent,
+  })  : _settings = baseSettings ?? const AppSettings(),
+        _useFsMcp = useFsMcp {
     _conversationKey = (conversationKey != null && conversationKey.trim().isNotEmpty)
         ? conversationKey.trim()
         : defaultConversationKey;
+    _fsMcpAgent = fsMcpAgent;
+    if (_useFsMcp && _fsMcpAgent == null) {
+      // Создаём STDIO клиента и MCP-агента по умолчанию
+      final exe = Platform.isWindows ? 'python' : 'python3';
+      // Рабочая директория приложения — sample_app/, сервер лежит уровнем выше в mcp_servers/
+      final serverPath = Platform.isWindows
+          ? '..\\mcp_servers\\fs_mcp_server_py\\server.py'
+          : '../mcp_servers/fs_mcp_server_py/server.py';
+      final client = McpStdioClient(
+        executable: exe,
+        args: [serverPath],
+        environment: {
+          // Песочница корнем всего репозитория (AI-intensive/)
+          'FS_ROOT': Directory.current.parent.path,
+        },
+      );
+      _fsMcpAgent = WorkspaceFsMcpAgent(client: client);
+    }
   }
 
   IntentType _classifyIntent(String text) {
@@ -104,6 +134,73 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
     _appendHistory('user', userText);
     await _persistIfPossible();
 
+    // Если ждём подтверждения плана — проверяем ответ пользователя
+    if (_awaitingPlanConfirmation) {
+      final yes = _isConfirmYes(userText);
+      final no = _isConfirmNo(userText);
+      if (yes || no) {
+        if (no) {
+          _awaitingPlanConfirmation = false;
+          _pendingPlanSteps = const [];
+          final msg = 'Выполнение плана отменено пользователем.';
+          _appendHistory('assistant', msg);
+          await _persistIfPossible();
+          return AgentResponse(text: msg, isFinal: true, mcpUsed: _useFsMcp);
+        }
+        // yes
+        final steps = _pendingPlanSteps;
+        _awaitingPlanConfirmation = false;
+        _pendingPlanSteps = const [];
+        // Информационное сообщение о старте выполнения
+        final startMsg = 'Начинаю выполнение подтверждённого плана из ${steps.length} шагов…';
+        _appendHistory('assistant', startMsg);
+        await _persistIfPossible();
+
+        // Выполним шаги и выводим каждый этап в чат отдельными сообщениями
+        int idx = 0;
+        for (final step in steps) {
+          idx += 1;
+          // Инфо: объявляем шаг
+          _appendHistory('assistant', 'Шаг $idx: $step');
+          await _persistIfPossible();
+
+          final action = _detectFsAction(step);
+          if (action == null) {
+            _appendHistory('assistant', '- Пропускаю (нет подходящего агента под этот шаг)');
+            await _persistIfPossible();
+            continue;
+          }
+          final tool = action.$1;
+          final args = action.$2;
+          final agentName = _useFsMcp ? 'fs_mcp' : 'local_fs';
+
+          // Инфо: какой агент/инструмент и с какими аргументами
+          _appendHistory('assistant', '- Вызов инструмента: [$agentName:$tool] args=$args');
+          await _persistIfPossible();
+
+          Map<String, dynamic>? resMap;
+          if (_useFsMcp) {
+            resMap = await _fsMcpCall(tool, args);
+          } else {
+            resMap = await _callLocalFs(tool, args);
+          }
+          final ok = resMap != null && (resMap['ok'] != false);
+          final msg = (resMap != null ? (resMap['message']?.toString() ?? '') : 'нет ответа');
+          _appendHistory('assistant', '  → ${ok ? 'OK' : 'ERR'} ${msg.isNotEmpty ? '- $msg' : ''}');
+          await _persistIfPossible();
+        }
+        final doneMsg = 'Выполнение плана завершено.';
+        _appendHistory('assistant', doneMsg);
+        await _persistIfPossible();
+        return AgentResponse(text: doneMsg, isFinal: true, mcpUsed: _useFsMcp);
+      }
+      // Если ответ не похож на подтверждение/отказ — напомним о необходимости подтверждения
+      final reminder = 'Подтвердите выполнение плана (ответьте "да" или "нет").';
+      _appendHistory('assistant', reminder);
+      await _persistIfPossible();
+      return AgentResponse(text: reminder, isFinal: false, mcpUsed: _useFsMcp);
+    }
+
     // Intent routing
     final intent = _classifyIntent(userText);
     if (intent != IntentType.general_chat) {
@@ -111,13 +208,29 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
       if (handled != null) return handled;
     }
 
-    // Try file operations shortcuts before calling LLM
+    // Try file operations shortcuts before orchestration
     final fileHandled = await _maybeHandleFileCommand(userText);
-    if (fileHandled != null) {
-      return fileHandled;
+    if (fileHandled != null) return fileHandled;
+
+    // Orchestrated flow: build a plan and request confirmation
+    final planSteps = await _buildStepsFor(userText);
+    if (planSteps.isNotEmpty) {
+      // Show plan to the user in chat
+      final planMd = [
+        'План выполнения:',
+        for (int i = 0; i < planSteps.length; i++) '- ${planSteps[i]}'
+      ].join('\n');
+      _appendHistory('assistant', planMd);
+      // Запрос подтверждения
+      final confirmMsg = 'Подтвердить выполнение плана? Ответьте "да" для запуска или "нет" для отмены.';
+      _appendHistory('assistant', confirmMsg);
+      await _persistIfPossible();
+      _awaitingPlanConfirmation = true;
+      _pendingPlanSteps = List<String>.from(planSteps);
+      return AgentResponse(text: '$planMd\n\n$confirmMsg', isFinal: false, mcpUsed: _useFsMcp);
     }
 
-    // Общение через LLM
+    // Fallback: обычный LLM-ответ
     final system = _buildSystemPrompt();
     final messages = <Map<String, String>>[
       {'role': 'system', 'content': system},
@@ -168,7 +281,9 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
   }
 
   @override
-  void dispose() {}
+  void dispose() {
+    _fsMcpAgent?.dispose();
+  }
 
   // ===== IStatefulAgent =====
   @override
@@ -292,13 +407,22 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
   // ===== Файловые команды =====
   Future<AgentResponse?> _maybeHandleFileCommand(String text) async {
     final t = text.trim();
-    final lower = t.toLowerCase();
+    // final lower = t.toLowerCase(); // not used
 
     // read file: "прочитай файл <path>" | "read file <path>"
     final readRe = RegExp(r'^(?:прочитай\s+файл|read\s+file)\s+(.+)$', caseSensitive: false);
     final rm = readRe.firstMatch(t);
     if (rm != null) {
       final path = rm.group(1)!.trim();
+      final resMap = _useFsMcp
+          ? await _fsMcpCall('fs_read', {'path': path})
+          : null;
+      if (_useFsMcp && resMap != null) {
+        final md = 'Файл: ${resMap['path'] ?? path}\nРазмер: ${resMap['size'] ?? '?'} байт\n\n--- Содержимое (превью) ---\n${resMap['contentSnippet'] ?? ''}';
+        _appendHistory('assistant', md);
+        await _persistIfPossible();
+        return AgentResponse(text: md, isFinal: true, meta: {'fileOp': 'read', 'path': path, 'size': resMap['size']});
+      }
       final res = await _fs.readFile(path);
       final md = res.message;
       _appendHistory('assistant', md);
@@ -311,6 +435,16 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
     final lm = listRe.firstMatch(t);
     if (lm != null) {
       final path = lm.group(1)!.trim();
+      if (_useFsMcp) {
+        final resMap = await _fsMcpCall('fs_list', {'path': path});
+        if (resMap != null) {
+          final entries = (resMap['entries'] as List<dynamic>? ?? const []).cast<Map<String, dynamic>>();
+          final md = _renderDirMarkdown(resMap['path']?.toString() ?? path, entries);
+          _appendHistory('assistant', md);
+          await _persistIfPossible();
+          return AgentResponse(text: md, isFinal: true, meta: {'fileOp': 'list', 'path': path, 'count': entries.length});
+        }
+      }
       final listing = await _fs.list(path);
       final md = listing.toMarkdown();
       _appendHistory('assistant', md);
@@ -319,11 +453,21 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
     }
 
     // write file: "запиши файл <path>: <content>" | "write file <path>: <content>"
-    final writeRe = RegExp(r'^(?:запиши\s+файл|write\s+file)\s+([^:]+)\s*:\s*([\s\S]+)$', caseSensitive: false);
+    // ВАЖНО: разделитель path/content — двоеточие с пробелом (": "), чтобы не путать с Windows-диском "D:".
+    final writeRe = RegExp(r'^(?:запиши\s+файл|write\s+file)\s+(.+?)\s*:\s+([\s\S]+)$', caseSensitive: false);
     final wm = writeRe.firstMatch(t);
     if (wm != null) {
       final path = wm.group(1)!.trim();
       final content = wm.group(2) ?? '';
+      if (_useFsMcp) {
+        final resMap = await _fsMcpCall('fs_write', {'path': path, 'content': content, 'createDirs': true, 'overwrite': false});
+        if (resMap != null) {
+          final textOut = resMap['message']?.toString() ?? 'Записано ${resMap['bytesWritten'] ?? '?'} байт в ${resMap['path'] ?? path}';
+          _appendHistory('assistant', textOut);
+          await _persistIfPossible();
+          return AgentResponse(text: textOut, isFinal: true, meta: {'fileOp': 'write', 'path': path, 'bytesWritten': resMap['bytesWritten'] ?? 0});
+        }
+      }
       final res = await _fs.writeFile(path: path, content: content, createDirs: true, overwrite: false);
       final textOut = res.message;
       _appendHistory('assistant', textOut);
@@ -338,6 +482,15 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
       final cmd = dm.group(1)!.trim();
       final recursive = cmd.startsWith('-r ');
       final path = recursive ? cmd.substring(3).trim() : cmd;
+      if (_useFsMcp) {
+        final resMap = await _fsMcpCall('fs_delete', {'path': path, 'recursive': recursive});
+        if (resMap != null) {
+          final md = resMap['message']?.toString() ?? 'Удалено: ${resMap['path'] ?? path}';
+          _appendHistory('assistant', md);
+          await _persistIfPossible();
+          return AgentResponse(text: md, isFinal: true, meta: {'fileOp': 'delete', 'path': path, 'recursive': recursive});
+        }
+      }
       final res = await _fs.deletePath(path, recursive: recursive);
       final md = res.message;
       _appendHistory('assistant', md);
@@ -348,10 +501,165 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
     return null;
   }
 
+  Future<Map<String, dynamic>?> _fsMcpCall(String tool, Map<String, dynamic> args) async {
+    final a = _fsMcpAgent;
+    if (!_useFsMcp || a == null) return null;
+    try {
+      final res = await a.callTool(tool, args);
+      return res;
+    } catch (e) {
+      return {'ok': false, 'message': 'MCP error: $e'};
+    }
+  }
+
+  // ===== Подтверждение выполнения плана =====
+  bool _isConfirmYes(String text) {
+    final t = text.trim().toLowerCase();
+    return t == 'да' || t == 'ок' || t == 'хорошо' || t == 'yes' || t == 'y' || t == 'go' || t == 'confirm';
+  }
+
+  bool _isConfirmNo(String text) {
+    final t = text.trim().toLowerCase();
+    return t == 'нет' || t == 'no' || t == 'n' || t == 'cancel' || t == 'отмена' || t == 'стоп' || t == 'stop';
+  }
+
+  // Detect FS action from a step description. Returns (tool, args) or null.
+  (String, Map<String, dynamic>)? _detectFsAction(String step) {
+    final t = step.trim();
+    // write file: "write file <path>: <content>"
+    // Используем разделитель ": " чтобы корректно обрабатывать пути вида "D:/..."
+    final writeRe = RegExp(r'^(?:запиши\s+файл|write\s+file)\s+(.+?)\s*:\s+([\s\S]+)$', caseSensitive: false);
+    final wm = writeRe.firstMatch(t);
+    if (wm != null) {
+      final path = wm.group(1)!.trim();
+      final content = wm.group(2) ?? '';
+      return ('fs_write', {
+        'path': path,
+        'content': content,
+        'createDirs': true,
+        'overwrite': false,
+      });
+    }
+
+    // read file: "read file <path>"
+    final readRe = RegExp(r'^(?:прочитай\s+файл|read\s+file)\s+(.+)$', caseSensitive: false);
+    final rm = readRe.firstMatch(t);
+    if (rm != null) {
+      final path = rm.group(1)!.trim();
+      return ('fs_read', {'path': path});
+    }
+
+    // list dir: "list dir <path>"
+    final listRe = RegExp(r'^(?:список\s+файлов|list\s+dir)\s+(.+)$', caseSensitive: false);
+    final lm = listRe.firstMatch(t);
+    if (lm != null) {
+      final path = lm.group(1)!.trim();
+      return ('fs_list', {'path': path});
+    }
+
+    // delete: "delete [-r] <path>" | "удали [-r] <path>"
+    final delRe = RegExp(r'^(?:удали|delete)\s+(.+)$', caseSensitive: false);
+    final dm = delRe.firstMatch(t);
+    if (dm != null) {
+      final cmd = dm.group(1)!.trim();
+      final recursive = cmd.startsWith('-r ');
+      final path = recursive ? cmd.substring(3).trim() : cmd;
+      return ('fs_delete', {'path': path, 'recursive': recursive});
+    }
+
+    return null;
+  }
+
+  // Local FS execution fallback mirroring MCP response shape
+  Future<Map<String, dynamic>?> _callLocalFs(String tool, Map<String, dynamic> args) async {
+    switch (tool) {
+      case 'fs_read':
+        try {
+          final path = (args['path'] ?? '').toString();
+          final res = await _fs.readFile(path);
+          return {
+            'ok': true,
+            'path': res.path,
+            'size': res.size,
+            'contentSnippet': res.contentSnippet,
+            'message': res.message,
+          };
+        } catch (e) {
+          return {'ok': false, 'message': 'FS read error: $e'};
+        }
+      case 'fs_list':
+        try {
+          final path = (args['path'] ?? '').toString();
+          final listing = await _fs.list(path);
+          final entries = listing.entries
+              .map((e) => {
+                    'name': e.name,
+                    'isDir': e.isDir,
+                    if (!e.isDir && e.size != null) 'size': e.size,
+                  })
+              .toList();
+          return {
+            'ok': true,
+            'path': listing.path,
+            'entries': entries,
+            'message': listing.message ?? 'Список для ${listing.path}: ${entries.length} элементов',
+          };
+        } catch (e) {
+          return {'ok': false, 'message': 'FS list error: $e'};
+        }
+      case 'fs_write':
+        try {
+          final path = (args['path'] ?? '').toString();
+          final content = (args['content'] ?? '').toString();
+          final createDirs = args['createDirs'] == true;
+          final overwrite = args['overwrite'] == true;
+          final res = await _fs.writeFile(path: path, content: content, createDirs: createDirs, overwrite: overwrite);
+          return {
+            'ok': res.success,
+            'path': res.path,
+            'bytesWritten': res.bytesWritten,
+            'message': res.message,
+          };
+        } catch (e) {
+          return {'ok': false, 'message': 'FS write error: $e'};
+        }
+      case 'fs_delete':
+        try {
+          final path = (args['path'] ?? '').toString();
+          final recursive = args['recursive'] == true;
+          final res = await _fs.deletePath(path, recursive: recursive);
+          return {
+            'ok': res.success,
+            'path': res.path,
+            'message': res.message,
+          };
+        } catch (e) {
+          return {'ok': false, 'message': 'FS delete error: $e'};
+        }
+      default:
+        return {'ok': false, 'message': 'Unsupported local tool: $tool'};
+    }
+  }
+
+  String _renderDirMarkdown(String path, List<Map<String, dynamic>> entries) {
+    final buf = StringBuffer();
+    buf.writeln('Каталог: $path');
+    if (entries.isEmpty) return buf.toString().trim() + '\n(пусто)';
+    for (final e in entries) {
+      final isDir = (e['isDir'] == true);
+      final mark = isDir ? '[DIR]' : '[FILE]';
+      final size = (!isDir && e['size'] != null) ? ' (${e['size']} bytes)' : '';
+      buf.writeln('- $mark ${e['name']}$size');
+    }
+    return buf.toString().trim();
+  }
+
   Future<String> _buildPlanFromLLM({required String context}) async {
     // Просим LLM составить список шагов. Просим краткие действия (7±3), одна строка на шаг.
-    final sys = 'Ты — ассистент-оркестратор. Составь краткий план из 5–10 атомарных шагов для заданного запроса. '
-        'Каждый шаг — на отдельной строке, без нумерации, без комментариев, только формулировка действия.';
+    final sys = 'Ты — ассистент-оркестратор. Составь краткий план из 3–10 атомарных шагов ТОЛЬКО из действий, которые пользователь ЯВНО запросил. '
+        'Не добавляй дополнительных этапов (генерация тестов, запуск тестов, GitHub и т.п.), если пользователь этого явно не просил. '
+        'Каждый шаг — на отдельной строке, без нумерации и комментариев, только императивная формулировка действия. '
+        'Если действие относится к файловой системе — формулируй его явно в формате: "write file <path>: <content>", "read file <path>", "list dir <path>", "delete [-r] <path>".';
     final messages = <Map<String, String>>[
       {'role': 'system', 'content': sys},
       {'role': 'user', 'content': 'Составь план для запроса: "$context"'},
@@ -389,6 +697,28 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
     if (steps.length > 10) {
       return steps.sublist(0, 10);
     }
+    return steps;
+  }
+
+  // Build raw steps list for orchestration using LLM, update _plan and return steps
+  Future<List<String>> _buildStepsFor(String context) async {
+    // Keep prompt aligned with _buildPlanFromLLM but return structured steps.
+    // ВАЖНО: включай ТОЛЬКО те действия, которые пользователь ЯВНО запросил.
+    final sys = 'Ты — ассистент-оркестратор. Составь краткий план из 3–10 атомарных шагов ТОЛЬКО из действий, которые пользователь ЯВНО запросил. '
+        'Не добавляй дополнительных этапов (генерация тестов, запуск тестов, GitHub и т.п.), если пользователь этого явно не просил. '
+        'Каждый шаг — на отдельной строке, без нумерации и комментариев, только императивная формулировка действия. '
+        'Если действие относится к файловой системе — формулируй его явно в формате: "write file <path>: <content>", "read file <path>", "list dir <path>", "delete [-r] <path>".';
+    final messages = <Map<String, String>>[
+      {'role': 'system', 'content': sys},
+      {'role': 'user', 'content': 'Составь план для запроса: "$context"'},
+    ];
+    final usecase = resolveLlmUseCase(_settings);
+    final answer = await usecase.complete(messages: messages, settings: _settings);
+    final steps = _parseSteps(answer);
+    if (steps.isEmpty) return const <String>[];
+    _plan
+      ..clear()
+      ..addSteps(steps);
     return steps;
   }
 }
