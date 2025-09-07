@@ -11,6 +11,7 @@ from typing import Optional, Dict, Any
 from .mcp_client import MCPClient
 from .ui import TelegramUI
 from .yandexgpt_usecase import YandexGptUseCase
+from datetime import datetime, timedelta, time as dtime
 
 class TelegramAgent:
     def __init__(self, config_path: str = "config/config.json"):
@@ -47,6 +48,13 @@ class TelegramAgent:
         self.chunk_size: int = int(self.config.get('chunk_size', 12))
         # State file for last_seen_ids
         self.state_file: str = 'logs/last_seen.json'
+        # Optional schedule settings
+        self.monitor_report_times = self.config.get('monitor_report_times') or []
+        # Filtering/reporting behavior
+        self.filter_mode: str = str(self.config.get('filter_mode', 'strict')).lower()
+        self.report_if_empty: bool = bool(self.config.get('report_if_empty', False))
+        # Concurrency guard to avoid overlapping monitoring runs
+        self._monitor_lock: asyncio.Lock = asyncio.Lock()
 
         # Setup logging
         self.setup_logging()
@@ -162,7 +170,8 @@ class TelegramAgent:
     def setup_logging(self):
         """Setup logging configuration"""
         import logging
-        log_level = getattr(logging, self.config.get('log_level', 'DEBUG').upper())
+        # Default to INFO to avoid debug noise; can be overridden by config
+        log_level = getattr(logging, self.config.get('log_level', 'INFO').upper())
         
         # Create logs directory before attaching FileHandler
         import os
@@ -176,6 +185,15 @@ class TelegramAgent:
                 logging.StreamHandler()
             ]
         )
+        # Tame noisy libraries to WARNING regardless of global level
+        logging.getLogger('httpx').setLevel(logging.WARNING)
+        logging.getLogger('httpcore').setLevel(logging.WARNING)
+        logging.getLogger('openai').setLevel(logging.WARNING)
+        logging.getLogger('asyncio').setLevel(logging.WARNING)
+        # Hide DEBUG traffic logs from our MCP client by default
+        logging.getLogger('telegram_monitoring_agent.src.mcp_client').setLevel(logging.INFO)
+        # Ensure our main agent logger at least INFO
+        logging.getLogger('TelegramAgent').setLevel(max(logging.INFO, log_level))
         
         # Filter sensitive data from logs
         class SensitiveDataFilter(logging.Filter):
@@ -192,7 +210,7 @@ class TelegramAgent:
         """Split list into chunks of given size"""
         return [items[i:i+size] for i in range(0, len(items), size)]
 
-    async def summarize_news_and_trends(self, messages: list, source_title: Optional[str] = None) -> str:
+    async def summarize_news_and_trends(self, messages: list, source_title: Optional[str] = None, source_username: Optional[str] = None) -> str:
         """Summarize messages focusing on AI news, trends, frameworks, and tools using a system prompt."""
         try:
             # Build conversation with system prompt
@@ -201,15 +219,31 @@ class TelegramAgent:
                 "Твоя задача: проанализировать сообщения из Telegram-чата и кратко выделить:\n"
                 "1) Новости и анонсы в сфере нейросетей (модели, релизы, исследования).\n"
                 "2) Тенденции развития и важные сдвиги на рынке/в технологиях.\n"
-                "3) Отдельным блоком: новые фреймворки, библиотеки и инструменты для работы с нейросетями (название → краткое описание → ссылка, если есть).\n"
+                "3) Отдельным блоком: новые фреймворки, библиотеки и инструменты для работы с нейросетями (название → краткое описание).\n"
                 "4) Если присутствуют практические советы/гайды — вынеси их тезисно.\n"
-                "Требования к ответу: компактно, по-русски, структурированно по пунктам, без воды, с маркерами.\n"
+                "Обязательные требования к оформлению:\n"
+                "- В КАЖДОМ пункте указывай ссылку(и) на исходные сообщения канала, если это возможно (например, формат t.me/<username>/<messageId>).\n"
+                "- Если в тексте встречаются внешние источники (статьи, репозитории, релизы) — обязательно добавляй прямые URL на эти источники.\n"
+                "- Отвечай по-русски, структурировано по пунктам, без воды, с маркерами.\n"
             )
 
-            # Prepare content from messages
-            content = "\n".join([
-                f"{m.get('from', {}).get('display', 'Unknown')}: {m.get('text', '')}" for m in messages if m.get('text')
-            ])
+            # Prepare content from messages, appending per-message source links when possible
+            lines: list[str] = []
+            for m in messages:
+                text = m.get('text', '')
+                if not text:
+                    continue
+                display = m.get('from', {}).get('display', 'Unknown')
+                link_suffix = ''
+                try:
+                    if source_username:
+                        mid = int(m.get('id', 0))
+                        if mid > 0:
+                            link_suffix = f" [src: https://t.me/{source_username}/{mid}]"
+                except Exception:
+                    link_suffix = ''
+                lines.append(f"{display}: {text}{link_suffix}")
+            content = "\n".join(lines)
 
             user_prompt = (
                 (f"Источник: {source_title}\n\n" if source_title else "") +
@@ -302,6 +336,149 @@ class TelegramAgent:
             return False, 'Yandex GPT credentials not configured (require YANDEX_IAM_TOKEN or YANDEX_API_KEY) and YANDEX_FOLDER_ID'
         return False, f'Unsupported llm_provider: {provider}'
 
+    # ---- Scheduling helpers ----
+    def _parse_report_times(self) -> list[dtime]:
+        """Parse fixed times (HH:MM or HH:MM:SS) from monitor_report_times.
+        Entries that look like cron (contain 4 or more spaces) are ignored here.
+        """
+        times_raw = self.monitor_report_times
+        if not times_raw or not isinstance(times_raw, list):
+            return []
+        parsed: list[dtime] = []
+        for s in times_raw:
+            try:
+                if not isinstance(s, str):
+                    continue
+                # Treat as fixed time only if it looks like HH:MM or HH:MM:SS
+                if ' ' in s.strip():
+                    # likely a cron spec, skip here
+                    continue
+                parts = [int(x) for x in s.strip().split(":")]
+                if len(parts) == 2:
+                    h, m = parts
+                    parsed.append(dtime(hour=h, minute=m, second=0))
+                elif len(parts) == 3:
+                    h, m, sec = parts
+                    parsed.append(dtime(hour=h, minute=m, second=sec))
+                else:
+                    raise ValueError("unsupported time format")
+            except Exception:
+                try:
+                    self.logger.warning(f"Invalid time in monitor_report_times ignored: {s}")
+                except Exception:
+                    pass
+        # Deduplicate and sort
+        uniq = sorted({t for t in parsed})
+        return uniq
+
+    def _seconds_until_next_fixed(self, times: list[dtime]) -> Optional[tuple[float, str]]:
+        """Return seconds until next fixed time and label. If no times, return None."""
+        if not times:
+            return None
+        now = datetime.now()
+        today = now.date()
+        candidates = [datetime.combine(today, t) for t in times]
+        future = [dt for dt in candidates if dt > now]
+        if not future:
+            # Next day earliest time
+            next_dt = datetime.combine(today + timedelta(days=1), times[0])
+        else:
+            next_dt = min(future)
+        delta = (next_dt - now).total_seconds()
+        return max(delta, 0.0), next_dt.strftime('%H:%M:%S')
+
+    def _parse_cron_entries(self) -> list[str]:
+        """Extract cron-like 5-field specs from monitor_report_times.
+        Supported format: "m h dom mon dow" with lists (a,b), ranges (a-b), steps (*/n). DOW: 0 or 7=Sun, 1=Mon.
+        """
+        specs: list[str] = []
+        if not isinstance(self.monitor_report_times, list):
+            return specs
+        for s in self.monitor_report_times:
+            if isinstance(s, str) and len(s.strip().split()) >= 5:
+                specs.append(" ".join(s.strip().split()[:5]))
+        return specs
+
+    def _cron_field_match(self, value: int, spec: str, min_v: int, max_v: int) -> bool:
+        """Check if a single cron field spec matches a value."""
+        spec = spec.strip()
+        if spec == '*':
+            return True
+        def expand_token(token: str) -> set[int]:
+            # Handle step syntax
+            if '/' in token:
+                base, step_s = token.split('/', 1)
+                step = int(step_s)
+                if base == '*':
+                    rng = range(min_v, max_v + 1)
+                else:
+                    # range or single
+                    if '-' in base:
+                        a, b = base.split('-', 1)
+                        rng = range(int(a), int(b) + 1)
+                    else:
+                        v = int(base)
+                        rng = range(v, v + 1)
+                return {v for v in rng if (v - min_v) % step == 0}
+            # Range
+            if '-' in token:
+                a, b = token.split('-', 1)
+                return set(range(int(a), int(b) + 1))
+            # Single number
+            return {int(token)}
+
+        allowed: set[int] = set()
+        for part in spec.split(','):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                allowed |= expand_token(part)
+            except Exception:
+                # invalid token -> no match
+                return False
+        return value in allowed
+
+    def _seconds_until_next_cron(self, specs: list[str]) -> Optional[tuple[float, str]]:
+        """Compute seconds until next time matching any of the cron specs.
+        Returns (seconds, label) or None if no specs.
+        """
+        if not specs:
+            return None
+        now = datetime.now().replace(second=0, microsecond=0)
+        start = now + timedelta(minutes=1)  # search from next minute
+        max_iters = 366 * 24 * 60  # up to a year
+        def matches(dt: datetime, spec: str) -> bool:
+            fields = spec.split()
+            if len(fields) < 5:
+                return False
+            m_s, h_s, dom_s, mon_s, dow_s = fields[:5]
+            minute = dt.minute
+            hour = dt.hour
+            dom = dt.day
+            mon = dt.month
+            # Map Python weekday() (Mon=0..Sun=6) to cron (Sun=0 or 7)
+            py_dow = dt.weekday()  # Mon=0..Sun=6
+            cron_dow = (py_dow + 1) % 7  # Sun=0, Mon=1, ... Sat=6
+            return (
+                self._cron_field_match(minute, m_s, 0, 59) and
+                self._cron_field_match(hour, h_s, 0, 23) and
+                self._cron_field_match(dom, dom_s, 1, 31) and
+                self._cron_field_match(mon, mon_s, 1, 12) and
+                (self._cron_field_match(cron_dow, dow_s, 0, 6) or (dow_s.strip() == '7' and cron_dow == 0))
+            )
+
+        cur = start
+        for _ in range(max_iters):
+            for spec in specs:
+                if matches(cur, spec):
+                    seconds = (cur - datetime.now()).total_seconds()
+                    label = cur.strftime('%Y-%m-%d %H:%M') + f" cron: {spec}"
+                    return max(seconds, 0.0), label
+            cur += timedelta(minutes=1)
+        # Fallback: none found within a year
+        return None
+
     async def _llm_complete(self, messages: list[dict], max_tokens: int, temperature: float) -> str:
         """Unified completion for configured LLM provider (DeepSeek or Yandex)."""
         provider = (self.config.get('llm_provider') or 'deepseek').lower()
@@ -325,23 +502,63 @@ class TelegramAgent:
     async def start_continuous_monitoring(self):
         """Start continuous monitoring of chats"""
         print("Starting continuous monitoring...")
+        fixed_times = self._parse_report_times()
+        cron_specs = self._parse_cron_entries()
+        if fixed_times or cron_specs:
+            self.logger.info("monitor_interval_sec ignored due to monitor_report_times (schedule mode)")
+            if fixed_times:
+                self.logger.info(f"Fixed times: {[t.strftime('%H:%M:%S') for t in fixed_times]}")
+            if cron_specs:
+                self.logger.info(f"Cron specs: {cron_specs}")
+        else:
+            # Do NOT analyze immediately on startup when using plain interval
+            try:
+                self.logger.info(f"First run will start in {int(self.monitor_interval_sec)}s (interval mode)")
+                await asyncio.sleep(self.monitor_interval_sec)
+            except asyncio.CancelledError:
+                return
         while True:
             try:
-                await self.start_monitoring()
-                await asyncio.sleep(self.monitor_interval_sec)  # Interval from config
+                if fixed_times or cron_specs:
+                    # Compute next run among fixed times and cron specs
+                    candidates: list[tuple[float, str]] = []
+                    ft = self._seconds_until_next_fixed(fixed_times)
+                    if ft:
+                        candidates.append(ft)
+                    ct = self._seconds_until_next_cron(cron_specs)
+                    if ct:
+                        candidates.append(ct)
+                    if not candidates:
+                        # No valid schedule -> fallback to interval
+                        await self.start_monitoring()
+                        await asyncio.sleep(self.monitor_interval_sec)
+                        continue
+                    delay, label = min(candidates, key=lambda x: x[0])
+                    self.logger.info(f"Next scheduled monitoring run at {label} (in {int(delay)}s)")
+                    await asyncio.sleep(delay)
+                    await self.start_monitoring()
+                    await asyncio.sleep(1)
+                else:
+                    await self.start_monitoring()
+                    await asyncio.sleep(self.monitor_interval_sec)  # Interval from config
             except Exception as e:
                 print(f"Monitoring error: {e}")
                 await asyncio.sleep(30)  # Retry after 30 seconds
             
     async def start_monitoring(self):
         """Run single monitoring iteration across configured chats via MCP"""
-        chats = self.get_monitored_chats()
-        if not chats:
-            self.logger.warning("No chats configured to monitor")
+        # Prevent overlapping iterations which can lead to duplicate summaries
+        if self._monitor_lock.locked():
+            self.logger.warning("Monitoring iteration skipped: previous iteration still running")
             return
-        # Process chats sequentially to avoid any potential interleaving across requests
-        for chat_id in chats:
-            await self.monitor_chat(chat_id)
+        async with self._monitor_lock:
+            chats = self.get_monitored_chats()
+            if not chats:
+                self.logger.warning("No chats configured to monitor")
+                return
+            # Process chats sequentially to avoid any potential interleaving across requests
+            for chat_id in chats:
+                await self.monitor_chat(chat_id)
 
     async def monitor_chat(self, chat_id: str):
         """Monitor a specific chat using MCP. Assumes MCP session is already open by the caller."""
@@ -402,71 +619,101 @@ class TelegramAgent:
                     break
                 max_id_cursor = current_min - 1
 
-                if msgs:
-                    self.logger.debug(f"Fetched total {len(msgs)} message(s) for {chat_ref} before de-dup")
-                    # Query server-side unread counters
-                    unread_info = await asyncio.wait_for(
-                        self.mcp_client.get_unread_count(chat_ref),
-                        timeout=10.0
-                    )
-                    unread = 0
-                    if isinstance(unread_info, dict):
-                        try:
-                            unread = int(unread_info.get('unread', 0))
-                        except Exception:
-                            unread = 0
-
-                    # Deduplicate: process only messages with id > last_seen_id
-                    def _mid(m: Dict[str, Any]) -> int:
-                        try:
-                            return int(m.get('id', 0))
-                        except Exception:
-                            return 0
-                    new_msgs = [m for m in msgs if _mid(m) > last_seen]
-                    self.logger.debug(f"New messages for {chat_ref} since {last_seen}: {len(new_msgs)}")
-                    if new_msgs:
-                        # Sort ascending by id to preserve chronology, update last_seen
-                        new_msgs.sort(key=_mid)
-                        new_max = max((_mid(m) for m in new_msgs), default=last_seen)
-                        self.last_seen_ids[chat_ref] = max(self.last_seen_ids.get(chat_ref, 0), new_max)
-                        # Persist state after update
-                        self._save_last_seen()
-                    self.logger.info(f"History for {chat_ref}: {len(msgs)} messages, unread: {unread}. New since last_seen_id={last_seen}: {len(new_msgs)}")
-
-                    if not new_msgs:
-                        return
-
-                    # Apply filters and chunk by 12
-                    filtered = [m for m in new_msgs if self.should_process_message(m)]
-                    self.logger.info(f"Filtered messages for {chat_ref}: {len(filtered)} of {len(new_msgs)} passed filters")
-                    if not filtered:
-                        self.logger.debug(f"No messages passed filters for {chat_ref}")
-                        return
-
-                    chunks = self._chunk_list(filtered, self.chunk_size)
-                    self.logger.info(f"Processing {len(filtered)} new messages in {len(chunks)} chunks for {chat_ref}")
-
-                    # Summarize each chunk and send
-                    target_chat = self.summary_chat or chat_ref
-                    for idx, chunk in enumerate(chunks, start=1):
-                        try:
-                            # Ensure LLM is configured before summarizing
-                            ok, err = self._llm_is_configured()
-                            if not ok:
-                                self.logger.warning(f"Skipping summarization for {chat_ref}: {err}")
-                                continue
-                            summary = await self.summarize_news_and_trends(chunk, source_title=chat_info.get('title') or chat_ref)
-                            if summary and summary.strip():
-                                prefix = f"🧠 Сводка #{idx}/{len(chunks)} для {chat_info.get('title') or chat_ref}:\n\n"
-                                send_res = await self.mcp_client.send_message(target_chat, prefix + summary)
-                                if isinstance(send_res, dict) and send_res.get("message_id"):
-                                    self.logger.info(f"Summary chunk {idx}/{len(chunks)} sent to {target_chat}")
-                                else:
-                                    self.logger.error(f"Failed to send summary chunk {idx} to {target_chat}: {send_res}")
-                        except Exception as e:
-                            self.logger.error(f"Error summarizing/sending chunk {idx}: {e}")
-            else:
+            if not msgs:
                 self.logger.info(f"No messages returned for {chat_ref}")
+                return
+
+            self.logger.debug(f"Fetched total {len(msgs)} message(s) for {chat_ref} before de-dup")
+            # Query server-side unread counters
+            try:
+                unread_info = await asyncio.wait_for(
+                    self.mcp_client.get_unread_count(chat_ref),
+                    timeout=10.0
+                )
+            except asyncio.TimeoutError:
+                unread_info = {}
+                self.logger.warning(f"Timeout getting unread count for {chat_ref}")
+            unread = 0
+            if isinstance(unread_info, dict):
+                try:
+                    unread = int(unread_info.get('unread', 0))
+                except Exception:
+                    unread = 0
+
+            # Deduplicate: process only messages with id > last_seen_id
+            def _mid(m: Dict[str, Any]) -> int:
+                try:
+                    return int(m.get('id', 0))
+                except Exception:
+                    return 0
+            new_msgs = [m for m in msgs if _mid(m) > last_seen]
+            self.logger.debug(f"New messages for {chat_ref} since {last_seen}: {len(new_msgs)}")
+            if new_msgs:
+                # Sort ascending by id to preserve chronology, update last_seen
+                new_msgs.sort(key=_mid)
+                new_max = max((_mid(m) for m in new_msgs), default=last_seen)
+                self.last_seen_ids[chat_ref] = max(self.last_seen_ids.get(chat_ref, 0), new_max)
+                # Persist state after update
+                self._save_last_seen()
+            self.logger.info(f"History for {chat_ref}: {len(msgs)} messages, unread: {unread}. New since last_seen_id={last_seen}: {len(new_msgs)}")
+
+            if not new_msgs:
+                return
+
+            # Apply filters and chunk by configured size
+            filtered = [m for m in new_msgs if self.should_process_message(m)]
+            self.logger.info(f"Filtered messages for {chat_ref}: {len(filtered)} of {len(new_msgs)} passed filters")
+            if not filtered:
+                self.logger.warning(f"No messages passed filters for {chat_ref} (0/{len(new_msgs)}).")
+                # Soft mode: fall back to all new messages
+                if self.filter_mode == 'soft' and new_msgs:
+                    self.logger.info(f"filter_mode=soft: using all {len(new_msgs)} new messages for {chat_ref} to build summary")
+                    filtered = new_msgs
+                else:
+                    # Optionally send a placeholder report
+                    if self.report_if_empty:
+                        target_chat = self.summary_chat or chat_ref
+                        title = chat_info.get('title') or chat_ref
+                        placeholder = (
+                            f"🧠 Сводка для {title}: релевантных сообщений по фильтрам не найдено. "
+                            f"Новых сообщений за период: {len(new_msgs)}."
+                        )
+                        try:
+                            send_res = await self.mcp_client.send_message(target_chat, placeholder)
+                            if isinstance(send_res, dict) and send_res.get("message_id"):
+                                self.logger.info(f"Empty report note sent to {target_chat} for {chat_ref}")
+                            else:
+                                self.logger.error(f"Failed to send empty report note to {target_chat}: {send_res}")
+                        except Exception as e:
+                            self.logger.error(f"Error sending empty report note for {chat_ref}: {e}")
+                    return
+
+            chunks = self._chunk_list(filtered, self.chunk_size)
+            self.logger.info(f"Processing {len(filtered)} new messages in {len(chunks)} chunks for {chat_ref}")
+
+            # Summarize each chunk and send
+            target_chat = self.summary_chat or chat_ref
+            for idx, chunk in enumerate(chunks, start=1):
+                try:
+                    # Ensure LLM is configured before summarizing
+                    ok, err = self._llm_is_configured()
+                    if not ok:
+                        self.logger.warning(f"Skipping summarization for {chat_ref}: {err}")
+                        continue
+                    summary = await self.summarize_news_and_trends(
+                        chunk,
+                        source_title=chat_info.get('title') or chat_ref,
+                        source_username=(chat_info.get('username') if isinstance(chat_info, dict) else None)
+                    )
+                    if summary and summary.strip():
+                        prefix = f"🧠 Сводка #{idx}/{len(chunks)} для {chat_info.get('title') or chat_ref}:\n\n"
+                        send_res = await self.mcp_client.send_message(target_chat, prefix + summary)
+                        if isinstance(send_res, dict) and send_res.get("message_id"):
+                            self.logger.info(f"Summary chunk {idx}/{len(chunks)} sent to {target_chat}")
+                        else:
+                            self.logger.error(f"Failed to send summary chunk {idx} to {target_chat}: {send_res}")
+                except Exception as e:
+                    self.logger.error(f"Error summarizing/sending chunk {idx}: {e}")
                     
         except asyncio.TimeoutError:
             self.logger.error(f"Timeout monitoring chat {chat_id}")
@@ -888,27 +1135,55 @@ class TelegramAgent:
                 self.logger.error(f"Error monitoring chat {chat}: {e}")
 
     async def start_continuous_monitoring(self) -> None:
-        """Run continuous monitoring loop using a single long-lived MCP session."""
+        """Run continuous monitoring loop using a single long-lived MCP session, with schedule support.
+        - If monitor_report_times is set (fixed times and/or cron), interval is ignored and runs happen at schedule.
+        - Otherwise uses interval mode, and the first run is delayed by one interval (no instant analysis on startup).
+        """
         interval = int(self.monitor_interval_sec)
         chats = self.get_monitored_chats()
-        self.logger.info(f"Monitoring loop started: {len(chats)} chat(s), interval={interval}s, transport={self.mcp_transport}")
+        fixed_times = self._parse_report_times()
+        cron_specs = self._parse_cron_entries()
+        if fixed_times or cron_specs:
+            self.logger.info("monitor_interval_sec ignored due to monitor_report_times (schedule mode)")
+            if fixed_times:
+                self.logger.info(f"Fixed times: {[t.strftime('%H:%M:%S') for t in fixed_times]}")
+            if cron_specs:
+                self.logger.info(f"Cron specs: {cron_specs}")
+            self.logger.info(f"Monitoring loop started: {len(chats)} chat(s), mode=schedule, transport={self.mcp_transport}")
+        else:
+            self.logger.info(f"Monitoring loop started: {len(chats)} chat(s), interval={interval}s, transport={self.mcp_transport}")
+
         # Keep one stdio session open to avoid concurrent process starts and interleaved frames
         async with self.mcp_client:
             try:
                 await self.mcp_client.initialize()
             except Exception:
                 pass
-            # Ping summary chat at startup to verify sending works
-            if self.summary_chat:
+
+            # Initial wait: in interval mode wait one full interval; in schedule mode wait until the next scheduled time
+            if fixed_times or cron_specs:
+                candidates: list[tuple[float, str]] = []
+                ft = self._seconds_until_next_fixed(fixed_times)
+                if ft:
+                    candidates.append(ft)
+                ct = self._seconds_until_next_cron(cron_specs)
+                if ct:
+                    candidates.append(ct)
+                if candidates:
+                    delay, label = min(candidates, key=lambda x: x[0])
+                    self.logger.info(f"Next scheduled monitoring run at {label} (in {int(delay)}s)")
+                    try:
+                        await asyncio.sleep(delay)
+                    except asyncio.CancelledError:
+                        return
+            else:
                 try:
-                    ping_text = f"✅ Monitoring started. Interval={interval}s, chats={len(chats)}"
-                    res = await self.mcp_client.send_message(self.summary_chat, ping_text)
-                    if isinstance(res, dict) and res.get("message_id"):
-                        self.logger.info(f"Startup ping sent to {self.summary_chat}")
-                    else:
-                        self.logger.warning(f"Startup ping failed for {self.summary_chat}: {res}")
-                except Exception as e:
-                    self.logger.error(f"Error sending startup ping to {self.summary_chat}: {e}")
+                    self.logger.info(f"First run will start in {interval}s (interval mode)")
+                    await asyncio.sleep(interval)
+                except asyncio.CancelledError:
+                    return
+
+            # Main loop
             while True:
                 try:
                     await self.start_monitoring()
@@ -916,8 +1191,28 @@ class TelegramAgent:
                     break
                 except Exception as e:
                     self.logger.error(f"Monitoring iteration error: {e}")
+
+                # Wait until next run
                 try:
-                    await asyncio.sleep(interval)
+                    if fixed_times or cron_specs:
+                        candidates2: list[tuple[float, str]] = []
+                        ft2 = self._seconds_until_next_fixed(fixed_times)
+                        if ft2:
+                            candidates2.append(ft2)
+                        ct2 = self._seconds_until_next_cron(cron_specs)
+                        if ct2:
+                            candidates2.append(ct2)
+                        if not candidates2:
+                            # Fallback to interval if schedule empty
+                            await asyncio.sleep(interval)
+                            continue
+                        delay2, label2 = min(candidates2, key=lambda x: x[0])
+                        self.logger.info(f"Next scheduled monitoring run at {label2} (in {int(delay2)}s)")
+                        await asyncio.sleep(delay2)
+                        # tiny guard
+                        await asyncio.sleep(1)
+                    else:
+                        await asyncio.sleep(interval)
                 except asyncio.CancelledError:
                     break
 
