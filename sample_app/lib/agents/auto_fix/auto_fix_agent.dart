@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:developer' as dev;
 
 import 'package:sample_app/agents/agent_interface.dart';
 import 'package:sample_app/models/app_settings.dart';
@@ -60,12 +61,14 @@ class AutoFixAgent with AuthPolicyMixin implements IAgent {
         'mode': req.context?['mode'] ?? 'file',
       },
     ));
+    dev.log('[start] pipeline_start path=${req.context?['path']} mode=${req.context?['mode']}', name: 'AutoFixAgent');
 
     Timer.run(() async {
       // AuthZ: проверка перед запуском пайплайна (стрим)
       try {
         await ensureAuthorized(req, action: 'start');
       } catch (e) {
+        dev.log('[start] authorization error: $e', name: 'AutoFixAgent', level: 1000);
         ctrl.add(AgentEvent(
           id: 'auth-error',
           runId: runId,
@@ -88,6 +91,7 @@ class AutoFixAgent with AuthPolicyMixin implements IAgent {
           'mode': req.context?['mode'] ?? 'unknown',
         },
       ));
+      dev.log('[analysis] started path=${req.context?['path']} mode=${req.context?['mode']}', name: 'AutoFixAgent');
 
       final path = (req.context?['path'] as String?)?.trim() ?? '';
       final mode = (req.context?['mode'] as String?)?.trim() ?? 'file';
@@ -120,6 +124,7 @@ class AutoFixAgent with AuthPolicyMixin implements IAgent {
 
         // Нет пути или нет поддерживаемых файлов — предупредим и завершим
         if (path.isEmpty || targets.isEmpty) {
+          dev.log('[analysis] no targets (path="$path", mode=$mode)', name: 'AutoFixAgent');
           ctrl.add(AgentEvent(
             id: 'e1w',
             runId: runId,
@@ -152,6 +157,7 @@ class AutoFixAgent with AuthPolicyMixin implements IAgent {
         }
 
         // Анализ каждой цели и формирование патчей (базовые фиксы)
+        dev.log('[analysis] targets=${targets.length}', name: 'AutoFixAgent');
         for (final file in targets) {
           final res = await _analyzeAndFixFile(file);
           if (res != null) {
@@ -163,6 +169,7 @@ class AutoFixAgent with AuthPolicyMixin implements IAgent {
                 'newContent': res.newContent,
                 'description': 'Нормализация конца файла/хвостовых пробелов',
               });
+              dev.log('[patch] local file fixed path=${file.path} diffLen=${res.diff.length} newLen=${res.newContent.length}', name: 'AutoFixAgent');
             }
           }
         }
@@ -171,6 +178,7 @@ class AutoFixAgent with AuthPolicyMixin implements IAgent {
         List<Map<String, dynamic>> llmPatches = [];
         if (targets.isNotEmpty && useLLM) {
           try {
+            dev.log('[llm] requesting suggestions for files=${targets.length}, issues=${issues.length}', name: 'AutoFixAgent');
             final effectiveSettings = _settings ?? const AppSettings();
             final overrideRaw =
                 req.context?['llm_raw_override'] as String?; // для тестов
@@ -180,6 +188,7 @@ class AutoFixAgent with AuthPolicyMixin implements IAgent {
                     issues: issues,
                     settings: effectiveSettings);
             if (suggestions.trim().isNotEmpty) {
+              dev.log('[llm] got suggestions length=${suggestions.length}', name: 'AutoFixAgent');
               final head = suggestions.split('\n').take(5).join(' | ');
               ctrl.add(AgentEvent(
                 id: 'e2l1',
@@ -276,6 +285,7 @@ class AutoFixAgent with AuthPolicyMixin implements IAgent {
                   'diff': fp.diff,
                 });
               }
+              dev.log('[llm] filtered patches=${llmPatches.length}', name: 'AutoFixAgent');
               ctrl.add(AgentEvent(
                 id: 'e2l3',
                 runId: runId,
@@ -289,6 +299,7 @@ class AutoFixAgent with AuthPolicyMixin implements IAgent {
               ));
             }
           } catch (e) {
+            dev.log('[llm] suggestions failed: $e', name: 'AutoFixAgent', level: 1000);
             ctrl.add(AgentEvent(
               id: 'e2e',
               runId: runId,
@@ -300,6 +311,7 @@ class AutoFixAgent with AuthPolicyMixin implements IAgent {
           }
         }
 
+        dev.log('[result] issues=${issues.length} basePatches=${patches.length} llmPatches=${useLLM ? (0) : (0)}', name: 'AutoFixAgent');
         ctrl.add(AgentEvent(
           id: 'e2',
           runId: runId,
@@ -318,6 +330,7 @@ class AutoFixAgent with AuthPolicyMixin implements IAgent {
           if (includeLLMInApply) ...llmPatches,
         ];
 
+        dev.log('[complete] finalPatches=${finalPatches.length}', name: 'AutoFixAgent');
         ctrl.add(AgentEvent(
           id: 'e3',
           runId: runId,
@@ -335,6 +348,7 @@ class AutoFixAgent with AuthPolicyMixin implements IAgent {
           },
         ));
       } catch (e) {
+        dev.log('[error] pipeline failed: $e', name: 'AutoFixAgent', level: 1000);
         ctrl.add(AgentEvent(
           id: 'err',
           runId: runId,

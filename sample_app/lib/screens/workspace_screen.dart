@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:code_text_field/code_text_field.dart';
@@ -62,6 +64,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   late AppSettings _appSettings;
   bool _isLoadingSettings = true;
   WorkspaceOrchestratorAgent? _wsAgent;
+  Timer? _liveUpdateTimer;
 
   Future<void> _openFile(String path, {bool requestFocus = true}) async {
     try {
@@ -107,6 +110,26 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Не удалось открыть файл: $e')),
       );
+    }
+  }
+
+  // Полное обновление дерева: очищает кэш и перечитывает раскрытые каталоги
+  Future<void> _refreshTree() async {
+    setState(() {
+      _children.clear();
+      _rootLoaded = false;
+    });
+    // Сначала перечитываем корень
+    await _ensureChildren(_rootPath);
+    // Затем все раскрытые каталоги
+    final expandedDirs = _expanded.entries.where((e) => e.value).map((e) => e.key).toList();
+    for (final d in expandedDirs) {
+      await _ensureChildren(d);
+    }
+    if (mounted) {
+      setState(() {
+        _rootLoaded = true;
+      });
     }
   }
 
@@ -273,6 +296,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     _pipelineInput.dispose();
     _pipelineScroll.dispose();
     _treeScroll.dispose();
+    _liveUpdateTimer?.cancel();
     super.dispose();
   }
 
@@ -367,9 +391,23 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         Container(
           padding: const EdgeInsets.all(12),
           color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          child: const Text(
-            'Файлы',
-            style: TextStyle(fontWeight: FontWeight.w700),
+          child: Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Файлы',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Tooltip(
+                message: 'Обновить файловую систему',
+                child: IconButton(
+                  key: const ValueKey('workspace_fs_refresh_button'),
+                  icon: const Icon(Icons.refresh),
+                  onPressed: _refreshTree,
+                ),
+              ),
+            ],
           ),
         ),
         Expanded(
@@ -844,13 +882,32 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     });
     _scrollChatToEnd();
     try {
-      final resp = await _wsAgent!.ask(AgentRequest(text));
+      final askFuture = _wsAgent!.ask(AgentRequest(text));
+      // Live обновление: пока ask выполняется, периодически подтягиваем историю
+      _liveUpdateTimer?.cancel();
+      _liveUpdateTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
+        if (!mounted || _wsAgent == null) return;
+        final hist = _wsAgent!.exportHistory();
+        setState(() {
+          _chat
+            ..clear()
+            ..addAll(hist.map((m) => Message(text: m['content'] ?? '', isUser: (m['role'] == 'user'))));
+        });
+        _scrollChatToEnd();
+      });
+      final resp = await askFuture;
+      // Финальный снимок истории + снятие флага
+      _liveUpdateTimer?.cancel();
+      final hist = _wsAgent!.exportHistory();
       setState(() {
-        _chat.add(Message(text: resp.text, isUser: false, isFinal: resp.isFinal));
+        _chat
+          ..clear()
+          ..addAll(hist.map((m) => Message(text: m['content'] ?? '', isUser: (m['role'] == 'user'))));
         _isSending = false;
       });
       _scrollChatToEnd();
     } catch (e) {
+      _liveUpdateTimer?.cancel();
       setState(() {
         _chat.add(Message(text: 'Ошибка: $e', isUser: false));
         _isSending = false;
