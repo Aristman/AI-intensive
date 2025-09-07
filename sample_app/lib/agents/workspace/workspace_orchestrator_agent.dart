@@ -75,6 +75,63 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
     }
   }
 
+  // ===== Smart write: detects directives like append "..."; otherwise overwrites content =====
+  Future<Map<String, dynamic>?> _smartWrite(String path, String content) async {
+    // Используем raw triple-quoted RegExp, чтобы безопасно содержать как одинарные, так и двойные кавычки
+    final appendRe = RegExp(r'''^append\s+(?:"([^"]*)"|'([^']*)'|(.+))$''', caseSensitive: false);
+    String? toAppend;
+    final m = appendRe.firstMatch(content.trim());
+    if (m != null) {
+      toAppend = m.group(1) ?? m.group(2) ?? m.group(3);
+    }
+
+    if (toAppend != null) {
+      // 1) read current content
+      String current = '';
+      if (_useFsMcp) {
+        final r = await _fsMcpCall('fs_read', {'path': path});
+        if (r != null && (r['ok'] == true || r['contentSnippet'] is String)) {
+          current = (r['contentSnippet'] ?? '').toString();
+        }
+      } else {
+        final r = await _fs.readFile(path);
+        current = r.contentSnippet;
+      }
+      final newContent = current + toAppend;
+      // 2) overwrite with combined content
+      if (_useFsMcp) {
+        return await _fsMcpCall('fs_write', {
+          'path': path,
+          'content': newContent,
+          'createDirs': true,
+          'overwrite': true,
+        });
+      } else {
+        final res = await _fs.writeFile(path: path, content: newContent, createDirs: true, overwrite: true);
+        return {
+          'ok': res.success,
+          'path': res.path,
+          'bytesWritten': res.bytesWritten,
+          'message': res.message,
+        };
+      }
+    }
+
+    // Default: overwrite as-is
+    if (_useFsMcp) {
+      return await _fsMcpCall('fs_write', {'path': path, 'content': content, 'createDirs': true, 'overwrite': true});
+    } else {
+      final res = await _fs.writeFile(path: path, content: content, createDirs: true, overwrite: true);
+      return {
+        'ok': res.success,
+        'path': res.path,
+        'bytesWritten': res.bytesWritten,
+        'message': res.message,
+      };
+    }
+  }
+  
+
   IntentType _classifyIntent(String text) {
     final lc = text.toLowerCase().trim();
     if (lc.startsWith('покажи план') || lc.startsWith('показать план') || lc.startsWith('show plan')) {
@@ -179,10 +236,16 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
           await _persistIfPossible();
 
           Map<String, dynamic>? resMap;
-          if (_useFsMcp) {
-            resMap = await _fsMcpCall(tool, args);
+          if (tool == 'fs_write') {
+            final path = (args['path'] ?? '').toString();
+            final content = (args['content'] ?? '').toString();
+            resMap = await _smartWrite(path, content);
           } else {
-            resMap = await _callLocalFs(tool, args);
+            if (_useFsMcp) {
+              resMap = await _fsMcpCall(tool, args);
+            } else {
+              resMap = await _callLocalFs(tool, args);
+            }
           }
           final ok = resMap != null && (resMap['ok'] != false);
           final msg = (resMap != null ? (resMap['message']?.toString() ?? '') : 'нет ответа');
@@ -459,20 +522,11 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
     if (wm != null) {
       final path = wm.group(1)!.trim();
       final content = wm.group(2) ?? '';
-      if (_useFsMcp) {
-        final resMap = await _fsMcpCall('fs_write', {'path': path, 'content': content, 'createDirs': true, 'overwrite': false});
-        if (resMap != null) {
-          final textOut = resMap['message']?.toString() ?? 'Записано ${resMap['bytesWritten'] ?? '?'} байт в ${resMap['path'] ?? path}';
-          _appendHistory('assistant', textOut);
-          await _persistIfPossible();
-          return AgentResponse(text: textOut, isFinal: true, meta: {'fileOp': 'write', 'path': path, 'bytesWritten': resMap['bytesWritten'] ?? 0});
-        }
-      }
-      final res = await _fs.writeFile(path: path, content: content, createDirs: true, overwrite: false);
-      final textOut = res.message;
+      final resMap = await _smartWrite(path, content);
+      final textOut = resMap?['message']?.toString() ?? 'Записано ${resMap?['bytesWritten'] ?? '?'} байт в ${resMap?['path'] ?? path}';
       _appendHistory('assistant', textOut);
       await _persistIfPossible();
-      return AgentResponse(text: textOut, isFinal: true, meta: {'fileOp': 'write', 'path': path, 'bytesWritten': res.bytesWritten});
+      return AgentResponse(text: textOut, isFinal: true, meta: {'fileOp': 'write', 'path': path, 'bytesWritten': resMap?['bytesWritten'] ?? 0});
     }
 
     // delete path: "удали [-r] <path>" | "delete [-r] <path>"
@@ -537,7 +591,7 @@ class WorkspaceOrchestratorAgent with AuthPolicyMixin implements IAgent, IStatef
         'path': path,
         'content': content,
         'createDirs': true,
-        'overwrite': false,
+        'overwrite': true,
       });
     }
 
