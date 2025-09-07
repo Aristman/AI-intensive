@@ -11,6 +11,8 @@ import 'package:highlight/languages/yaml.dart' as yaml_lang;
 import 'package:highlight/languages/markdown.dart' as md_lang;
 import 'package:highlight/languages/kotlin.dart' as kt_lang;
 import 'package:highlight/languages/java.dart' as java_lang;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path/path.dart' as p;
 
 /// WorkspaceScreen — трехпанельное окно:
 /// - Левая панель: проводник (Desktop)
@@ -26,6 +28,9 @@ class WorkspaceScreen extends StatefulWidget {
 class _WorkspaceScreenState extends State<WorkspaceScreen> {
   // Корневой путь проводника (Desktop)
   static const String _rootPath = 'D:/projects/ai_intensive/AI-intensive/';
+  static const String _prefsOpenTabsKey = 'workspace_open_tabs';
+  static const String _prefsActiveTabKey = 'workspace_active_tab';
+  static const String _prefsExpandedDirsKey = 'workspace_expanded_dirs';
 
   // Базовое состояние для вкладок и содержимого (MVP каркас)
   final List<String> _tabs = [];
@@ -39,8 +44,15 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   final Map<String, bool> _expanded = {}; // path -> expanded
   final Map<String, List<FileSystemEntity>> _children = {}; // cached listing
   bool _rootLoaded = false;
+  final ScrollController _treeScroll = ScrollController();
+  final Map<String, GlobalKey> _fileKeys = {}; // path -> key for ensureVisible
 
-  Future<void> _openFile(String path) async {
+  // Правая панель — каркас ленты событий/сообщений
+  final List<String> _pipelineLog = [];
+  final TextEditingController _pipelineInput = TextEditingController();
+  final ScrollController _pipelineScroll = ScrollController();
+
+  Future<void> _openFile(String path, {bool requestFocus = true}) async {
     try {
       final file = File(path);
       final data = await file.readAsString();
@@ -61,15 +73,89 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           _activeTab = idx;
         }
       });
+      // Сохранить состояние вкладок
+      _persistState();
       // Сфокусироваться на редакторе после открытия/активации вкладки
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _focusNodes[path]?.requestFocus();
-      });
+      if (requestFocus) {
+        // Авто‑раскрыть родителей файла в дереве, чтобы можно было проскроллить к нему
+        await _expandParentsForPath(path);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _focusNodes[path]?.requestFocus();
+          final key = _fileKeys[path];
+          if (key?.currentContext != null) {
+            Scrollable.ensureVisible(
+              key!.currentContext!,
+              duration: const Duration(milliseconds: 200),
+              alignment: 0.5,
+            );
+          }
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Не удалось открыть файл: $e')),
       );
+    }
+  }
+
+  // Сохранение/восстановление состояния дерева (раскрытые папки)
+  Future<void> _persistTree() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final expanded = _expanded.entries
+          .where((e) => e.value)
+          .map((e) => e.key)
+          .toList(growable: false);
+      await prefs.setStringList(_prefsExpandedDirsKey, expanded);
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  Future<void> _restoreTree() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final expanded = prefs.getStringList(_prefsExpandedDirsKey) ?? const <String>[];
+      if (expanded.isEmpty) return;
+      // Сортируем по глубине, чтобы сначала грузить родителей
+      final sorted = [...expanded]
+        ..sort((a, b) => _depth(a).compareTo(_depth(b)));
+      for (final d in sorted) {
+        _expanded[d] = true;
+        await _ensureChildren(d);
+      }
+      if (mounted) setState(() {});
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  int _depth(String path) {
+    final norm = path.replaceAll('\\', '/');
+    return norm.split('/').where((e) => e.isNotEmpty).length;
+  }
+
+  // Автораскрытие родительских директорий для файла
+  Future<void> _expandParentsForPath(String filePath) async {
+    try {
+      String root = p.normalize(_rootPath).replaceAll('\\', '/');
+      String file = p.normalize(filePath).replaceAll('\\', '/');
+      String parent = p.normalize(p.dirname(file)).replaceAll('\\', '/');
+      if (!parent.startsWith(root)) return;
+      final rootParts = p.split(root);
+      final parentParts = p.split(parent);
+      // Формируем последовательность директорий от root к parent
+      for (int i = rootParts.length; i <= parentParts.length; i++) {
+        final dir = p.joinAll(parentParts.sublist(0, i)).replaceAll('\\', '/');
+        if (dir.isEmpty) continue;
+        _expanded[dir] = true;
+        await _ensureChildren(dir);
+      }
+      _persistTree();
+      if (mounted) setState(() {});
+    } catch (_) {
+      // ignore
     }
   }
 
@@ -106,6 +192,22 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         _activeTab = _tabs.length - 1;
       }
     });
+    _persistState();
+    if (_activeTab >= 0) {
+      // Центрирование и раскрытие активного файла после закрытия предыдущего
+      final pathNow = _tabs[_activeTab];
+      await _expandParentsForPath(pathNow);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final key = _fileKeys[pathNow];
+        if (key?.currentContext != null) {
+          Scrollable.ensureVisible(
+            key!.currentContext!,
+            duration: const Duration(milliseconds: 200),
+            alignment: 0.5,
+          );
+        }
+      });
+    }
   }
 
   Future<void> _ensureChildren(String dirPath) async {
@@ -132,8 +234,29 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     // Подготовим корневой список при первом отображении (лениво)
     _expanded[_rootPath] = true;
     _ensureChildren(_rootPath).then((_) {
-      if (mounted) setState(() => _rootLoaded = true);
+      if (!mounted) return;
+      setState(() => _rootLoaded = true);
+      // Восстановим структуру дерева (раскрытые папки)
+      _restoreTree();
     });
+    // Восстановление состояния вкладок
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _restoreState();
+    });
+  }
+
+  @override
+  void dispose() {
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    for (final f in _focusNodes.values) {
+      f.dispose();
+    }
+    _pipelineInput.dispose();
+    _pipelineScroll.dispose();
+    _treeScroll.dispose();
+    super.dispose();
   }
 
   @override
@@ -179,6 +302,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         Expanded(
           child: _rootLoaded
               ? ListView(
+                  controller: _treeScroll,
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   children: [_buildDirNode(_rootPath, 0)],
                 )
@@ -214,6 +338,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
             await _ensureChildren(dirPath);
             if (mounted) setState(() {});
           }
+          _persistTree();
         },
         children: [
           if (!_children.containsKey(dirPath))
@@ -227,11 +352,24 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                 return _buildDirNode(e.path, depth + 1);
               } else if (e is File) {
                 final fname = e.path.split(RegExp(r'[\\/]')).last;
+                final bool isActive = _tabs.isNotEmpty && _activeTab >= 0 && _tabs[_activeTab] == e.path;
+                final key = _fileKeys.putIfAbsent(e.path, () => GlobalKey());
                 return ListTile(
                   dense: true,
                   contentPadding: EdgeInsets.only(left: ((depth + 1) * 12).toDouble(), right: 8),
-                  leading: const Icon(Icons.insert_drive_file_outlined),
-                  title: Text(fname, overflow: TextOverflow.ellipsis),
+                  key: key,
+                  leading: Icon(Icons.insert_drive_file_outlined,
+                      color: isActive ? Theme.of(context).colorScheme.primary : null),
+                  selected: isActive,
+                  selectedTileColor: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.5),
+                  title: Text(
+                    fname,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                      color: isActive ? Theme.of(context).colorScheme.onPrimaryContainer : null,
+                    ),
+                  ),
                   onTap: () => _openFile(e.path),
                 );
               } else {
@@ -293,14 +431,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       InkWell(
-                        onTap: () {
-                          setState(() => _activeTab = i);
-                          // Возвращаем фокус в редактор текущей вкладки
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            final path = _tabs[i];
-                            _focusNodes[path]?.requestFocus();
-                          });
-                        },
+                        onTap: () => _activateTabByIndex(i),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
                           child: Text(
@@ -395,11 +526,33 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           if (hasTabs) _closeTab(_activeTab);
         },
         const SingleActivator(LogicalKeyboardKey.tab, control: true): () {
-          if (_tabs.length > 1) setState(() => _activeTab = (_activeTab + 1) % _tabs.length);
+          if (_tabs.length > 1) {
+            final next = (_activeTab + 1) % _tabs.length;
+            _activateTabByIndex(next);
+          }
         },
       },
       child: editor,
     );
+  }
+
+  Future<void> _activateTabByIndex(int i) async {
+    if (i < 0 || i >= _tabs.length) return;
+    setState(() => _activeTab = i);
+    _persistState();
+    final path = _tabs[i];
+    await _expandParentsForPath(path);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusNodes[path]?.requestFocus();
+      final key = _fileKeys[path];
+      if (key?.currentContext != null) {
+        Scrollable.ensureVisible(
+          key!.currentContext!,
+          duration: const Duration(milliseconds: 200),
+          alignment: 0.5,
+        );
+      }
+    });
   }
 
   Future<void> _saveCurrent(String path) async {
@@ -457,33 +610,108 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           ),
         ),
         const SizedBox(height: 8),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 12),
-          child: Text(
-            'Здесь будет диалог/лог будущего пайплайна. На данном этапе интеграции нет.',
-          ),
+        // Лента сообщений/событий (локальная, без агентов)
+        Expanded(
+          child: _pipelineLog.isEmpty
+              ? const Center(
+                  child: Text('Лента пуста. Введите сообщение ниже и нажмите Отправить.'),
+                )
+              : ListView.builder(
+                  controller: _pipelineScroll,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  itemCount: _pipelineLog.length,
+                  itemBuilder: (context, index) {
+                    final msg = _pipelineLog[index];
+                    return Container(
+                      margin: const EdgeInsets.symmetric(vertical: 4),
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainer,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Theme.of(context).dividerColor),
+                      ),
+                      child: Text(msg),
+                    );
+                  },
+                ),
         ),
-        const SizedBox(height: 12),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 12),
-          child: TextField(
-            enabled: false,
-            decoration: InputDecoration(
-              border: OutlineInputBorder(),
-              labelText: 'Ввод (отключено)',
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
+        // Ввод и кнопка отправки (локальная запись в ленту)
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: ElevatedButton.icon(
-            onPressed: null,
-            icon: const Icon(Icons.send),
-            label: const Text('Отправить'),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _pipelineInput,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: 'Сообщение',
+                  ),
+                  onSubmitted: (_) => _sendPipelineMessage(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: _pipelineInput.text.trim().isEmpty ? null : _sendPipelineMessage,
+                icon: const Icon(Icons.send),
+                label: const Text('Отправить'),
+              ),
+            ],
           ),
         ),
       ],
     );
+  }
+
+  Future<void> _persistState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_prefsOpenTabsKey, List<String>.from(_tabs));
+      await prefs.setInt(_prefsActiveTabKey, _activeTab);
+    } catch (_) {
+      // ignore MVP storage errors
+    }
+  }
+
+  Future<void> _restoreState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedTabs = prefs.getStringList(_prefsOpenTabsKey) ?? const <String>[];
+      final savedActive = prefs.getInt(_prefsActiveTabKey) ?? -1;
+      for (final p in savedTabs) {
+        if (await File(p).exists()) {
+          await _openFile(p, requestFocus: false);
+        }
+      }
+      if (savedActive >= 0 && savedActive < _tabs.length) {
+        setState(() => _activeTab = savedActive);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final path = _tabs[_activeTab];
+          _focusNodes[path]?.requestFocus();
+        });
+      }
+    } catch (_) {
+      // ignore MVP restore errors
+    }
+  }
+
+  void _sendPipelineMessage() {
+    final text = _pipelineInput.text.trim();
+    if (text.isEmpty) return;
+    setState(() {
+      _pipelineLog.add(text);
+      _pipelineInput.clear();
+    });
+    // Прокрутить к концу после добавления
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_pipelineScroll.hasClients) {
+        _pipelineScroll.animateTo(
+          _pipelineScroll.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 }
