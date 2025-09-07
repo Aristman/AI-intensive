@@ -10,6 +10,7 @@ import os
 from typing import Optional, Dict, Any
 from .mcp_client import MCPClient
 from .ui import TelegramUI
+from .yandexgpt_usecase import YandexGptUseCase
 
 class TelegramAgent:
     def __init__(self, config_path: str = "config/config.json"):
@@ -194,10 +195,6 @@ class TelegramAgent:
     async def summarize_news_and_trends(self, messages: list, source_title: Optional[str] = None) -> str:
         """Summarize messages focusing on AI news, trends, frameworks, and tools using a system prompt."""
         try:
-            client, model, err = self.get_llm_client()
-            if err:
-                return err
-
             # Build conversation with system prompt
             system_prompt = (
                 "Ты — аналитик новостей ИИ.\n"
@@ -220,17 +217,14 @@ class TelegramAgent:
                 content
             )
 
-            response = await client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+            text = await self._llm_complete([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
                 max_tokens=min(350, int(self.config.get('deepseek_max_tokens', 2000))),
                 temperature=float(self.config.get('deepseek_temperature', 0.3))
             )
-
-            return response.choices[0].message.content.strip()
+            return (text or "").strip()
         except Exception as e:
             return f"LLM summarization error: {str(e)}"
         
@@ -271,22 +265,62 @@ class TelegramAgent:
         except Exception as e:
             return None, None, f"OpenAI library not installed: {e}"
 
+        import os as _os
         if provider == 'deepseek':
-            api_key = self.config.get('deepseek_api_key')
-            if not api_key or api_key.strip() == '':
+            # Read only from environment (e.g., .env): DEEPSEEK_API_KEY
+            api_key = (_os.environ.get('DEEPSEEK_API_KEY') or '').strip()
+            if not api_key:
                 return None, None, "DeepSeek API key not configured"
             # DeepSeek is OpenAI-compatible via base_url
             client = AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com")
             model = self.config.get('deepseek_model', 'deepseek-chat')
             return client, model, None
+        elif provider == 'yandex':
+            # Yandex handled via YandexGptUseCase in _llm_complete; here only validate env for compatibility
+            iam = (_os.environ.get('YANDEX_IAM_TOKEN') or '').strip()
+            apikey = (_os.environ.get('YANDEX_API_KEY') or '').strip()
+            folder = (_os.environ.get('YANDEX_FOLDER_ID') or '').strip()
+            if not folder or (not iam and not apikey):
+                return None, None, "Yandex GPT credentials not configured"
+            # Return placeholders; _llm_complete will use YandexGptUseCase
+            return None, 'yandex', None
         else:
-            # Default to OpenAI
-            api_key = self.config.get('llm_api_key')
-            if not api_key or api_key in ('your_llm_api_key_here', 'your_api_key_here'):
-                return None, None, "OpenAI API key not configured"
-            client = AsyncOpenAI(api_key=api_key)
-            model = self.config.get('openai_model', 'gpt-3.5-turbo')
-            return client, model, None
+            return None, None, f"Unsupported llm_provider: {provider}"
+
+    def _llm_is_configured(self) -> tuple[bool, Optional[str]]:
+        provider = (self.config.get('llm_provider') or 'deepseek').lower()
+        env = os.environ
+        if provider == 'deepseek':
+            if (env.get('DEEPSEEK_API_KEY') or '').strip():
+                return True, None
+            return False, 'DeepSeek API key not configured'
+        elif provider == 'yandex':
+            has_auth = (env.get('YANDEX_IAM_TOKEN') or env.get('YANDEX_API_KEY') or '').strip()
+            has_folder = (env.get('YANDEX_FOLDER_ID') or '').strip()
+            if has_auth and has_folder:
+                return True, None
+            return False, 'Yandex GPT credentials not configured (require YANDEX_IAM_TOKEN or YANDEX_API_KEY) and YANDEX_FOLDER_ID'
+        return False, f'Unsupported llm_provider: {provider}'
+
+    async def _llm_complete(self, messages: list[dict], max_tokens: int, temperature: float) -> str:
+        """Unified completion for configured LLM provider (DeepSeek or Yandex)."""
+        provider = (self.config.get('llm_provider') or 'deepseek').lower()
+        if provider == 'deepseek':
+            client, model, err = self.get_llm_client()
+            if err:
+                raise RuntimeError(err)
+            resp = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            return resp.choices[0].message.content.strip()
+        elif provider == 'yandex':
+            usecase = YandexGptUseCase()
+            return await usecase.complete(messages, temperature=temperature, max_tokens=max_tokens)
+        else:
+            raise RuntimeError(f"Unsupported llm_provider: {provider}")
 
     async def start_continuous_monitoring(self):
         """Start continuous monitoring of chats"""
@@ -305,71 +339,71 @@ class TelegramAgent:
         if not chats:
             self.logger.warning("No chats configured to monitor")
             return
-        # Run per-chat monitoring concurrently
-        tasks = [self.monitor_chat(chat_id) for chat_id in chats]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # Process chats sequentially to avoid any potential interleaving across requests
+        for chat_id in chats:
+            await self.monitor_chat(chat_id)
 
     async def monitor_chat(self, chat_id: str):
-        """Monitor a specific chat using MCP"""
+        """Monitor a specific chat using MCP. Assumes MCP session is already open by the caller."""
         try:
-            async with self.mcp_client:
-                # Resolve chat first with timeout
-                self.logger.debug(f"Resolving chat: {chat_id}")
-                chat_info = await asyncio.wait_for(
-                    self.mcp_client.resolve_chat(chat_id),
-                    timeout=10.0
-                )
-                if not chat_info:
-                    self.logger.warning(f"Could not resolve chat: {chat_id}")
-                    return
-                    
-                # Pick a reference to fetch history: prefer username, fallback to id, else original input
-                chat_ref = chat_info.get('username') or str(chat_info.get('id')) or chat_id
-                self.logger.info(f"Resolved chat '{chat_id}' -> ref='{chat_ref}', title='{chat_info.get('title')}', type='{chat_info.get('type')}'")
+            # Resolve chat first with timeout
+            self.logger.debug(f"Resolving chat: {chat_id}")
+            chat_info = await asyncio.wait_for(
+                self.mcp_client.resolve_chat(chat_id),
+                timeout=10.0
+            )
+            if not chat_info:
+                self.logger.warning(f"Could not resolve chat: {chat_id}")
+                return
+                
+            # Pick a reference to fetch history: prefer username, fallback to id, else original input
+            chat_ref = chat_info.get('username') or str(chat_info.get('id')) or chat_id
+            self.logger.info(f"Resolved chat '{chat_id}' -> ref='{chat_ref}', title='{chat_info.get('title')}', type='{chat_info.get('type')}'")
 
-                # Fetch full history since last_seen using pagination
-                last_seen = int(self.last_seen_ids.get(chat_ref, 0))
-                self.logger.debug(
-                    f"Fetching history for {chat_ref} starting from last_seen_id={last_seen} (batch={self.page_size})"
-                )
+            # Fetch full history since last_seen using pagination
+            last_seen = int(self.last_seen_ids.get(chat_ref, 0))
+            self.logger.debug(
+                f"Fetching history for {chat_ref} starting from last_seen_id={last_seen} (batch={self.page_size})"
+            )
 
-                msgs = []
-                max_id_cursor = None  # paginate older within (min_id; max_id]
-                while True:
-                    try:
-                        batch = await asyncio.wait_for(
-                            self.mcp_client.fetch_history(
-                                chat_ref,
-                                page_size=self.page_size,
-                                min_id=last_seen if last_seen > 0 else None,
-                                max_id=max_id_cursor
-                            ),
-                            timeout=15.0
-                        )
-                    except asyncio.TimeoutError:
-                        self.logger.warning(f"Timeout fetching history page for {chat_ref}")
-                        break
+            msgs = []
+            max_id_cursor = None  # paginate older within (min_id; max_id]
+            while True:
+                try:
+                    batch = await asyncio.wait_for(
+                        self.mcp_client.fetch_history(
+                            chat_ref,
+                            page_size=self.page_size,
+                            min_id=last_seen if last_seen > 0 else None,
+                            max_id=max_id_cursor
+                        ),
+                        timeout=15.0
+                    )
+                except asyncio.TimeoutError:
+                    self.logger.warning(f"Timeout fetching history page for {chat_ref}")
+                    break
 
-                    if not batch or 'messages' not in batch:
-                        break
+                if not batch or 'messages' not in batch:
+                    break
 
-                    page_msgs = batch['messages'] or []
-                    if not page_msgs:
-                        break
+                page_msgs = batch['messages'] or []
+                if not page_msgs:
+                    break
 
-                    # Extend and move cursor to fetch older messages above last_seen
-                    msgs.extend(page_msgs)
-                    # Determine next max_id (strictly less than current min id)
-                    try:
-                        current_min = min(int(m.get('id', 0)) for m in page_msgs)
-                    except Exception:
-                        current_min = None
-                    # Stop if page smaller than batch, otherwise set cursor and continue
-                    if len(page_msgs) < self.page_size or not current_min:
-                        break
-                    max_id_cursor = current_min - 1
+                # Extend and move cursor to fetch older messages above last_seen
+                msgs.extend(page_msgs)
+                # Determine next max_id (strictly less than current min id)
+                try:
+                    current_min = min(int(m.get('id', 0)) for m in page_msgs)
+                except Exception:
+                    current_min = None
+                # Stop if page smaller than batch, otherwise set cursor and continue
+                if len(page_msgs) < self.page_size or not current_min:
+                    break
+                max_id_cursor = current_min - 1
 
                 if msgs:
+                    self.logger.debug(f"Fetched total {len(msgs)} message(s) for {chat_ref} before de-dup")
                     # Query server-side unread counters
                     unread_info = await asyncio.wait_for(
                         self.mcp_client.get_unread_count(chat_ref),
@@ -389,6 +423,7 @@ class TelegramAgent:
                         except Exception:
                             return 0
                     new_msgs = [m for m in msgs if _mid(m) > last_seen]
+                    self.logger.debug(f"New messages for {chat_ref} since {last_seen}: {len(new_msgs)}")
                     if new_msgs:
                         # Sort ascending by id to preserve chronology, update last_seen
                         new_msgs.sort(key=_mid)
@@ -403,6 +438,7 @@ class TelegramAgent:
 
                     # Apply filters and chunk by 12
                     filtered = [m for m in new_msgs if self.should_process_message(m)]
+                    self.logger.info(f"Filtered messages for {chat_ref}: {len(filtered)} of {len(new_msgs)} passed filters")
                     if not filtered:
                         self.logger.debug(f"No messages passed filters for {chat_ref}")
                         return
@@ -414,15 +450,23 @@ class TelegramAgent:
                     target_chat = self.summary_chat or chat_ref
                     for idx, chunk in enumerate(chunks, start=1):
                         try:
+                            # Ensure LLM is configured before summarizing
+                            ok, err = self._llm_is_configured()
+                            if not ok:
+                                self.logger.warning(f"Skipping summarization for {chat_ref}: {err}")
+                                continue
                             summary = await self.summarize_news_and_trends(chunk, source_title=chat_info.get('title') or chat_ref)
                             if summary and summary.strip():
                                 prefix = f"🧠 Сводка #{idx}/{len(chunks)} для {chat_info.get('title') or chat_ref}:\n\n"
-                                await self.mcp_client.send_message(target_chat, prefix + summary)
-                                self.logger.info(f"Summary chunk {idx}/{len(chunks)} sent to {target_chat}")
+                                send_res = await self.mcp_client.send_message(target_chat, prefix + summary)
+                                if isinstance(send_res, dict) and send_res.get("message_id"):
+                                    self.logger.info(f"Summary chunk {idx}/{len(chunks)} sent to {target_chat}")
+                                else:
+                                    self.logger.error(f"Failed to send summary chunk {idx} to {target_chat}: {send_res}")
                         except Exception as e:
                             self.logger.error(f"Error summarizing/sending chunk {idx}: {e}")
-                else:
-                    self.logger.info(f"No messages returned for {chat_ref}")
+            else:
+                self.logger.info(f"No messages returned for {chat_ref}")
                     
         except asyncio.TimeoutError:
             self.logger.error(f"Timeout monitoring chat {chat_id}")
@@ -497,12 +541,8 @@ class TelegramAgent:
             return False
 
     async def summarize_with_llm(self, history: Dict[str, Any]) -> str:
-        """Summarize messages using LLM API"""
+        """Summarize messages using configured LLM (DeepSeek or Yandex)."""
         try:
-            client, model, err = self.get_llm_client()
-            if err:
-                return err
-
             messages = history.get('messages', [])
             if not messages:
                 return "No messages to summarize"
@@ -517,23 +557,19 @@ class TelegramAgent:
                 f"{content}"
             )
 
-            response = await client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
+            text = await self._llm_complete(
+                [{"role": "user", "content": prompt}],
                 max_tokens=min(200, int(self.config.get('deepseek_max_tokens', 2000))),
                 temperature=float(self.config.get('deepseek_temperature', 0.3))
             )
-
-            return response.choices[0].message.content.strip()
+            return (text or "").strip()
         except Exception as e:
             return f"LLM summarization error: {str(e)}"
 
     async def analyze_sentiment_and_intent(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze sentiment and intent of a message using LLM"""
         try:
-            client, model, err = self.get_llm_client()
-            if err:
-                return {"sentiment": "unknown", "intent": "unknown", "confidence": 0, "error": err}
+            # We will call configured LLM via _llm_complete
 
             text = message.get('text', '')
             if not text:
@@ -546,15 +582,13 @@ class TelegramAgent:
                 f"Message: {text}"
             )
 
-            response = await client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
+            result_text = await self._llm_complete(
+                [{"role": "user", "content": prompt}],
                 max_tokens=120,
                 temperature=0.2
             )
-
             import json as _json
-            result_text = response.choices[0].message.content.strip()
+            result_text = (result_text or "").strip()
             try:
                 return _json.loads(result_text)
             except _json.JSONDecodeError:
@@ -575,9 +609,7 @@ class TelegramAgent:
     async def extract_features(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Extract key features from message using LLM"""
         try:
-            client, model, err = self.get_llm_client()
-            if err:
-                return {"entities": [], "topics": [], "urgency": "low", "error": err}
+            # Use configured LLM via _llm_complete
 
             text = message.get('text', '')
             if not text:
@@ -590,15 +622,13 @@ class TelegramAgent:
                 f"Message: {text}"
             )
 
-            response = await client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
+            result_text = await self._llm_complete(
+                [{"role": "user", "content": prompt}],
                 max_tokens=180,
                 temperature=0.2
             )
-
             import json as _json
-            result_text = response.choices[0].message.content.strip()
+            result_text = (result_text or "").strip()
             try:
                 return _json.loads(result_text)
             except _json.JSONDecodeError:
@@ -609,9 +639,7 @@ class TelegramAgent:
     async def generate_response(self, message: Dict[str, Any], analysis: Dict[str, Any] = None) -> str:
         """Generate automated response using LLM"""
         try:
-            client, model, err = self.get_llm_client()
-            if err:
-                return "LLM API key not configured for response generation"
+            # Use configured LLM via _llm_complete
 
             text = message.get('text', '')
             sender = message.get('from', {}).get('display', 'Unknown')
@@ -630,14 +658,12 @@ class TelegramAgent:
                 f"Намерение: {intent}"
             )
 
-            response = await client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
+            result_text = await self._llm_complete(
+                [{"role": "user", "content": prompt}],
                 max_tokens=160,
                 temperature=float(self.config.get('deepseek_temperature', 0.7))
             )
-
-            return response.choices[0].message.content.strip()
+            return (result_text or "").strip()
         except Exception as e:
             return f"Response generation error: {str(e)}"
 
@@ -862,18 +888,34 @@ class TelegramAgent:
                 self.logger.error(f"Error monitoring chat {chat}: {e}")
 
     async def start_continuous_monitoring(self) -> None:
-        """Run continuous monitoring loop keeping a single MCP stdio connection open."""
-        interval = int(self.config.get('monitor_interval_sec', 3600))
-        # Open one long-lived MCP session for the whole loop
+        """Run continuous monitoring loop using a single long-lived MCP session."""
+        interval = int(self.monitor_interval_sec)
+        chats = self.get_monitored_chats()
+        self.logger.info(f"Monitoring loop started: {len(chats)} chat(s), interval={interval}s, transport={self.mcp_transport}")
+        # Keep one stdio session open to avoid concurrent process starts and interleaved frames
         async with self.mcp_client:
-            # Ensure server is initialized once
             try:
                 await self.mcp_client.initialize()
             except Exception:
-                # proceed best-effort; methods will init on demand
                 pass
+            # Ping summary chat at startup to verify sending works
+            if self.summary_chat:
+                try:
+                    ping_text = f"✅ Monitoring started. Interval={interval}s, chats={len(chats)}"
+                    res = await self.mcp_client.send_message(self.summary_chat, ping_text)
+                    if isinstance(res, dict) and res.get("message_id"):
+                        self.logger.info(f"Startup ping sent to {self.summary_chat}")
+                    else:
+                        self.logger.warning(f"Startup ping failed for {self.summary_chat}: {res}")
+                except Exception as e:
+                    self.logger.error(f"Error sending startup ping to {self.summary_chat}: {e}")
             while True:
-                await self._monitor_once()
+                try:
+                    await self.start_monitoring()
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    self.logger.error(f"Monitoring iteration error: {e}")
                 try:
                     await asyncio.sleep(interval)
                 except asyncio.CancelledError:

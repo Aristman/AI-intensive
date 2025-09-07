@@ -35,7 +35,8 @@ if _REPO_ROOT not in sys.path:
 
 from telegram_monitoring_agent.src.agent import TelegramAgent
 
-logging.basicConfig(level=logging.INFO)
+# Increase verbosity to DEBUG to surface agent's detailed logs during monitoring
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("MonitorRunner")
 
 

@@ -39,6 +39,12 @@ class MCPClient:
         except Exception:
             # Fallback if no loop yet; will be replaced lazily in start()
             self._ready_event = None  # type: ignore
+        # Serialize all stdio I/O to prevent interleaved frames
+        self._io_lock: asyncio.Lock = asyncio.Lock()
+        # Prevent concurrent start() from spawning multiple processes
+        self._start_lock: asyncio.Lock = asyncio.Lock()
+        # Persistent receive buffer to store any extra bytes between calls
+        self._rx_buffer: bytearray = bytearray()
 
     def _get_default_command(self) -> str:
         """Get the default command to run the Telegram MCP server"""
@@ -128,6 +134,11 @@ class MCPClient:
     async def start(self):
         """Start the MCP server process"""
         try:
+            # Ensure only one start routine runs at a time
+            async with self._start_lock:
+                # If already started, nothing to do
+                if self.transport == "stdio" and self.process is not None and (self.process.poll() is None):
+                    return
             if self.transport == "http":
                 self.logger.info("Using HTTP transport - no process needed")
                 return
@@ -477,14 +488,16 @@ class MCPClient:
         if not self.process:
             return None
         try:
-            # If the child process already exited, abort early with diagnostics
-            if self.process and (self.process.poll() is not None):
-                try:
-                    err_out = self.process.stderr.read().decode("utf-8", errors="ignore") if self.process.stderr else ""
-                except Exception:
-                    err_out = ""
-                self.logger.error(f"MCP server already exited with code {self.process.poll()}. Stderr: {err_out[:500]}")
-                return None
+            # Serialize all writes/reads to avoid interleaved frames
+            async with self._io_lock:
+                # If the child process already exited, abort early with diagnostics
+                if self.process and (self.process.poll() is not None):
+                    try:
+                        err_out = self.process.stderr.read().decode("utf-8", errors="ignore") if self.process.stderr else ""
+                    except Exception:
+                        err_out = ""
+                    self.logger.error(f"MCP server already exited with code {self.process.poll()}. Stderr: {err_out[:500]}")
+                    return None
 
             # Encode body and build headers (Content-Length only per LSP framing)
             body = (json.dumps(request)).encode("utf-8")
@@ -504,7 +517,9 @@ class MCPClient:
             # Helpers to read until delimiter and then fixed-size body with a single overall deadline
             async def _read_until(delim: bytes, deadline: float) -> Optional[bytes]:
                 loop = asyncio.get_event_loop()
-                buf = bytearray()
+                # Start with any leftover bytes from previous call
+                buf = bytearray(self._rx_buffer)
+                self._rx_buffer.clear()
                 while True:
                     remaining = max(0.0, deadline - loop.time())
                     if remaining == 0.0:
@@ -523,9 +538,8 @@ class MCPClient:
                         break
                     buf += chunk
                     bbuf = bytes(buf)
-                    # Break as soon as header/body delimiter appears ANYWHERE in the buffer,
-                    # because servers may write headers and some body bytes in a single write.
-                    if (delim in bbuf) or (b"\n\n" in bbuf):
+                    # Break only when CRLFCRLF delimiter appears (LSP framing)
+                    if delim in bbuf:
                         break
                 return bytes(buf)
 
@@ -551,7 +565,7 @@ class MCPClient:
                     remaining_bytes -= len(chunk)
                 return b"".join(chunks)
 
-            # Read headers with overall deadline
+            # Read headers with overall deadline, honoring any bytes already present in the buffer
             loop = asyncio.get_event_loop()
             deadline = loop.time() + max(0.1, float(timeout_sec if timeout_sec else 60.0))
             self.logger.debug(f"Waiting for headers with timeout {timeout_sec}s...")
@@ -569,12 +583,8 @@ class MCPClient:
                 # Split headers and any leftover body bytes
                 rh = bytes(raw_headers)
                 sep = b"\r\n\r\n"
-                alt_sep = b"\n\n"
                 sep_idx = rh.find(sep)
                 used_sep = sep
-                if sep_idx < 0:
-                    sep_idx = rh.find(alt_sep)
-                    used_sep = alt_sep
                 if sep_idx < 0:
                     self.logger.error(f"Could not find header/body delimiter in: {rh!r}")
                     return None
@@ -602,10 +612,12 @@ class MCPClient:
 
             # Read body with same overall deadline
             # If we already have some of the body in leftover_body, consume it first
+            extra_after_body: bytes = b""
             if 'leftover_body' in locals() and leftover_body:
                 have = bytes(leftover_body)
                 if len(have) >= content_length:
                     body_bytes = have[:content_length]
+                    extra_after_body = have[content_length:]
                 else:
                     need = content_length - len(have)
                     tail = await _read_n(need, deadline)
@@ -619,6 +631,10 @@ class MCPClient:
                     err_out = ""
                 self.logger.error(f"Incomplete body from MCP server. Received={len(body_bytes) if body_bytes else 0}/{content_length}. Stderr: {err_out[:500]}")
                 return None
+
+            # Preserve any extra bytes beyond the declared Content-Length for the next call
+            if extra_after_body:
+                self._rx_buffer.extend(extra_after_body)
 
             try:
                 response_text = body_bytes.decode("utf-8")

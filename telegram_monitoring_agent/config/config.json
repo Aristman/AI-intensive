@@ -23,7 +23,7 @@
   "yandex_folder_id": "b1golisqrg02h9b6u39de",
   "yandex_temperature": 0.2,
   "yandex_max_tokens": 2000,
-  "monitor_interval_sec": 3600,
+  "monitor_interval_sec": 60,
   "page_size": 10,
   "chunk_size": 12,
   "summary_chat": "@aigents_report",
