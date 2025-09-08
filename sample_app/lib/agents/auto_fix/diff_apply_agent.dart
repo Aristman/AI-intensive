@@ -1,3 +1,4 @@
+import 'dart:developer' as dev;
 import 'package:sample_app/domain/llm_resolver.dart';
 import 'package:sample_app/domain/llm_usecase.dart';
 import 'package:sample_app/models/app_settings.dart';
@@ -13,6 +14,7 @@ class DiffApplyAgent {
     required String diff,
     required AppSettings settings,
   }) async {
+    dev.log('[apply] start originalLen=${original.length} diffLen=${diff.length}', name: 'DiffApplyAgent');
     final uc = _useCase ?? resolveLlmUseCase(settings);
     final system =
         'Ты помощник по модификации кода. Тебе дан исходный файл и unified diff. '
@@ -38,9 +40,11 @@ class DiffApplyAgent {
       {'role': 'system', 'content': system},
       {'role': 'user', 'content': prompt.toString()},
     ], settings: settings);
+    dev.log('[apply] llm response length=${resp.length}', name: 'DiffApplyAgent');
 
     // Извлекаем первый безъязыковый блок ```...``` либо первый код-блок вообще.
     final content = _extractCodeFence(resp) ?? resp.trim();
+    dev.log('[apply] extracted content length=${content.length}', name: 'DiffApplyAgent');
     return content.isEmpty ? null : content;
   }
 

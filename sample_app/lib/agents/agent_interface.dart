@@ -320,10 +320,10 @@ mixin AuthPolicyMixin implements IAgent {
       }
     }
     if (!authorize(action, requiredRole: requiredRole)) {
-      throw StateError('Access denied: role "${role}" is insufficient for action "${action}" (required: ${requiredRole ?? 'none'}).');
+      throw StateError('Access denied: role "$_role" is insufficient for action "$action" (required: $requiredRole).');
     }
     if (!_limiter.allow()) {
-      throw StateError('Rate limit exceeded for action "${action}" (limit: ${_limits.requestsPerHour}/hour).');
+      throw StateError('Rate limit exceeded for action "$action" (limit: ${_limits.requestsPerHour}/hour).');
     }
   }
 }

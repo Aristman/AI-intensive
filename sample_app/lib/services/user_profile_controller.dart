@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:sample_app/models/user_profile.dart';
 import 'package:sample_app/services/user_profile_repository.dart';
