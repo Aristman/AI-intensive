@@ -11,6 +11,7 @@ import subprocess
 import sys
 import os
 from pathlib import Path
+import aiohttp  # used for WS and HTTP transports
 
 class MCPClient:
     def __init__(self, command: str = None, env_vars: Optional[Dict[str, str]] = None,
@@ -45,6 +46,9 @@ class MCPClient:
         self._start_lock: asyncio.Lock = asyncio.Lock()
         # Persistent receive buffer to store any extra bytes between calls
         self._rx_buffer: bytearray = bytearray()
+        # WS session/socket
+        self._ws_session = None
+        self._ws = None
 
     def _get_default_command(self) -> str:
         """Get the default command to run the Telegram MCP server"""
@@ -141,6 +145,14 @@ class MCPClient:
                     return
             if self.transport == "http":
                 self.logger.info("Using HTTP transport - no process needed")
+                return
+            elif self.transport in ("ws", "wss"):
+                # Prepare WS connection lazily; no child process to spawn here
+                # Ensure aiohttp is available
+                try:
+                    import aiohttp  # noqa: F401
+                except Exception as e:
+                    raise RuntimeError(f"aiohttp is required for WS transport: {e}")
                 return
             elif self.transport == "stdio":
                 if self.ssh_config.get("enabled", False):
@@ -257,6 +269,21 @@ class MCPClient:
                     pass
                 self.process = None
 
+        # Close WS session/socket if any
+        try:
+            if self._ws is not None:
+                await self._ws.close()
+        except Exception:
+            pass
+        try:
+            if self._ws_session is not None:
+                await self._ws_session.close()
+        except Exception:
+            pass
+        finally:
+            self._ws = None
+            self._ws_session = None
+
     async def _drain_stderr(self):
         """Continuously read child's stderr and relay to logger (INFO level)."""
         try:
@@ -297,6 +324,8 @@ class MCPClient:
             return await self._call_tool_http(tool_name, args)
         elif self.transport == "stdio":
             return await self._call_tool_stdio(tool_name, args)
+        elif self.transport in ("ws", "wss"):
+            return await self._call_tool_ws(tool_name, args)
         else:
             raise ValueError(f"Unsupported transport: {self.transport}")
 
@@ -386,6 +415,77 @@ class MCPClient:
             return result.get("tools")
         return None
 
+    # ===== WebSocket transport helpers =====
+    def _normalize_ws_url(self) -> str:
+        """Resolve WS URL from config/env, converting http(s) -> ws(s) if needed."""
+        url = (self.http_config.get("url") or os.environ.get("MCP_WS_URL") or "ws://localhost:8765").strip()
+        if url.startswith("http://"):
+            return "ws://" + url[len("http://"):]
+        if url.startswith("https://"):
+            return "wss://" + url[len("https://"):]
+        return url
+
+    async def _ensure_ws(self) -> None:
+        """Ensure WS session/connection is established; perform initialize once."""
+        if self._ws is not None and not self._ws.closed:
+            return
+        if self._ws_session is None:
+            self._ws_session = aiohttp.ClientSession()
+        ws_url = self._normalize_ws_url()
+        self.logger.info(f"Connecting MCP WS: {ws_url}")
+        self._ws = await self._ws_session.ws_connect(ws_url, autoping=True, heartbeat=20.0)
+        # Send initialize (best-effort)
+        init_req = {
+            "jsonrpc": "2.0",
+            "id": self.request_id,
+            "method": "initialize",
+            "params": {
+                "clientInfo": {"name": "telegram_monitoring_agent", "version": "0.1.0"}
+            }
+        }
+        self.request_id += 1
+        try:
+            await self._ws.send_str(json.dumps(init_req))
+            msg = await asyncio.wait_for(self._ws.receive(), timeout=10.0)
+            if msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                raise RuntimeError("WS closed on initialize")
+        except Exception as e:
+            self.logger.debug(f"WS initialize best-effort failed: {e}")
+
+    async def _ws_rpc(self, method: str, params: Dict[str, Any], timeout: float = 20.0) -> Optional[Dict[str, Any]]:
+        await self._ensure_ws()
+        req_id = self.request_id
+        self.request_id += 1
+        payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
+        await self._ws.send_str(json.dumps(payload))
+        # Wait for matching id
+        while True:
+            msg = await asyncio.wait_for(self._ws.receive(), timeout=timeout)
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                try:
+                    obj = json.loads(msg.data)
+                except Exception:
+                    continue
+                if isinstance(obj, dict) and obj.get("id") == req_id:
+                    if "error" in obj:
+                        # propagate as dict to match stdio behavior
+                        return {"error": obj["error"]}
+                    return obj.get("result")
+            elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                break
+        return None
+
+    async def list_tools_ws(self) -> Optional[List[Dict[str, Any]]]:
+        if self.transport not in ("ws", "wss"):
+            return None
+        res = await self._ws_rpc("tools/list", {})
+        if isinstance(res, dict):
+            return res.get("tools")
+        return None
+
+    async def _call_tool_ws(self, tool_name: str, args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        res = await self._ws_rpc("tools/call", {"name": tool_name, "arguments": args or {}}, timeout=30.0)
+        return res
 
     async def _call_tool_http(self, tool_name: str, args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Call a tool using HTTP transport"""

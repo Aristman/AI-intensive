@@ -258,7 +258,16 @@ class TelegramAgent:
                 max_tokens=min(350, int(self.config.get('deepseek_max_tokens', 2000))),
                 temperature=float(self.config.get('deepseek_temperature', 0.3))
             )
-            return (text or "").strip()
+            summary = (text or "").strip()
+            # Enrich with Yandex Search MCP if available
+            try:
+                enriched = await self._enrich_with_yandex_search(summary)
+                if enriched:
+                    summary = enriched
+            except Exception as _e:
+                # best-effort, keep original summary
+                self.logger.debug(f"Enrichment skipped: {_e}")
+            return summary
         except Exception as e:
             return f"LLM summarization error: {str(e)}"
         
@@ -266,6 +275,107 @@ class TelegramAgent:
             handler.addFilter(SensitiveDataFilter())
             
         # logs directory already ensured above
+
+    async def _enrich_with_yandex_search(self, summary_text: str) -> Optional[str]:
+        """Append additional sources using Yandex Search MCP via WS bridge.
+
+        Strategy: build a concise query from the summary first line and fetch top results.
+        Uses dedicated WS client configured by 'yandex_search_ws_url' (default ws://localhost:8765).
+        """
+        try:
+            # Pick first non-empty line as topic
+            topic = ''
+            for line in (summary_text or '').splitlines():
+                s = line.strip().lstrip('#').strip()
+                if s:
+                    topic = s
+                    break
+            if not topic:
+                return None
+            # Build query limited to ~160 chars with simple cleanup
+            base = topic.replace('#', '').strip()
+            if len(base) < 8:
+                base = f"{base} новости ИИ"
+            query = (f"{base} источники ссылки")[:160]
+            args = {
+                # yandex_search_mcp_server supports query alias, but use queryText explicitly
+                "queryText": query,
+                "page": 1,
+                "groupsOnPage": 10,
+                "docsInGroup": 1,
+                "maxPassages": 3,
+                "sortMode": "SORT_MODE_BY_TIME"
+            }
+            # Use a dedicated WS MCP client for Yandex Search to not interfere with Telegram stdio client
+            from .mcp_client import MCPClient
+            ws_url = str(self.config.get('yandex_search_ws_url') or os.environ.get('MCP_WS_URL') or 'ws://localhost:8765')
+            self.logger.info(f"Enrichment: calling yandex_search_web via WS {ws_url} | topic='{topic}' | query='{query}'")
+            search_client = MCPClient(transport='ws', http_config={'url': ws_url})
+            try:
+                res = await search_client.call_tool("yandex_search_web", args)
+            finally:
+                try:
+                    await search_client.stop()
+                except Exception:
+                    pass
+            # Expected result may be one of:
+            # - { items: [...] }
+            # - { content: [ {type:'json', json:{ normalizedResults:[...] }}, ... ] }
+            # - { content: [ {type:'text', text:'...'}, {type:'json', json:{ response:{...}, ... }} ] }
+            items: list = []
+            try:
+                if isinstance(res, dict):
+                    if isinstance(res.get('items'), list):
+                        items = res['items']
+                    elif isinstance(res.get('content'), list) and res['content']:
+                        # search through content entries
+                        for entry in res['content']:
+                            if not isinstance(entry, dict):
+                                continue
+                            if entry.get('type') == 'json' and isinstance(entry.get('json'), dict):
+                                j = entry['json']
+                                # Prefer normalizedResults from server helper
+                                if isinstance(j.get('normalizedResults'), list) and j['normalizedResults']:
+                                    items = j['normalizedResults']
+                                    break
+                                # Fallback to possible raw structured fields
+                                if isinstance(j.get('response'), dict):
+                                    resp = j['response']
+                                    cand = resp.get('results') or resp.get('documents') or resp.get('items') or []
+                                    if isinstance(cand, list) and cand:
+                                        items = cand
+                                        break
+                            # Text entry may contain JSON string in some servers
+                            if entry.get('type') == 'text':
+                                txt = entry.get('text')
+                                if isinstance(txt, str):
+                                    try:
+                                        obj = json.loads(txt)
+                                        if isinstance(obj, dict) and isinstance(obj.get('items'), list):
+                                            items = obj['items']
+                                            break
+                                    except Exception:
+                                        pass
+            except Exception:
+                items = []
+            links: list[str] = []
+            for it in items[:3]:
+                try:
+                    title = str(it.get('title') or '').strip() or 'Источник'
+                    url = str(it.get('url') or '').strip()
+                    if url:
+                        links.append(f"- [{title}]({url})")
+                except Exception:
+                    continue
+            if not links:
+                self.logger.info("Enrichment: no links found by yandex_search_web")
+                return None
+            enriched = summary_text.rstrip() + "\n\n**Дополнительные источники (Yandex Search):**\n" + "\n".join(links)
+            self.logger.info(f"Enrichment: appended {len(links)} link(s) to summary")
+            return enriched
+        except Exception as e:
+            self.logger.debug(f"_enrich_with_yandex_search error: {e}")
+            return None
 
     def _load_last_seen(self):
         """Load last_seen_ids from state file if exists"""

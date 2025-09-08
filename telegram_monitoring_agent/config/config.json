@@ -14,9 +14,10 @@
   "mcp_http_remote": {
     "url": "http://localhost:3000"
   },
+  "yandex_search_ws_url": "ws://localhost:8765",
   "chats": ["@SourceCraft", "@prog_tools", "@my_aigents"],
   "ui_theme": "light",
-  "log_level": "DEBUG",
+  "log_level": "INFO",
   "llm_provider": "deepseek",
   "deepseek_temperature": 0.2,
   "deepseek_max_tokens": 2000,

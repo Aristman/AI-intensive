@@ -134,6 +134,51 @@ telegram_monitoring_agent/
    python main.py
   ```
 
+## Интеграция Yandex Search MCP (WS bridge)
+
+Для обогащения LLM-ответов актуальными ссылками добавлена интеграция с `mcp_servers/yandex_search_mcp_server` через WebSocket‑мост.
+
+Шаги настройки:
+
+1) Установите зависимости MCP сервера поиска и моста
+
+```powershell
+cd mcp_servers/yandex_search_mcp_server
+npm install
+cd bridge
+npm install
+```
+
+2) Настройте секреты поиска в `.env` (в каталоге `mcp_servers/yandex_search_mcp_server/.env`):
+
+```env
+YANDEX_API_KEY=...
+YANDEX_FOLDER_ID=...
+```
+
+3) Запустите WS ↔ STDIO мост (по умолчанию слушает `ws://localhost:8765`):
+
+```powershell
+node mcp_servers/yandex_search_mcp_server/bridge/ws_stdio_bridge.js
+```
+
+4) Обновите конфигурацию агента на WebSocket транспорт:
+
+```jsonc
+// telegram_monitoring_agent/config/config.json
+{
+  "mcp_transport": "ws",
+  "mcp_http_remote": { "url": "ws://localhost:8765" }
+}
+```
+
+5) Запустите агента. После генерации сводки агент выполнит инструмент `yandex_search_web` и добавит блок «Дополнительные источники (Yandex Search)» с ссылками.
+
+Примечания:
+- Мост и сервер поиска логируются в консоль; для смены порта используйте `BRIDGE_PORT` перед запуском моста.
+- Формат инструмента: `tools/call("yandex_search_web", { query, page, pageSize })`.
+- При отключённом мосте агент продолжит работу без обогащения (best‑effort).
+
 ## Деплой на удалённый сервер (вместе с MCP сервером)
 
 Подробная инструкция: см. `telegram_monitoring_agent/docs/deploy_remote.md`.
