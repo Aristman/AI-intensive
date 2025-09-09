@@ -25,6 +25,7 @@
   "yandex_temperature": 0.2,
   "yandex_max_tokens": 2000,
   "monitor_interval_sec": 60,
+  "monitor_report_times": ["0 10 * * 1-5"],
   "page_size": 10,
   "chunk_size": 12,
   "summary_chat": "@aigents_report",
