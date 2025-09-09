@@ -11,6 +11,7 @@ import subprocess
 import sys
 import os
 from pathlib import Path
+import aiohttp  # used for WS and HTTP transports
 
 class MCPClient:
     def __init__(self, command: str = None, env_vars: Optional[Dict[str, str]] = None,
@@ -30,11 +31,31 @@ class MCPClient:
         # Setup environment variables
         self._setup_environment()
 
+        # Internal state
+        self._initialized: bool = False
+        self._stderr_task: Optional[asyncio.Task] = None
+        # Create readiness event immediately so callers can await it reliably
+        try:
+            self._ready_event: asyncio.Event = asyncio.Event()
+        except Exception:
+            # Fallback if no loop yet; will be replaced lazily in start()
+            self._ready_event = None  # type: ignore
+        # Serialize all stdio I/O to prevent interleaved frames
+        self._io_lock: asyncio.Lock = asyncio.Lock()
+        # Prevent concurrent start() from spawning multiple processes
+        self._start_lock: asyncio.Lock = asyncio.Lock()
+        # Persistent receive buffer to store any extra bytes between calls
+        self._rx_buffer: bytearray = bytearray()
+        # WS session/socket
+        self._ws_session = None
+        self._ws = None
+
     def _get_default_command(self) -> str:
         """Get the default command to run the Telegram MCP server"""
-        # Path to mcp_servers/telegram_mcp_server/src/index.js relative to this file
-        server_path = Path(__file__).parent.parent.parent / "mcp_servers" / "telegram_mcp_server" / "src" / "index.js"
-        return f"node {server_path}"
+        # Use Python implementation: run module mcp_servers.telegram_mcp_server_py.main with unbuffered stdio
+        # Ensures stdout is reserved for MCP frames as in the Node.js version.
+        py = sys.executable or "python"
+        return f"\"{py}\" -u -m mcp_servers.telegram_mcp_server_py.main"
 
     def _setup_environment(self):
         """Setup environment variables for telegram-mcp"""
@@ -101,11 +122,37 @@ class MCPClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.stop()
 
+    async def _wait_ready(self, timeout: float = 20.0) -> None:
+        """Wait until server readiness marker observed on stderr or until timeout.
+
+        This prevents racing initialize/calls before the server (Telegram client/tools) is ready.
+        """
+        try:
+            if self._ready_event:
+                self.logger.debug(f"Waiting for server readiness marker up to {timeout}s...")
+                await asyncio.wait_for(self._ready_event.wait(), timeout=timeout)
+        except Exception:
+            # Best-effort: continue
+            pass
+
     async def start(self):
         """Start the MCP server process"""
         try:
+            # Ensure only one start routine runs at a time
+            async with self._start_lock:
+                # If already started, nothing to do
+                if self.transport == "stdio" and self.process is not None and (self.process.poll() is None):
+                    return
             if self.transport == "http":
                 self.logger.info("Using HTTP transport - no process needed")
+                return
+            elif self.transport in ("ws", "wss"):
+                # Prepare WS connection lazily; no child process to spawn here
+                # Ensure aiohttp is available
+                try:
+                    import aiohttp  # noqa: F401
+                except Exception as e:
+                    raise RuntimeError(f"aiohttp is required for WS transport: {e}")
                 return
             elif self.transport == "stdio":
                 if self.ssh_config.get("enabled", False):
@@ -115,9 +162,20 @@ class MCPClient:
                 else:
                     # Local STDIO
                     self.logger.info(f"Starting local MCP server process: {self.command}")
-                    # Split command string into list for subprocess
-                    import shlex
-                    cmd = shlex.split(self.command)
+                    # Resolve repo root and absolute script path
+                    repo_root = Path(__file__).parent.parent.parent
+                    # If command is a string like "node <path>", convert to argv and absolutize script path
+                    cmd_str = str(self.command)
+                    if cmd_str.lower().startswith("node "):
+                        script = cmd_str.split(" ", 1)[1].strip().strip('"')
+                        script_path = Path(script)
+                        if not script_path.is_absolute():
+                            script_path = (repo_root / script_path).resolve()
+                        cmd = ["node", str(script_path)]
+                    else:
+                        # Fallback: run via shell-style split but still set cwd to repo_root
+                        import shlex
+                        cmd = shlex.split(cmd_str)
 
                 # Start the process
                 self.process = subprocess.Popen(
@@ -126,14 +184,40 @@ class MCPClient:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     env=self.full_env,
-                    text=True,
-                    bufsize=1
+                    text=False,  # binary mode for LSP-style framing
+                    bufsize=0,
+                    cwd=str(Path(__file__).parent.parent.parent)
                 )
 
                 self.logger.info("MCP server process started successfully")
 
                 # Give the server time to initialize (npx may install on first run)
                 await asyncio.sleep(2.0)
+
+                # Start background stderr drain to relay server logs
+                try:
+                    if self.process and self.process.stderr:
+                        # Ensure _ready_event exists
+                        if self._ready_event is None:
+                            self._ready_event = asyncio.Event()
+                        self._stderr_task = asyncio.create_task(self._drain_stderr())
+                except Exception as _e:
+                    self.logger.debug(f"Failed to start stderr drain task: {_e!r}")
+
+                # Wait for readiness marker; do NOT auto-initialize here to avoid race
+                try:
+                    # If process already died, surface stderr
+                    if self.process and (self.process.poll() is not None):
+                        try:
+                            err_out = self.process.stderr.read().decode("utf-8", errors="ignore") if self.process.stderr else ""
+                        except Exception:
+                            err_out = ""
+                        raise RuntimeError(f"MCP server exited early with code {self.process.poll()}. Stderr: {err_out[:500]}")
+                    if self._ready_event:
+                        await asyncio.wait_for(self._ready_event.wait(), timeout=20.0)
+                except Exception:
+                    # proceed even if not ready; callers will wait before sending requests
+                    pass
 
         except Exception as e:
             self.logger.error(f"Failed to start MCP server process: {e}")
@@ -155,7 +239,7 @@ class MCPClient:
                 loop = asyncio.get_event_loop()
                 try:
                     await asyncio.wait_for(loop.run_in_executor(None, self.process.wait), timeout=5.0)
-                except asyncio.TimeoutError:
+                except (asyncio.TimeoutError, asyncio.CancelledError):
                     self.logger.warning("MCP server process didn't terminate gracefully, killing it")
                     self.process.kill()
                     try:
@@ -166,6 +250,12 @@ class MCPClient:
             except Exception as e:
                 self.logger.error(f"Error stopping MCP server process: {e}")
             finally:
+                # Cancel stderr drain task
+                try:
+                    if self._stderr_task and not self._stderr_task.done():
+                        self._stderr_task.cancel()
+                except Exception:
+                    pass
                 # Best-effort close of stdout/stderr
                 try:
                     if self.process.stdout and not self.process.stdout.closed:
@@ -179,103 +269,223 @@ class MCPClient:
                     pass
                 self.process = None
 
+        # Close WS session/socket if any
+        try:
+            if self._ws is not None:
+                await self._ws.close()
+        except Exception:
+            pass
+        try:
+            if self._ws_session is not None:
+                await self._ws_session.close()
+        except Exception:
+            pass
+        finally:
+            self._ws = None
+            self._ws_session = None
+
+    async def _drain_stderr(self):
+        """Continuously read child's stderr and relay to logger (INFO level)."""
+        try:
+            if not self.process or not self.process.stderr:
+                return
+            loop = asyncio.get_event_loop()
+            def _readline():
+                assert self.process and self.process.stderr is not None
+                return self.process.stderr.readline()
+            while True:
+                try:
+                    line = await loop.run_in_executor(None, _readline)
+                except Exception:
+                    break
+                if not line:
+                    break
+                try:
+                    txt = line.decode("utf-8", errors="ignore") if isinstance(line, (bytes, bytearray)) else str(line)
+                except Exception:
+                    txt = str(line)
+                if txt.strip():
+                    self.logger.info(f"[server-stderr] {txt.rstrip()}" )
+                    # Signal readiness ONLY when Telegram client is fully initialized
+                    try:
+                        if self._ready_event and ("Telegram client ready, tools registered." in txt):
+                            self.logger.debug("MCP server is fully ready (Telegram client initialized)")
+                            self._ready_event.set()
+                    except Exception:
+                        pass
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            self.logger.debug(f"stderr drain error: {e!r}")
+
     async def call_tool(self, tool_name: str, args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Call a tool using appropriate transport"""
         if self.transport == "http":
             return await self._call_tool_http(tool_name, args)
         elif self.transport == "stdio":
             return await self._call_tool_stdio(tool_name, args)
+        elif self.transport in ("ws", "wss"):
+            return await self._call_tool_ws(tool_name, args)
         else:
             raise ValueError(f"Unsupported transport: {self.transport}")
 
     async def _call_tool_stdio(self, tool_name: str, args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Call a tool using JSON-RPC over STDIO"""
+        """Call a tool via stdio MCP server using JSON-RPC tools/call."""
         if not self.process:
-            raise RuntimeError("MCP server process not started. Use 'async with' or call start() first.")
-
-        # Create JSON-RPC request
+            await self.start()
+        # Ensure server readiness and initialize once
+        await self._wait_ready(timeout=20.0)
+        if not self._initialized:
+            try:
+                await self.initialize()
+            except Exception:
+                # Continue best-effort
+                pass
         request = {
             "jsonrpc": "2.0",
             "id": self.request_id,
             "method": "tools/call",
             "params": {
                 "name": tool_name,
-                "arguments": args
+                "arguments": args or {}
             }
         }
-
         self.request_id += 1
+        # Use a slightly larger timeout to allow network I/O against Telegram
+        result = await self._send_and_read(request, timeout_sec=30.0)
+        return result
 
-        try:
-            # Send request to stdin
-            request_json = json.dumps(request) + "\n"
-            self.logger.debug(f"Sending request: {request_json.strip()}")
+    async def initialize(self) -> Optional[Dict[str, Any]]:
+        """Send MCP initialize request (stdio transport). Safe to call multiple times."""
+        if self.transport != "stdio":
+            return None
+        if not self.process:
+            await self.start()
+        # Ensure readiness to avoid racing initialize before server is ready
+        await self._wait_ready(timeout=20.0)
+        # Use protocol version compatible with @modelcontextprotocol/sdk ^0.4.0
+        request = {
+            "jsonrpc": "2.0",
+            "id": self.request_id,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-09-18",
+                "clientInfo": {"name": "telegram_monitoring_agent", "version": "0.1.0"},
+                "capabilities": {
+                    "tools": {},
+                    "resources": {},
+                    "prompts": {}
+                }
+            }
+        }
+        self.logger.debug("Attempting initialize with protocolVersion=2024-09-18")
+        self.request_id += 1
+        last_result = await self._send_and_read(request, timeout_sec=10.0)
+        if last_result is None:
+            # Best-effort: mark initialized to allow follow-up calls (some servers auto-accept without explicit initialize)
+            self.logger.warning("Initialize response not received; proceeding in best-effort mode.")
+            self._initialized = True
+        else:
+            self._initialized = True
+        return last_result
 
+    async def list_tools(self) -> Optional[List[Dict[str, Any]]]:
+        """List available tools from server (stdio transport)."""
+        if self.transport != "stdio":
+            return None
+        if not self.process:
+            await self.start()
+        # Ensure server readiness before initialize/list
+        await self._wait_ready(timeout=20.0)
+        # Ensure initialize was attempted at least once
+        if not self._initialized:
             try:
-                self.process.stdin.write(request_json)
-                self.process.stdin.flush()
-            except OSError as e:
-                self.logger.error(f"Failed to write to MCP stdin: {e}")
-                return None
+                await self.initialize()
+            except Exception:
+                pass
+        request = {
+            "jsonrpc": "2.0",
+            "id": self.request_id,
+            "method": "tools/list",
+            "params": {}
+        }
+        self.request_id += 1
+        result = await self._send_and_read(request, timeout_sec=10.0)
+        if isinstance(result, dict) and "tools" in result:
+            return result.get("tools")
+        return None
 
-            # Read response from stdout with timeout
-            async def _readline():
-                loop = asyncio.get_event_loop()
-                return await loop.run_in_executor(None, self.process.stdout.readline)
+    # ===== WebSocket transport helpers =====
+    def _normalize_ws_url(self) -> str:
+        """Resolve WS URL from config/env, converting http(s) -> ws(s) if needed."""
+        url = (self.http_config.get("url") or os.environ.get("MCP_WS_URL") or "ws://localhost:8765").strip()
+        if url.startswith("http://"):
+            return "ws://" + url[len("http://"):]
+        if url.startswith("https://"):
+            return "wss://" + url[len("https://"):]
+        return url
 
-            # Loop until we get a valid JSON line or timeout
-            loop = asyncio.get_event_loop()
-            deadline = loop.time() + 15.0
-            while True:
-                timeout = max(0.0, deadline - loop.time())
-                if timeout == 0.0:
-                    # If timeout, try to capture stderr for diagnostics
-                    try:
-                        err = None
-                        if self.process and self.process.stderr:
-                            err = await asyncio.get_event_loop().run_in_executor(None, self.process.stderr.read)
-                        self.logger.error(f"Timeout waiting for MCP response. Stderr: {err[:500] if err else 'N/A'}")
-                    except Exception:
-                        pass
-                    return None
-                try:
-                    response_line = await asyncio.wait_for(_readline(), timeout=timeout)
-                except asyncio.TimeoutError:
-                    continue
-
-                if not response_line:
-                    # If process exited, include return code and stderr
-                    rc = self.process.poll()
-                    if rc is not None:
-                        try:
-                            err_out = self.process.stderr.read() if self.process.stderr else ''
-                        except Exception:
-                            err_out = ''
-                        self.logger.error(f"MCP server exited with code {rc}. Stderr: {err_out[:500]}")
-                    else:
-                        self.logger.error("No response received from MCP server")
-                    return None
-
-                line = response_line.strip()
-                try:
-                    response = json.loads(line)
-                except json.JSONDecodeError:
-                    # Log and keep reading (some tools may print banners/prompts)
-                    self.logger.debug(f"Non-JSON stdout: {line[:200]}")
-                    continue
-
-                self.logger.debug(f"Received response: {response}")
-                if "error" in response:
-                    self.logger.error(f"MCP server error: {response['error']}")
-                    return None
-                return response.get("result")
-
-        except json.JSONDecodeError as e:
-            self.logger.error(f"Failed to parse JSON response: {e}")
-            return None
+    async def _ensure_ws(self) -> None:
+        """Ensure WS session/connection is established; perform initialize once."""
+        if self._ws is not None and not self._ws.closed:
+            return
+        if self._ws_session is None:
+            self._ws_session = aiohttp.ClientSession()
+        ws_url = self._normalize_ws_url()
+        self.logger.info(f"Connecting MCP WS: {ws_url}")
+        self._ws = await self._ws_session.ws_connect(ws_url, autoping=True, heartbeat=20.0)
+        # Send initialize (best-effort)
+        init_req = {
+            "jsonrpc": "2.0",
+            "id": self.request_id,
+            "method": "initialize",
+            "params": {
+                "clientInfo": {"name": "telegram_monitoring_agent", "version": "0.1.0"}
+            }
+        }
+        self.request_id += 1
+        try:
+            await self._ws.send_str(json.dumps(init_req))
+            msg = await asyncio.wait_for(self._ws.receive(), timeout=10.0)
+            if msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                raise RuntimeError("WS closed on initialize")
         except Exception as e:
-            self.logger.error(f"Error calling tool {tool_name}: {e}")
+            self.logger.debug(f"WS initialize best-effort failed: {e}")
+
+    async def _ws_rpc(self, method: str, params: Dict[str, Any], timeout: float = 20.0) -> Optional[Dict[str, Any]]:
+        await self._ensure_ws()
+        req_id = self.request_id
+        self.request_id += 1
+        payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
+        await self._ws.send_str(json.dumps(payload))
+        # Wait for matching id
+        while True:
+            msg = await asyncio.wait_for(self._ws.receive(), timeout=timeout)
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                try:
+                    obj = json.loads(msg.data)
+                except Exception:
+                    continue
+                if isinstance(obj, dict) and obj.get("id") == req_id:
+                    if "error" in obj:
+                        # propagate as dict to match stdio behavior
+                        return {"error": obj["error"]}
+                    return obj.get("result")
+            elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                break
+        return None
+
+    async def list_tools_ws(self) -> Optional[List[Dict[str, Any]]]:
+        if self.transport not in ("ws", "wss"):
             return None
+        res = await self._ws_rpc("tools/list", {})
+        if isinstance(res, dict):
+            return res.get("tools")
+        return None
+
+    async def _call_tool_ws(self, tool_name: str, args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        res = await self._ws_rpc("tools/call", {"name": tool_name, "arguments": args or {}}, timeout=30.0)
+        return res
 
     async def _call_tool_http(self, tool_name: str, args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Call a tool using HTTP transport"""
@@ -287,20 +497,274 @@ class MCPClient:
                 "tool": tool_name,
                 "input": args
             }
-
             async with aiohttp.ClientSession() as session:
-                async with session.post(f"{url}/tools", json=payload) as response:
-                    if response.status == 200:
-                        return await response.json()
+                async with session.post(f"{url}/tools", json=payload) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        # Unwrap MCP content payload if present: { content: [{ type: 'text', text: '...json...' }] }
+                        try:
+                            if isinstance(result, dict) and isinstance(result.get("content"), list) and result["content"]:
+                                first = result["content"][0]
+                                text = first.get("text") if isinstance(first, dict) else None
+                                if isinstance(text, str):
+                                    try:
+                                        return json.loads(text)
+                                    except json.JSONDecodeError:
+                                        return {"text": text}
+                        except Exception:
+                            # Fall back to returning a raw result
+                            pass
+                        return result
                     else:
-                        self.logger.error(f"HTTP request failed: {response.status}")
-                        return None
-
-        except ImportError:
-            self.logger.error("aiohttp not installed for HTTP transport")
-            return None
+                        # Log non-200 with short body preview
+                        try:
+                            body = await resp.text()
+                        except Exception:
+                            body = ""
+                        self.logger.error(f"HTTP request failed: status={resp.status}, body={body[:300]}")
+                        # If a result contains an error about unknown tool, try aliases
+                        if isinstance(result, dict) and result.get("error") in ("Unknown tool", "Tool not found"):
+                            for alt in self._alternate_tool_names(tool_name):
+                                payload_alt = {"tool": alt, "input": args}
+                                async with session.post(f"{url}/tools", json=payload_alt) as resp2:
+                                    if resp2.status == 200:
+                                        r2 = await resp2.json()
+                                        try:
+                                            if isinstance(r2, dict) and isinstance(r2.get("content"), list) and r2["content"]:
+                                                first = r2["content"][0]
+                                                text = first.get("text") if isinstance(first, dict) else None
+                                                if isinstance(text, str):
+                                                    try:
+                                                        return json.loads(text)
+                                                    except json.JSONDecodeError:
+                                                        return {"text": text}
+                                        except Exception:
+                                            pass
+                                        return r2
+                                    # non-200, try next alias
+                        return result
         except Exception as e:
             self.logger.error(f"Error calling tool {tool_name} via HTTP: {e}")
+            return None
+
+    def _alternate_tool_names(self, name: str) -> List[str]:
+        """Generate likely alternate names for a tool (dotted vs underscored, and known pairs)."""
+        alts: List[str] = []
+        # dot <-> underscore variants
+        if "." in name:
+            alts.append(name.replace(".", "_"))
+        if "_" in name:
+            alts.append(name.replace("_", "."))
+        # known pairs
+        if name == "tg.fetch_history":
+            alts.append("tg.read_messages")
+        elif name == "tg.read_messages":
+            alts.append("tg.fetch_history")
+        # Some older servers used tg_send_message, tg_get_updates, etc.
+        legacy_map = {
+            "tg.send_message": ["tg_send_message"],
+            "tg.forward_message": ["tg_forward_message"],
+            "tg.get_chats": ["tg_get_chats"],
+            "tg.get_unread_count": ["tg_get_unread_count"],
+            "tg.resolve_chat": ["tg_resolve_chat"],
+        }
+        alts.extend(legacy_map.get(name, []))
+        # de-dup while preserving order
+        seen = set([name])
+        uniq = []
+        for a in alts:
+            if a not in seen:
+                seen.add(a)
+                uniq.append(a)
+        return uniq
+
+
+    async def _send_and_read(self, request: Dict[str, Any], timeout_sec: float) -> Optional[Dict[str, Any]]:
+        """Send a JSON-RPC request over stdio using Content-Length framing and read a single response.
+
+        The MCP SDK server (StdioServerTransport) uses LSP-like framing with headers:
+        Content-Length: <N>\r\n\r\n<body>
+        """
+        if not self.process:
+            return None
+        try:
+            # Serialize all writes/reads to avoid interleaved frames
+            async with self._io_lock:
+                # If the child process already exited, abort early with diagnostics
+                if self.process and (self.process.poll() is not None):
+                    try:
+                        err_out = self.process.stderr.read().decode("utf-8", errors="ignore") if self.process.stderr else ""
+                    except Exception:
+                        err_out = ""
+                    self.logger.error(f"MCP server already exited with code {self.process.poll()}. Stderr: {err_out[:500]}")
+                    return None
+
+            # Encode body and build headers (Content-Length only per LSP framing)
+            body = (json.dumps(request)).encode("utf-8")
+            headers = (f"Content-Length: {len(body)}\r\n\r\n").encode("ascii")
+            self.logger.debug(f"Sending request (len={len(body)}): {request}")
+            self.logger.debug(f"Raw message being sent: {repr(headers + body)}")
+            try:
+                assert self.process.stdin is not None
+                combined = headers + body
+                self.process.stdin.write(combined)
+                self.process.stdin.flush()
+                self.logger.debug("Message sent successfully, waiting for response...")
+            except OSError as e:
+                self.logger.error(f"Failed to write to MCP stdin: {e}")
+                return None
+
+            # Helpers to read until delimiter and then fixed-size body with a single overall deadline
+            async def _read_until(delim: bytes, deadline: float) -> Optional[bytes]:
+                loop = asyncio.get_event_loop()
+                # Start with any leftover bytes from previous call
+                buf = bytearray(self._rx_buffer)
+                self._rx_buffer.clear()
+                while True:
+                    remaining = max(0.0, deadline - loop.time())
+                    if remaining == 0.0:
+                        # timeout: return what we have for diagnostics
+                        self.logger.debug(f"Header read timeout with partial buffer length={len(buf)}")
+                        return bytes(buf) if buf else None
+                    def _read_some(sz: int = 64):
+                        assert self.process and self.process.stdout is not None
+                        return self.process.stdout.read(sz)
+                    try:
+                        chunk = await asyncio.wait_for(loop.run_in_executor(None, _read_some), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        self.logger.debug("Header read inner timeout while waiting for bytes")
+                        return bytes(buf) if buf else None
+                    if not chunk:
+                        break
+                    buf += chunk
+                    bbuf = bytes(buf)
+                    # Break only when CRLFCRLF delimiter appears (LSP framing)
+                    if delim in bbuf:
+                        break
+                return bytes(buf)
+
+            async def _read_n(n: int, deadline: float) -> Optional[bytes]:
+                loop = asyncio.get_event_loop()
+                remaining_bytes = n
+                chunks: list[bytes] = []
+                while remaining_bytes > 0:
+                    remaining_time = max(0.0, deadline - loop.time())
+                    if remaining_time == 0.0:
+                        return None
+                    to_read = remaining_bytes
+                    def _read_size(k: int):
+                        assert self.process and self.process.stdout is not None
+                        return self.process.stdout.read(k)
+                    try:
+                        chunk = await asyncio.wait_for(loop.run_in_executor(None, _read_size, to_read), timeout=remaining_time)
+                    except asyncio.TimeoutError:
+                        return None
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining_bytes -= len(chunk)
+                return b"".join(chunks)
+
+            # Read headers with overall deadline, honoring any bytes already present in the buffer
+            loop = asyncio.get_event_loop()
+            deadline = loop.time() + max(0.1, float(timeout_sec if timeout_sec else 60.0))
+            self.logger.debug(f"Waiting for headers with timeout {timeout_sec}s...")
+            raw_headers = await _read_until(b"\r\n\r\n", deadline)
+            if not raw_headers:
+                # timeout or empty
+                try:
+                    err_out = self.process.stderr.read().decode("utf-8", errors="ignore") if self.process and self.process.stderr else ""
+                except Exception:
+                    err_out = ""
+                self.logger.error(f"No headers received from MCP server (timeout after {timeout_sec}s). Stderr: {err_out[:500]}")
+                return None
+            self.logger.debug(f"Received headers: {repr(raw_headers)}")
+            try:
+                # Split headers and any leftover body bytes
+                rh = bytes(raw_headers)
+                sep = b"\r\n\r\n"
+                sep_idx = rh.find(sep)
+                used_sep = sep
+                if sep_idx < 0:
+                    self.logger.error(f"Could not find header/body delimiter in: {rh!r}")
+                    return None
+                header_bytes = rh[:sep_idx]
+                leftover_body = rh[sep_idx + len(used_sep):]
+                if leftover_body:
+                    self.logger.debug(f"Leftover body bytes present after headers: {len(leftover_body)} bytes")
+                headers_text = header_bytes.decode("ascii", errors="ignore")
+                content_length = 0
+                # split by either CRLF or LF
+                lines = headers_text.split("\r\n") if "\r\n" in headers_text else headers_text.split("\n")
+                for line in lines:
+                    if line.strip().lower().startswith("content-length:"):
+                        try:
+                            content_length = int(line.split(":", 1)[1].strip())
+                        except Exception:
+                            content_length = 0
+                        break
+                if content_length <= 0:
+                    self.logger.error(f"Invalid Content-Length in headers: {headers_text!r}")
+                    return None
+            except Exception as e:
+                self.logger.error(f"Failed to parse headers: {e}")
+                return None
+
+            # Read body with same overall deadline
+            # If we already have some of the body in leftover_body, consume it first
+            extra_after_body: bytes = b""
+            if 'leftover_body' in locals() and leftover_body:
+                have = bytes(leftover_body)
+                if len(have) >= content_length:
+                    body_bytes = have[:content_length]
+                    extra_after_body = have[content_length:]
+                else:
+                    need = content_length - len(have)
+                    tail = await _read_n(need, deadline)
+                    body_bytes = have + (tail or b"")
+            else:
+                body_bytes = await _read_n(content_length, deadline)
+            if not body_bytes or len(body_bytes) < content_length:
+                try:
+                    err_out = self.process.stderr.read().decode("utf-8", errors="ignore") if self.process and self.process.stderr else ""
+                except Exception:
+                    err_out = ""
+                self.logger.error(f"Incomplete body from MCP server. Received={len(body_bytes) if body_bytes else 0}/{content_length}. Stderr: {err_out[:500]}")
+                return None
+
+            # Preserve any extra bytes beyond the declared Content-Length for the next call
+            if extra_after_body:
+                self._rx_buffer.extend(extra_after_body)
+
+            try:
+                response_text = body_bytes.decode("utf-8")
+                self.logger.debug(f"Raw response body: {repr(response_text)}")
+                response = json.loads(response_text)
+            except json.JSONDecodeError as e:
+                self.logger.error(f"Failed to parse JSON response: {e}")
+                return None
+
+            self.logger.debug(f"Parsed response: {response}")
+            if isinstance(response, dict) and "error" in response:
+                self.logger.error(f"MCP server error: {response['error']}")
+                return None
+
+            result = response.get("result") if isinstance(response, dict) else None
+            # Unwrap MCP content payload if present
+            try:
+                if isinstance(result, dict) and isinstance(result.get("content"), list) and result["content"]:
+                    first = result["content"][0]
+                    text = first.get("text") if isinstance(first, dict) else None
+                    if isinstance(text, str):
+                        try:
+                            return json.loads(text)
+                        except json.JSONDecodeError:
+                            return {"text": text}
+            except Exception:
+                pass
+            return result
+        except Exception as e:
+            self.logger.error(f"Error during stdio exchange: {e!r}")
             return None
 
     async def resolve_chat(self, input_chat: str) -> Optional[Dict[str, Any]]:
@@ -310,17 +774,14 @@ class MCPClient:
 
     async def fetch_history(self, chat_id: str, **kwargs) -> Optional[Dict[str, Any]]:
         """Fetch message history using tg.fetch_history tool"""
-        args = {"chat": chat_id}
+        args = {"chat": self._normalize_chat(chat_id)}
         args.update(kwargs)
         return await self.call_tool("tg.fetch_history", args)
 
     async def send_message(self, chat_id: str, message: str) -> Optional[Dict[str, Any]]:
         """Send message using tg.send_message tool"""
         chat = self._normalize_chat(chat_id)
-        return await self.call_tool("tg.send_message", {
-            "chat": chat,
-            "message": message
-        })
+        return await self.call_tool("tg.send_message", {"chat": chat, "message": message})
 
     async def forward_message(self, from_chat: str, to_chat: str, message_id: int) -> Optional[Dict[str, Any]]:
         """Forward message using tg.forward_message tool"""

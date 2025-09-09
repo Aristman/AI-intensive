@@ -64,8 +64,7 @@ export async function setupTelegramClient(telegramConfig) {
       throw error;
     }
   } else {
-    // User authentication (интерактивная 2FA)
-    console.error('Using user authentication (interactive)');
+    // User authentication with session reuse when available
     client = new TelegramClient(session, parseInt(apiId), apiHash, {
       connectionRetries: 5,
       deviceModel: 'Telegram MCP Server',
@@ -74,6 +73,25 @@ export async function setupTelegramClient(telegramConfig) {
     });
 
     try {
+      // If a saved session exists, attempt non-interactive connect first
+      if (existingSession && existingSession.length > 0) {
+        console.error('Using saved session (non-interactive connect)');
+        await client.connect();
+        if (await client.isUserAuthorized()) {
+          console.error('User client initialized successfully.');
+          return client;
+        }
+        // Saved session present but not authorized
+        if (!process.stdin.isTTY) {
+          throw new Error('Interactive authorization required but no TTY available. Run `node src/index.js` once to login.');
+        }
+      }
+
+      // Fallback to interactive 2FA only when TTY is available
+      if (!process.stdin.isTTY) {
+        throw new Error('Interactive authorization required but no TTY available. Run `node src/index.js` once to login.');
+      }
+      console.error('Using user authentication (interactive)');
       await client.start({
         phoneNumber: async () => {
           if (phoneNumber) return String(phoneNumber);
